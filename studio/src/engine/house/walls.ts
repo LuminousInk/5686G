@@ -2,8 +2,10 @@ import * as THREE from 'three'
 import { applyMatrixKeepWinding, GeoBuilder, MeshBatch, V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
 import { rng } from '../materials/textures'
+import { buildInteriorDoor } from './interiorDoor'
 import {
   ceilingAt,
+  INT_WALL_T,
   roofBreaks,
   roofHeightAt,
   roofThickness,
@@ -15,7 +17,7 @@ import {
   WALL_T,
   type SideFrame,
 } from './massing'
-import type { Block, CladdingSpec, HomePlan, Opening, Side } from './types'
+import type { Block, BuiltDoor, CladdingSpec, HomePlan, Opening, Side } from './types'
 
 export interface Segment2 {
   ax: number
@@ -33,6 +35,7 @@ interface Hole {
   y0: number
   y1: number
   op: Opening
+  openingIndex: number
 }
 
 interface Piece {
@@ -58,11 +61,12 @@ export interface WallOutput {
   colliders: Segment2[]
   sconces: THREE.Vector3[]
   lightsAt: { pos: THREE.Vector3; dir: THREE.Vector3 }[]
+  doors: BuiltDoor[]
 }
 
 /** Builds exterior walls, cladding, openings for all blocks into `batch`. */
 export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch): WallOutput {
-  const out: WallOutput = { colliders: [], sconces: [], lightsAt: [] }
+  const out: WallOutput = { colliders: [], sconces: [], lightsAt: [], doors: [] }
   const fy = plan.floorY
   const rand = rng(1234)
 
@@ -78,6 +82,14 @@ export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: 
       const openings = plan.openings.filter(o => o.block === b.id && o.side === s)
       for (let i = 0; i < intervals.length; i++) {
         const iv = intervals[i]
+        const sharedOpenings = !iv.neighbour ? [] : openings.filter(op => {
+          const u0 = op.at - op.width / 2
+          const u1 = op.at + op.width / 2
+          return isPassage(op) && (op.sill ?? 0) < 0.1 && u0 >= iv.u0 - 1e-3 && u1 <= iv.u1 + 1e-3
+        })
+        if (iv.neighbour && sharedOpenings.length) {
+          buildSharedWall(plan, b, iv.neighbour, f, iv.u0, iv.u1, sharedOpenings, lib, batch, out)
+        }
         let piece: Piece
         if (!iv.neighbour) {
           const corner0 = iv.u0 < 1e-4
@@ -115,11 +127,12 @@ export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: 
           }
         }
         for (const op of openings) {
+          if (sharedOpenings.includes(op)) continue
           const u0 = op.at - op.width / 2
           const u1 = op.at + op.width / 2
           if (u0 < piece.u0 - 1e-3 || u1 > piece.u1 + 1e-3) continue
           const y0 = fy + (op.sill ?? 0)
-          piece.holes.push({ u0, u1, y0, y1: y0 + op.height, op })
+          piece.holes.push({ u0, u1, y0, y1: y0 + op.height, op, openingIndex: plan.openings.indexOf(op) })
         }
         buildPiece(piece, lib, batch, rand, out)
       }
@@ -132,6 +145,10 @@ export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: 
 
 function opposite(s: Side): Side {
   return s === 'n' ? 's' : s === 's' ? 'n' : s === 'e' ? 'w' : 'e'
+}
+
+function isPassage(op: Opening) {
+  return op.kind === 'door' || op.kind === 'entry' || op.kind === 'slider' || op.kind === 'garage'
 }
 
 function claddingDepth(c: CladdingSpec) {
@@ -352,11 +369,91 @@ function buildPiece(p: Piece, lib: MaterialLibrary, batch: MeshBatch, rand: () =
   for (const h of p.holes) buildOpening(p, h, lib, batch, m, out)
 }
 
-function pushSeg(f: SideFrame, u0: number, u1: number, out: WallOutput) {
+function pushSeg(f: SideFrame, u0: number, u1: number, out: WallOutput, w = WALL_T / 2) {
   if (u1 - u0 < 0.02) return
-  const [ax, az] = sidePoint(f, u0, WALL_T / 2)
-  const [bx, bz] = sidePoint(f, u1, WALL_T / 2)
+  const [ax, az] = sidePoint(f, u0, w)
+  const [bx, bz] = sidePoint(f, u1, w)
   out.colliders.push({ ax, az, bx, bz })
+}
+
+/** A ground-level partition between touching volumes, with the same door leaves as other partitions. */
+function buildSharedWall(
+  plan: HomePlan,
+  b: Block,
+  neighbour: Block,
+  f: SideFrame,
+  u0: number,
+  u1: number,
+  openings: Opening[],
+  lib: MaterialLibrary,
+  batch: MeshBatch,
+  out: WallOutput,
+) {
+  const fy = plan.floorY
+  const m = sideMatrix(f)
+  const top = (u: number) => {
+    const [x, z] = sidePoint(f, u)
+    return fy + Math.min(ceilingAt(b, x, z), ceilingAt(neighbour, x, z)) - 0.002
+  }
+  const holes = openings.map(op => ({
+    u0: op.at - op.width / 2,
+    u1: op.at + op.width / 2,
+    y0: fy + (op.sill ?? 0),
+    y1: fy + (op.sill ?? 0) + op.height,
+    op,
+    openingIndex: plan.openings.indexOf(op),
+  })).sort((a, c) => a.u0 - c.u0)
+  const shape = new THREE.Shape()
+  shape.moveTo(u0, fy)
+  shape.lineTo(u1, fy)
+  const steps = Math.max(1, Math.ceil((u1 - u0) / 0.25))
+  for (let i = steps; i >= 0; i--) {
+    const u = u0 + (i / steps) * (u1 - u0)
+    shape.lineTo(u, top(u))
+  }
+  shape.closePath()
+  for (const h of holes) {
+    const path = new THREE.Path()
+    path.moveTo(h.u0, h.y0 - 0.01)
+    path.lineTo(h.u0, h.y1)
+    path.lineTo(h.u1, h.y1)
+    path.lineTo(h.u1, h.y0 - 0.01)
+    path.closePath()
+    shape.holes.push(path)
+  }
+  batch.add(lib.wall, extrude(shape, -INT_WALL_T / 2, INT_WALL_T / 2, m))
+
+  let u = u0
+  for (const h of holes) {
+    pushSeg(f, u, h.u0, out, 0)
+    u = h.u1
+  }
+  pushSeg(f, u, u1, out, 0)
+
+  const trim = new GeoBuilder()
+  const leaf = new GeoBuilder()
+  const hardware = new GeoBuilder()
+  const p: Piece = {
+    f, block: b, u0, u1, ext0: 0, ext1: 0,
+    bottom: () => fy,
+    cladBottom: () => fy,
+    top,
+    breaks: [],
+    clad: b.cladding[f.side] ?? b.cladding.default,
+    holes,
+    ground: false,
+  }
+  for (const h of holes) {
+    if (h.op.kind === 'door') {
+      out.colliders.push(buildInteriorDoor(plan, h, m, INT_WALL_T, trim, leaf, hardware))
+      out.doors.push({ openingIndex: h.openingIndex, kind: h.op.kind, leaf: true, glass: false, casing: true })
+    } else {
+      buildOpening(p, h, lib, batch, m, out)
+    }
+  }
+  if (trim.vertexCount) batch.add(lib.ceiling, applyMatrixKeepWinding(trim.build(), m))
+  if (leaf.vertexCount) batch.add(lib.cabinet, applyMatrixKeepWinding(leaf.build(), m))
+  if (hardware.vertexCount) batch.add(lib.blackMetal, applyMatrixKeepWinding(hardware.build(), m))
 }
 
 /** Frames, glass, doors, flashing and sconces for one opening (local side space, then transformed). */
@@ -432,12 +529,9 @@ function buildOpening(p: Piece, h: Hole, lib: MaterialLibrary, batch: MeshBatch,
       break
     }
     case 'door': {
-      const lf = 0.06
-      vprism(trim, ix0, ix0 + lf, 0.05, 0.1, iy0, iy0, iy1, iy1, false)
-      vprism(trim, ix1 - lf, ix1, 0.05, 0.1, iy0, iy0, iy1, iy1, false)
-      vprism(trim, ix0 + lf, ix1 - lf, 0.05, 0.1, iy1 - lf, iy1 - lf, iy1, iy1, false)
-      vprism(trim, ix0 + lf, ix1 - lf, 0.05, 0.1, iy0, iy0, iy0 + 0.12, iy0 + 0.12, false)
-      pane(ix0 + lf, ix1 - lf, iy0 + 0.12, iy1 - lf)
+      // solid leaf, matching the entry-door construction
+      door.color = [1, 1, 1]
+      vprism(door, ix0, ix1, 0.05, 0.1, iy0, iy0, iy1, iy1, false)
       steel.box(ix1 - 0.16, iy0 + 0.9, 0.0, ix1 - 0.14, iy0 + 1.15, 0.05)
       break
     }
@@ -478,6 +572,16 @@ function buildOpening(p: Piece, h: Hole, lib: MaterialLibrary, batch: MeshBatch,
   }
   if (door.vertexCount) batch.add(lib.zone('door'), applyMatrixKeepWinding(door.build(true), m))
   if (steel.vertexCount) batch.add(lib.steel, applyMatrixKeepWinding(steel.build(), m))
+
+  if (op.kind === 'door' || op.kind === 'entry' || op.kind === 'slider' || op.kind === 'garage') {
+    out.doors.push({
+      openingIndex: h.openingIndex,
+      kind: op.kind,
+      leaf: op.kind === 'door' || op.kind === 'entry' || op.kind === 'garage',
+      glass: glass.vertexCount > 0,
+      casing: trim.vertexCount > 0,
+    })
+  }
 
   // sconces beside ground-floor doors
   if (p.ground && (op.kind === 'slider' || op.kind === 'entry' || op.kind === 'door')) {
