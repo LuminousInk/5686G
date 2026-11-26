@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { PALETTES, ZONES, zoneOption, type InteriorPalette, type MaterialParams } from './catalog'
-import { noiseTexture, solarTexture, TextureBank, type TextureSetId } from './textures'
+import { limewashTexture, noiseTexture, solarTexture, TextureBank, type TextureSetId } from './textures'
 import type { QualitySettings } from '../quality'
 
 type Std = THREE.MeshStandardMaterial
@@ -15,6 +15,7 @@ export class MaterialLibrary {
   private cache = new Map<string, THREE.Material>()
   private noise: THREE.Texture
   private fineNoise: THREE.Texture
+  private limewash: THREE.Texture
   /** emissive materials that turn on at dusk/night: material -> full emissive intensity */
   private lamps = new Map<THREE.MeshStandardMaterial, number>()
   palette: InteriorPalette = PALETTES.light
@@ -28,6 +29,7 @@ export class MaterialLibrary {
     this.noise.repeat.set(0.25, 0.25)
     this.fineNoise = noiseTexture(256, 4, 9, 1.4)
     this.fineNoise.repeat.set(2, 2)
+    this.limewash = limewashTexture()
   }
 
   private put<T extends THREE.Material>(key: string, make: () => T): T {
@@ -102,7 +104,14 @@ export class MaterialLibrary {
     m.roughness = p.roughness
     m.metalness = p.metalness ?? 0
     const hadMap = !!m.map
-    if (p.tex) {
+    if (p.map === 'limewash') {
+      m.map = this.limewash
+      m.normalMap = null
+      m.aoMap = null
+      // fine grain over the soft blotches so close-ups still read as plaster
+      m.roughnessMap = this.fineNoise
+      m.userData.tex = null
+    } else if (p.tex) {
       const scale = p.texScale ?? (zone === 'deck' ? 1.2 : 1)
       if (m.userData.tex !== p.tex || m.userData.texScale !== scale) this.assignTex(m, p.tex, scale)
       m.userData.tex = p.tex
@@ -242,7 +251,14 @@ export class MaterialLibrary {
   }
 
   get wall(): Std {
-    return this.put('wall', () => new THREE.MeshStandardMaterial({ color: this.palette.wall, roughness: 0.92, roughnessMap: this.fineNoise }))
+    // interior paint on partitions and the inside faces of exterior walls; cached under the zone key so
+    // setFinish('walls', ...) updates it in place like any other zone
+    return this.put('zone:walls', () => {
+      const opt = zoneOption('walls', this.currentFinish('walls'))
+      const m = new THREE.MeshStandardMaterial({ color: opt.params.color })
+      this.applyParams(m, opt.params, 'walls')
+      return m
+    })
   }
 
   get ceiling(): Std {
@@ -307,7 +323,7 @@ export class MaterialLibrary {
     return this.put('appliance', () => new THREE.MeshStandardMaterial({ color: '#C8CACB', roughness: 0.25, metalness: 0.9, roughnessMap: this.fineNoise }))
   }
 
-  static readonly INTERIOR = ['floor', 'tileFloor', 'tileWall', 'wall', 'ceiling', 'ceilingWood', 'cabinet', 'counter', 'fabric', 'fabric2', 'rug', 'fixtureMetal', 'stone', 'porcelain', 'mirror', 'blackMetal', 'darkWood', 'linen', 'appliance']
+  static readonly INTERIOR = ['floor', 'tileFloor', 'tileWall', 'zone:walls', 'ceiling', 'ceilingWood', 'cabinet', 'counter', 'fabric', 'fabric2', 'rug', 'fixtureMetal', 'stone', 'porcelain', 'mirror', 'blackMetal', 'darkWood', 'linen', 'appliance']
   /** extra interior materials (loaded models) that should share the interior light probe */
   readonly interiorExtra = new Set<THREE.MeshStandardMaterial>()
 
@@ -354,7 +370,6 @@ export class MaterialLibrary {
       if (m) f(m)
     }
     set('counter', m => { m.color.set(p.counter.color); m.roughness = p.counter.roughness })
-    set('wall', m => m.color.set(p.wall))
     set('ceilingWood', m => m.color.set(p.ceilingWood.color))
     set('fabric', m => m.color.set(p.fabric))
     set('fabric2', m => m.color.set(p.fabric2))

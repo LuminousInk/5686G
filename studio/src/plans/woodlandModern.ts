@@ -132,6 +132,6 @@ export const woodlandModern: HomePlan = {
     { id: 'great', label: 'Great room', kind: 'walk', pos: [2.4, 2.1, 0.4], target: [-1.6, 2.1, -9.5], fov: 66, room: 'great' },
     { id: 'primary', label: 'Primary suite', kind: 'walk', pos: [-8.7, 2.1, -0.8], target: [-12.6, 1.5, -4.6], fov: 66, room: 'primary' },
   ],
-  finishes: { cedar: 'natural-cedar', body: 'charcoal', roof: 'charcoal', trim: 'black', door: 'black', palette: 'walnut' },
-  zones: ['cedar', 'body', 'roof', 'trim', 'door', 'palette'],
+  finishes: { cedar: 'natural-cedar', body: 'charcoal', roof: 'charcoal', trim: 'black', door: 'black', palette: 'walnut', walls: 'warm-white' },
+  zones: ['cedar', 'body', 'roof', 'trim', 'door', 'palette', 'walls'],
 }

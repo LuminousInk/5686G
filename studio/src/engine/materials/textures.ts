@@ -117,20 +117,17 @@ export function rng(seed: number) {
   }
 }
 
-/** Tileable value noise as a canvas texture (for roughness breakup on paint and metal). */
-export function noiseTexture(size = 256, octaves = 4, seed = 7, contrast = 1): THREE.CanvasTexture {
-  const cv = document.createElement('canvas')
-  cv.width = cv.height = size
-  const ctx = cv.getContext('2d')!
-  const img = ctx.createImageData(size, size)
+/** Tileable multi-octave value noise, sampled per pixel into [0, 1]. */
+function noiseField(size: number, octaves: number, seed: number, base = 4): Float32Array {
   const rand = rng(seed)
   const grids: Float32Array[] = []
   for (let o = 0; o < octaves; o++) {
-    const n = 4 << o
+    const n = base << o
     const g = new Float32Array(n * n)
     for (let i = 0; i < g.length; i++) g[i] = rand()
     grids.push(g)
   }
+  const out = new Float32Array(size * size)
   const smooth = (t: number) => t * t * (3 - 2 * t)
   for (let y = 0; y < size; y++)
     for (let x = 0; x < size; x++) {
@@ -138,7 +135,7 @@ export function noiseTexture(size = 256, octaves = 4, seed = 7, contrast = 1): T
       let amp = 0.5
       let norm = 0
       for (let o = 0; o < octaves; o++) {
-        const n = 4 << o
+        const n = base << o
         const fx = (x / size) * n
         const fy = (y / size) * n
         const x0 = Math.floor(fx)
@@ -153,15 +150,53 @@ export function noiseTexture(size = 256, octaves = 4, seed = 7, contrast = 1): T
         norm += amp
         amp *= 0.5
       }
-      v = (v / norm - 0.5) * contrast + 0.5
-      const c = Math.max(0, Math.min(255, Math.round(v * 255)))
-      const k = (y * size + x) * 4
-      img.data[k] = img.data[k + 1] = img.data[k + 2] = c
-      img.data[k + 3] = 255
+      out[y * size + x] = v / norm
     }
+  return out
+}
+
+/** Tileable value noise as a canvas texture (for roughness breakup on paint and metal). */
+export function noiseTexture(size = 256, octaves = 4, seed = 7, contrast = 1): THREE.CanvasTexture {
+  const cv = document.createElement('canvas')
+  cv.width = cv.height = size
+  const ctx = cv.getContext('2d')!
+  const img = ctx.createImageData(size, size)
+  const f = noiseField(size, octaves, seed)
+  for (let i = 0; i < f.length; i++) {
+    const c = Math.max(0, Math.min(255, Math.round(((f[i] - 0.5) * contrast + 0.5) * 255)))
+    const k = i * 4
+    img.data[k] = img.data[k + 1] = img.data[k + 2] = c
+    img.data[k + 3] = 255
+  }
   ctx.putImageData(img, 0, 0)
   const tex = new THREE.CanvasTexture(cv)
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  return tex
+}
+
+/**
+ * Mottled plaster colour map (limewash): soft seamless blotches near white, so the material colour shows through
+ * and the map only adds gentle tonal variation. Repeats every `tile` metres (UVs are in metres).
+ */
+export function limewashTexture(size = 512, tile = 1.5): THREE.CanvasTexture {
+  const cv = document.createElement('canvas')
+  cv.width = cv.height = size
+  const ctx = cv.getContext('2d')!
+  const img = ctx.createImageData(size, size)
+  // two low octaves on a coarse grid: blotches a few decimetres across on the tile
+  const f = noiseField(size, 2, 21, 3)
+  for (let i = 0; i < f.length; i++) {
+    // low contrast, 93-100% of white: modulates the finish colour without darkening it
+    const c = Math.round((0.93 + 0.07 * f[i]) * 255)
+    const k = i * 4
+    img.data[k] = img.data[k + 1] = img.data[k + 2] = c
+    img.data[k + 3] = 255
+  }
+  ctx.putImageData(img, 0, 0)
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.repeat.set(1 / tile, 1 / tile)
   return tex
 }
 
