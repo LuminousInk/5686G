@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { applyLightmap, clearLightmap } from './bake/lightmaps'
 import { buildHouse, type HouseModel } from './house/build'
 import type { HomePlan } from './house/types'
 import { MaterialLibrary } from './materials/library'
@@ -110,6 +111,15 @@ export class Engine {
   }
 
   async loadPlan(plan: HomePlan, finishes: Record<string, string>, timeId = 'golden') {
+    this.loading = true
+    try {
+      await this.loadPlanInner(plan, finishes, timeId)
+    } finally {
+      this.loading = false
+    }
+  }
+
+  private async loadPlanInner(plan: HomePlan, finishes: Record<string, string>, timeId: string) {
     const progress = this.opts.onProgress ?? (() => {})
     progress(0.05, 'Building the house')
     if (this.house) {
@@ -150,6 +160,7 @@ export class Engine {
     await this.setTime(timeId)
     progress(0.9, 'Loading textures')
     await this.lib.bank.ready()
+    await this.refreshLightmap()
     this.lights.setup(this.house, this.interior)
     this.lights.setLevel(this.sky.preset.lamps)
     this.lib.setLamps(this.sky.preset.lamps)
@@ -217,6 +228,8 @@ export class Engine {
     this.plan = plan
     this.house = house
     this.interior = interior
+    this.lightmapped = false
+    clearLightmap(this.lib)
     this.scene.add(house.group, interior.group)
     for (const z of plan.zones) if (z !== 'palette') this.lib.setFinish(z, this.lib.currentFinish(z) ?? plan.finishes[z])
     this.lights.setup(house, interior)
@@ -240,6 +253,17 @@ export class Engine {
     }
   }
 
+  /** True while the bound home has baked lighting for the current time of day. */
+  lightmapped = false
+  private loading = false
+
+  /** Bind (or drop) the baked lightmap for the current plan and time of day. */
+  async refreshLightmap() {
+    if (!this.house || !this.plan) return
+    // an edited plan has other geometry: its signature will not match the bake and it keeps live lighting
+    this.lightmapped = await applyLightmap(this.lib, this.house, this.interior?.group ?? null, this.plan.id, this.sky.preset.id, this.quality.tier === 'low')
+  }
+
   async setTime(id: string) {
     const preset = TIME_PRESETS.find(t => t.id === id) ?? TIME_PRESETS[0]
     await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35)
@@ -253,6 +277,7 @@ export class Engine {
     else if (id === 'day') g.set(0.18, 1.06, 0.0)
     else if (id === 'dusk') g.set(0.2, 1.08, 0.02)
     else g.set(0.22, 1.0, -0.01)
+    if (this.house && !this.loading) await this.refreshLightmap()
     if (this.house) this.captureProbe()
     this.invalidate()
   }

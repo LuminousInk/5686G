@@ -32,6 +32,11 @@ export class MaterialLibrary {
     this.limewash = limewashTexture()
   }
 
+  /** Every material created so far (named by its library key). */
+  materials(): THREE.Material[] {
+    return [...this.cache.values()]
+  }
+
   private put<T extends THREE.Material>(key: string, make: () => T): T {
     let m = this.cache.get(key) as T | undefined
     if (!m) {

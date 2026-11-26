@@ -46,7 +46,7 @@ const cache = new Map<string, Promise<Analysed>>()
  * Skies ship as lossless WebP holding RGBE (top half: RGB mantissas, bottom half: exponent) because web hosts only
  * serve web formats. Decode to linear float RGBA, rows top-first like a Radiance file.
  */
-async function loadRgbeWebp(url: string): Promise<{ data: Float32Array; W: number; H: number }> {
+export async function loadRgbeWebp(url: string): Promise<{ data: Float32Array; W: number; H: number }> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`sky ${url}: ${res.status}`)
   const blob = await res.blob()
@@ -320,6 +320,49 @@ export class SkyEnvironment {
       this.sun.visible = false
     }
     this.placeSun(this.sunDir)
+  }
+
+  /**
+   * The light-casting sky (sun removed) resampled into WORLD orientation and scaled like the scene's IBL, for the
+   * offline lightmap bake: RGB floats, row 0 = zenith, column u = atan2(z, x) / 2pi + 0.5 (the three.js equirect
+   * convention, which Blender's matches after its glTF axis conversion). Null before a sky is loaded.
+   */
+  worldSky(width = 1024, height = 512): Float32Array | null {
+    const src = this.current?.sunless
+    if (!src) return null
+    const W0 = src.image.width
+    const H0 = src.image.height
+    const half = src.image.data as Uint16Array
+    const raw = new Float32Array(half.length)
+    for (let i = 0; i < half.length; i++) raw[i] = THREE.DataUtils.fromHalfFloat(half[i])
+    const scale = this.scene.environmentIntensity
+    const inv = new THREE.Matrix4().makeRotationY(-this.rotationY)
+    const out = new Float32Array(width * height * 3)
+    const d = new THREE.Vector3()
+    const tap = (c: number, r: number, k: number) => raw[(r * W0 + (((c % W0) + W0) % W0)) * 4 + k]
+    for (let j = 0; j < height; j++) {
+      const lat = (0.5 - (j + 0.5) / height) * Math.PI
+      for (let i = 0; i < width; i++) {
+        const phi = ((i + 0.5) / width - 0.5) * Math.PI * 2
+        d.set(Math.cos(lat) * Math.cos(phi), Math.sin(lat), Math.cos(lat) * Math.sin(phi)).applyMatrix4(inv)
+        // raw texel: row 0 = top (zenith), same mapping the sky texture uses
+        const u = Math.atan2(d.z, d.x) / (Math.PI * 2) + 0.5
+        const v = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1)) / Math.PI + 0.5
+        const x = u * W0 - 0.5
+        const y = THREE.MathUtils.clamp((1 - v) * H0 - 0.5, 0, H0 - 1)
+        const x0 = Math.floor(x)
+        const y0 = Math.floor(y)
+        const fx = x - x0
+        const fy = y - y0
+        const y1 = Math.min(y0 + 1, H0 - 1)
+        for (let k = 0; k < 3; k++) {
+          const a = tap(x0, y0, k) * (1 - fx) + tap(x0 + 1, y0, k) * fx
+          const b = tap(x0, y1, k) * (1 - fx) + tap(x0 + 1, y1, k) * fx
+          out[(j * width + i) * 3 + k] = (a * (1 - fy) + b * fy) * scale
+        }
+      }
+    }
+    return out
   }
 
   /** The sky with the sun for the path tracer (sun as a soft 0.7 degree disk with the measured energy). */

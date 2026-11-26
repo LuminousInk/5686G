@@ -16,6 +16,8 @@ declare global {
     __engine?: Engine
     __nav?: Navigator
     __ready?: boolean
+    /** offline bake hook (tools/bake): the loaded home as GLB + world sky + sun, base64 encoded */
+    __bakeExport?: () => Promise<{ glb: string; sky: string; meta: unknown }>
   }
 }
 
@@ -59,6 +61,17 @@ export function App() {
     engine = new Engine({ canvas, onProgress: (p, label) => setState({ loading: { p, label } }) })
     if (params.get('frames')) engine.pipeline.maxFrames = Number(params.get('frames'))
     window.__engine = engine
+    window.__bakeExport = async () => {
+      const { exportForBake } = await import('../engine/bake/exportBake')
+      const r = await exportForBake(engine!)
+      const b64 = (buf: ArrayBuffer) =>
+        new Promise<string>(res => {
+          const fr = new FileReader()
+          fr.onload = () => res((fr.result as string).split(',')[1])
+          fr.readAsDataURL(new Blob([buf]))
+        })
+      return { glb: await b64(r.glb), sky: await b64(r.sky.buffer as ArrayBuffer), meta: r.meta }
+    }
     nav = new Navigator(engine, canvas)
     window.__nav = nav
     engine.keepAlive = () => !!nav?.active
@@ -115,9 +128,12 @@ export function App() {
       .then(() => {
         if (cancelled || !engine || !nav) return
         nav.setBounds(engine.house!.bounds)
-        nav.goToView(hero, false)
-        setViewId(hero.id)
-        setState({ loading: null, mode: 'orbit' })
+        // ?view=<id> (screenshots, tests) starts at that view on the first load
+        const asked = new URLSearchParams(location.search).get('view')
+        const start = (attempt === 0 && p.views.find(v => v.id === asked)) || hero
+        nav.goToView(start, false)
+        setViewId(start.id)
+        setState({ loading: null, mode: start.kind === 'walk' ? 'walk' : 'orbit' })
         window.__ready = true
       })
       .catch(err => {
