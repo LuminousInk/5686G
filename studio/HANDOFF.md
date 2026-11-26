@@ -6,7 +6,13 @@ Cedar Ridge (the user's hero photo, recreated), Coastal Modern, Woodland Modern,
 Farmhouse (single storey). Features: walk through with full look up/down on phones, dollhouse, floor plan, finishes,
 time of day, share codes, a ray-traced photo mode and a plan editor (v1).
 
-`npm run check` passes: oxlint, 25 vitest tests and tsc plus the vite build. `npm run smoke` drives every mode on a
+Today's work: baked interior lighting (golden hour and day for all five plans; Cycles bake offline, bound at runtime
+by a geometry signature, see README "Baked lighting"), a procedural modern furniture kit with per-room layouts,
+interior doors that read as doors (wood leaf, handles, hinges, swing into the larger room), and an "Interior walls"
+finish zone with seven options. Much of it was drafted by OpenCode Go-model agents via `tools/oc-agent.sh` from
+written briefs, then reviewed before merging. `?view=<view id>` now works (opens that view on load).
+
+`npm run check` passes: oxlint, 49 vitest tests and tsc plus the vite build. `npm run smoke` drives every mode on a
 1440 px desktop and on an emulated iPhone 13. Point it at the strict-CSP server: `node tools/csp-preview.mjs`, then
 `BASE=http://localhost:4174/ npm run smoke`.
 
@@ -35,14 +41,29 @@ Git: the old "No commit/push" was lifted by the user ("commit all you want"). Co
 
 ## Layout
 - `src/engine/`: renderer and loop, skies, materials, the plan-to-3D house builder, site and lawn, furnished
-  interiors, navigation and photo bake. See README "How it is built".
+  interiors, lightmaps (`bake/`), navigation and photo bake. See README "How it is built".
 - `src/plans/`: the five plans as data, plus `validate.ts`, whose `planProblems()` checks plan data that the builder
   would otherwise silently skip.
 - `src/ui/`: React UI, `Editor.tsx`, and `planEdits.ts` (pure, tested edit operations).
 - `src/vendor/ez-tree/`: procedural trees (MIT).
-- `tools/`: asset pipeline, screenshots, interaction tests, thumbnails, artifact packaging.
-- `public/assets/` (about 35 MB of built web assets, CC0) is included. `.cache/raw` (about 125 MB of Poly Haven
-  downloads) is not. To add or change assets, run `python3 tools/fetch_assets.py` and then `node tools/build_assets.mjs`.
+- `tools/`: asset pipeline, screenshots, interaction tests, thumbnails, artifact packaging, the lightmap bake
+  (`bake.mjs` drives `bake/bake.py`), and `oc-agent.sh` (below).
+- `public/assets/` (about 55 MB of built web assets, CC0; lightmaps included) is committed. `.cache/raw` (about
+  125 MB of Poly Haven downloads) is not. To add or change assets, run `python3 tools/fetch_assets.py` and then
+  `node tools/build_assets.mjs`.
+
+## OpenCode agents
+
+`tools/oc-agent.sh <name> <model> <brief.md> [extra-allowed-tools]` runs one coding agent on an OpenCode Go model
+(the Claude Code CLI pointed at the OpenCode gateway that `npx @opencode/console setup claude-code` configured) in
+its own git worktree under `../oc-work`, so its changes can be reviewed and merged like a branch. The agent may only
+edit files and run typecheck / lint / tests; it never commits. Review `git diff` in the worktree, then commit there
+and merge the branch `oc/<name>`. Go models seen working: opencode-go/deepseek-v4.1-flash, opencode-go/deepseek-v4-pro,
+opencode-go/glm-5.3, opencode-go/kimi-k3, opencode-go/qwen3.8-flash, opencode-go/minimax-m3. Today agents drafted the
+doors, wall finishes, furniture kit, asset pipeline and layouts from written briefs; every change was reviewed before
+merging. (Go models need an x-opencode-session header; the script passes it via `--settings`, because the env block in
+`~/.claude/settings.json` would override a plain environment variable. The CLI runs with a clean environment so the
+parent's provider variables cannot pin it to Anthropic's API.)
 
 ## Publishing the Artifact
 1. `npm run build && node tools/artifact.mjs` writes `dist/artifact.html` and `dist/artifact-files.json`. Test the
@@ -75,6 +96,15 @@ Git: the old "No commit/push" was lifted by the user ("commit all you want"). Co
 - Phones get the `low` tier: 512 px textures, `models-lo`, half-res AO and fewer grass blades. The dusk sky exists at 1k only.
 - The path tracer is three-gpu-pathtracer 0.0.28, the WebGL version (deprecated upstream in favour of WebGPU). It loads
   lazily, and `photo/bake.ts` turns instanced and shader-driven pieces into plain meshes first.
+- Lightmaps: a lightmap binds only when its stored signature matches the built geometry, so any change to house or
+  furniture geometry (furniture casts the contact shadows baked into floors) needs a re-bake, and edited plans fall back
+  to the old live lighting until then. Bake with `node tools/bake.mjs` (README "Baked lighting"); about 10 minutes per
+  plan and time of day on 4 CPU cores.
+- The bake runs Blender 5.3 as a Python module from the venv at `/root/.venvs/bake` (`BAKE_PYTHON` overrides). Its
+  glTF import flips V (glTF's origin is top-left, Blender's bottom-left), so `tools/bake/bake.py` flips the rows back
+  before writing. Denoising uses the pip package `oidn` (the RTLightmap filter) after growing charts into their
+  gutters; without it the script falls back to a blur. Lightmap materials get no mipmaps (they would blend across
+  charts).
 
 ## Open / next
 - Two storeys (levels plus stairs): Aspen's walkout level and the farmhouse's upstairs.
@@ -83,7 +113,8 @@ Git: the old "No commit/push" was lifted by the user ("commit all you want"). Co
   garage beside the office and gym and the bedrooms toward the ADU.
 - Plan edits live in one browser (localStorage), and share codes carry plan, finishes and light only. A shared
   Artifact database would let edits travel.
-- Per-room light probes or baked lightmaps for far rooms. Frame times on real phones are not measured yet.
+- Baked lightmaps cover golden hour and day only; dusk and night interiors still use the live lighting (lamps plus
+  the interior probe). Frame times on real phones are not measured yet.
 - The UE5 pixel-streamed demo (Arcware) could not be viewed from the sandbox because WebRTC is blocked. Matching it
   more closely needs screenshots from the user.
 - No gallery picture is set on the Artifact. A 1200x630 cover (`cover.jpg`) was sent to the user and can be set from

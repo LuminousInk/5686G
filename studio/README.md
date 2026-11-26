@@ -34,6 +34,7 @@ node tools/photo.mjs                   # path tracer smoke test
 node tools/thumbs.mjs                  # plan card thumbnails into public/thumbs
 node tools/artifact.mjs                # after `npm run build`: dist/artifact.html + dist/artifact-files.json
 node tools/csp-preview.mjs             # serves dist/ under a strict CSP like the artifact host (port 4174)
+node tools/bake.mjs                    # baked interior lightmaps (see below; needs the Blender venv)
 ```
 
 ## Controls
@@ -59,14 +60,15 @@ src/engine/
   env/lights.ts        dusk / night lights (always present at 0 intensity, so no shader recompiles)
   materials/           texture bank (Poly Haven sets, metre-scaled UVs), finish catalog, material library
   house/               plan data model (types.ts) -> walls, cladding, openings, roofs, decks, porches, stairs
-  interior/            furniture by room type (anchor wall finder, Poly Haven models + procedural kitchen/bed/bath)
+  interior/            furniture by room type: procedural modern kit + Poly Haven/Wayfair models, layouts per room
+  bake/                lightmap UVs, runtime lightmap binding, export of the loaded home for the offline bake
   site/                terrain, camera-following lawn, feather grass, rock gardens, trees (ez-tree), furniture
   nav/navigator.ts     orbit / walk / dollhouse controls, collisions, tap-to-walk, tweens
   photo/bake.ts        turns instanced / shader-driven pieces into plain meshes for the path tracer
 src/plans/             five plans as data (blocks, walls, openings, rooms, decks, landscape, views, finishes)
 src/ui/                React UI: plan browser, style panel, floor plan, editor, photo mode, share link
 src/vendor/ez-tree/    procedural trees (MIT), trimmed
-tools/                 asset pipeline, screenshots, interaction tests, thumbnails, artifact packaging
+tools/                 asset pipeline, screenshots, interaction tests, thumbnails, artifact packaging, lightmap bake
 ```
 
 ### Plans are data
@@ -86,6 +88,51 @@ furniture, the floor plan labels and the light probe. See `src/plans/cedarRidge.
   wall, gutters, downspouts, slat railings, solar cells.
 - An interior light probe (captured after the sun lights the rooms) gives warm bounce light indoors.
 - A path-traced photo mode (three-gpu-pathtracer) with the full HDRI for stills.
+
+### Baked lighting
+
+Interiors are lit by baked lightmaps (`src/engine/bake`, `tools/bake`):
+
+- `lightmapUV.ts` gives every interior shell mesh deterministic lightmap UVs (attribute `uv1`): triangles are
+  grouped into flat charts, each chart is projected at a fixed texel density (40 per metre) and all charts are
+  shelf-packed into one 2048 atlas. The same plan always yields the same layout, and a geometry signature
+  fingerprints the input.
+- `exportBake.ts` (called as `window.__bakeExport()`, wired in `src/ui/App.tsx`) packs the loaded home for the
+  bake: one GLB with the lightmap targets (`LM_*`, atlas UVs as their only UV set) and every other opaque mesh
+  as an occluder (`OCC_*`), plus the world-space, sun-free sky and the sun, so Blender lights the scene exactly
+  like the app.
+- `tools/bake.mjs` drives export + bake per plan and time of day (default: golden and day for all five plans).
+  Usage: `npm run build && npx vite preview`, then `node tools/bake.mjs [plan ...] --times golden,day
+  --samples 64`. It calls `tools/bake/bake.py` (Blender as a Python module, venv at `/root/.venvs/bake`),
+  where Cycles bakes the sky's light (direct through windows + every bounce) plus the sun's bounce; the direct
+  sun stays real time, so sun patches stay sharp and move with the time of day. The result is denoised with
+  Intel Open Image Denoise (RTLightmap filter, pip package `oidn`) after growing the charts into their gutters.
+  It writes RGBE-in-WebP lightmaps to `public/assets/lightmaps/<plan>-<time>.webp` (2048), a `-1k` copy for
+  phones and a `.json` sidecar (signature, scale). Blender's glTF import flips V, so `bake.py` flips the rows
+  back before writing. A bake takes about 10 minutes per plan and time on 4 CPU cores.
+- `lightmaps.ts` binds a lightmap only when its signature matches the built geometry; edited plans and stale
+  bakes fall back to the live lighting. Lightmapped materials drop the IBL's diffuse term (the bake already
+  contains it; reflections stay) and get no mipmaps, which would blend across charts. Per-room exposure:
+  `Engine.insideExposure()` meters the baked floor light of the room the camera is in.
+
+**Re-bake whenever house or furniture geometry changes.** The app refuses a lightmap whose signature no longer
+matches the house shell; furniture is not part of the signature (it only casts the contact shadows baked into
+floors), so after furniture changes nothing warns you: re-bake by hand.
+
+### Interiors
+
+- `src/engine/interior/modern.ts` is a procedural modern furniture kit: platform bed, nightstand, lamps, dining
+  table and chairs, bar stool, sideboard, media console + TV, wardrobe, sofa, area rug. `FURNITURE_FOOTPRINTS`
+  lists each piece's footprint for layout. Also used: Wayfair models (GlamVelvetSofa, SheenChair,
+  SheenWoodLeatherSofa, CC BY 4.0) and Poly Haven models (modern_wooden_cabinet, wooden_display_shelves_01,
+  desk_lamp_arm_01).
+- `src/engine/interior/interior.ts` lays out rooms with door keep-out zones and walkways, a focal point (the
+  sofa faces a media wall), tall pieces only on windowless walls, beds that slide along the wall to fit, and a
+  view-facing seating group for glass-walled great rooms. Big pieces get colliders.
+- Interior doors read as doors: palette wood leaf, lever handles and hinges, swinging into the larger room,
+  with a collider.
+- An "Interior walls" finish zone with seven options (warm white, greige, sage, clay, fog blue, charcoal,
+  limewash).
 
 ### Editor (v1)
 
@@ -118,5 +165,7 @@ three.js, postprocessing, n8ao, three-mesh-bvh, three-gpu-pathtracer: MIT.
 
 - One storey: Aspen's walkout level and the farmhouse's second floor are not modelled yet (needs levels + stairs).
 - Share links carry plan, finishes and light; plan edits stay in the browser that made them.
-- Interiors use one light probe per home; per-room probes or baked lightmaps would improve far rooms.
+- Only golden hour and day are baked; dusk and night interiors use the live lighting.
+- An edited plan (or a stale bake) falls back to the live lighting, since a lightmap binds only on a signature
+  match. Re-baking takes about 10 minutes per plan and time of day on CPU.
 - The path tracer is the WebGL one (deprecated upstream in favour of WebGPU); swap when WebGPU is everywhere.
