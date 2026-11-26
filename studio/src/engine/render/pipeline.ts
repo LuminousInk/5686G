@@ -15,6 +15,7 @@ import {
 } from 'postprocessing'
 import { N8AOPostPass } from 'n8ao'
 import type { QualitySettings } from '../quality'
+import { Meter } from './meter'
 
 /**
  * Accumulates jittered frames while the camera holds still: anti-aliasing, soft sun shadows (the sun is jittered
@@ -26,6 +27,9 @@ class AccumulatePass extends Pass {
   private index = 0
   count = 0
   exposure = 1
+  /** meters the next frame (before exposure) when set */
+  meterNext = false
+  readonly meter = new Meter()
   private copyMat: THREE.ShaderMaterial
 
   constructor() {
@@ -65,6 +69,10 @@ class AccumulatePass extends Pass {
   }
 
   override render(renderer: THREE.WebGLRenderer, inputBuffer: THREE.WebGLRenderTarget, outputBuffer: THREE.WebGLRenderTarget | null) {
+    if (this.meterNext) {
+      this.meterNext = false
+      this.meter.measure(renderer, inputBuffer.texture)
+    }
     const m = this.fullscreenMaterial as THREE.ShaderMaterial
     const write = this.targets[this.index]
     const read = this.targets[1 - this.index]
@@ -196,6 +204,15 @@ export class RenderPipeline {
     return this.accumulate.count
   }
 
+  /** Light meter on the HDR frame; call requestMeter() before a render to take a reading. */
+  get meter() {
+    return this.accumulate.meter
+  }
+
+  requestMeter() {
+    this.accumulate.meterNext = true
+  }
+
   get converged() {
     return this.maxFrames > 0 && this.accumulate.count >= this.maxFrames
   }
@@ -234,6 +251,7 @@ export class RenderPipeline {
   }
 
   dispose() {
+    this.accumulate.meter.dispose()
     this.composer.dispose()
   }
 }

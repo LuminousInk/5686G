@@ -4,6 +4,7 @@ import { buildHouse, type HouseModel } from './house/build'
 import type { HomePlan } from './house/types'
 import { MaterialLibrary } from './materials/library'
 import { SkyEnvironment, TIME_PRESETS } from './env/environment'
+import { exposureFor } from './render/meter'
 import { RenderPipeline } from './render/pipeline'
 import { detectTier, TIERS, type QualitySettings } from './quality'
 import { Site } from './site/site'
@@ -57,8 +58,12 @@ export class Engine {
   onRendered?: () => void
   /** keep rendering while this returns true (held keys, joystick, tweens) */
   keepAlive?: () => boolean
-  /** eye adaptation: exposure multiplier eases toward 1 outside, higher inside */
+  /** eye adaptation: exposure multiplier eases toward 1 outside, toward the light meter's reading inside */
   private adapt = 1
+  private meterAt = -1e9
+  private meterSerial = -1
+  /** absolute exposure the light meter asks for (0 until the first reading) */
+  private metered = 0
   dollhouse = false
 
   constructor(private opts: EngineOptions) {
@@ -357,11 +362,22 @@ export class Engine {
       this.stop()
       return
     }
-    // eye adaptation (inside rooms are 2-3 stops darker than a sunny yard)
+    // eye adaptation: inside, a camera-style light meter on the rendered frame sets the exposure (see render/meter.ts);
+    // outside keeps each time of day's tuned exposure
+    if ((moved || this.pipeline.frames <= 1) && t - this.meterAt > 120) {
+      this.pipeline.requestMeter()
+      this.meterAt = t
+    }
+    const meter = this.pipeline.meter
+    if (meter.last && meter.serial !== this.meterSerial) {
+      this.meterSerial = meter.serial
+      this.metered = exposureFor(meter.last, 0.3 - 0.14 * this.sky.preset.lamps)
+    }
     const inside = this.isInside(this.camera.position)
-    const want = inside ? this.insideExposure() : 1
-    if (Math.abs(want - this.adapt) > 0.004) {
-      this.adapt += (want - this.adapt) * Math.min(1, dt * 2.2)
+    let want = 1
+    if (inside) want = this.metered > 0 && meter.supported ? THREE.MathUtils.clamp(this.metered / this.sky.exposure, 0.35, 40) : this.insideExposure()
+    if (Math.abs(Math.log(want / this.adapt)) > 0.006) {
+      this.adapt *= Math.pow(want / this.adapt, Math.min(1, dt * 3))
       this.pipeline.reset()
     }
     this.pipeline.exposure = this.sky.exposure * this.adapt

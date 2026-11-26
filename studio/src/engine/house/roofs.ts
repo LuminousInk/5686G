@@ -15,6 +15,10 @@ const RIB_PITCH = 0.42
  * Roof slabs (top = roof finish with standing seams, edges = fascia in the trim colour, underside = wood soffit
  * outside the walls and the ceiling inside), gutters, downspouts and solar.
  */
+/** Draws nothing; only casts shadows (both faces). Meshes with it are tagged userData.shadowOnly by the house builder. */
+export const SHADOW_ONLY = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, shadowSide: THREE.DoubleSide })
+SHADOW_ONLY.name = 'shadow-only'
+
 export function buildRoofs(plan: HomePlan, lib: MaterialLibrary, roofBatch: MeshBatch, ceilingBatch: MeshBatch): RoofOutput {
   const out: RoofOutput = { downlights: [] }
   for (const b of plan.blocks) buildBlockRoof(plan, b, lib, roofBatch, ceilingBatch, out)
@@ -37,6 +41,7 @@ function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatc
   const soffit = new GeoBuilder()
   const ceil = new GeoBuilder()
   const ribs = new GeoBuilder()
+  const blocker = new GeoBuilder()
   const vaulted = typeof b.ceiling !== 'number'
   const ceilMat = b.utility ? lib.ceiling : b.ceilingFinish === 'wood' ? lib.ceilingWood : lib.ceiling
 
@@ -46,6 +51,10 @@ function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatc
     const bt = [P(ax0, az1, 0), P(ax1, az1, 0), P(ax1, az0, 0), P(ax0, az0, 0)]
     const tp = [P(ax0, az1, T), P(ax1, az1, T), P(ax1, az0, T), P(ax0, az0, T)]
     top.quad(tp[0], tp[1], tp[2], tp[3])
+    // the top faces the sun, so (single sided) it never reaches the shadow map, which then holds only the thin ceiling:
+    // at a low sun its depth is too coarse where it meets the walls and light leaks in along the joint. An invisible
+    // plane halfway up the slab gives the shadow map a solid roof, clear of the ceiling and of the top (no acne).
+    blocker.quad(P(ax0, az1, T / 2), P(ax1, az1, T / 2), P(ax1, az0, T / 2), P(ax0, az0, T / 2))
     // fascia edges: s0 = south edge, s1 = east, s2 = north, s3 = west
     const edgeSides: Side[] = ['s', 'e', 'n', 'w']
     for (let i = 0; i < 4; i++) {
@@ -134,6 +143,7 @@ function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatc
   }
 
   roofBatch.add(lib.zone('roof'), top.build())
+  roofBatch.add(SHADOW_ONLY, blocker.build())
   roofBatch.add(lib.zone('roof'), ribs.build())
   roofBatch.add(lib.zone('trim'), fascia.build())
   roofBatch.add(b.cladding.default.kind === 'boards' ? lib.soffit : lib.soffitDark, soffit.build())

@@ -1,0 +1,21 @@
+# Policy for headless Gemini CLI workers (tools/gemini-agent.sh). Anything not allowed here is denied in headless mode.
+# Reads and searches are allowed by default; edits are allowed by --approval-mode auto_edit.
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["npx tsc", "npx vitest", "npx oxlint", "npm run typecheck", "npm run lint", "npm test",
+                 "git diff", "git status", "git log", "git show", "ls", "wc", "head", "tail", "file ", "identify "]
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = ["web_fetch", "google_web_search"]
+decision = "allow"
+priority = 100
+
+# never: publish, delete, or install
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["git push", "git commit", "git reset", "git checkout", "git clean", "rm ", "npm install", "npm i ", "pip ", "curl -X", "sudo"]
+decision = "deny"
+priority = 900

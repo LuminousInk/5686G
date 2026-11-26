@@ -41,6 +41,10 @@ export function PhotoMode({ engine }: { engine: Engine }) {
       if (disposed) return
       // bake real-time-only geometry
       const bake = engine.site?.bakeForPhoto(camera) ?? { add: [], hide: [] }
+      // shadow-only blockers draw nothing in the raster view, but the path tracer would treat them as surfaces
+      scene.traverse(o => {
+        if (o.userData.shadowOnly) bake.hide.push(o)
+      })
       for (const o of bake.hide) {
         const v = o.visible
         o.visible = false

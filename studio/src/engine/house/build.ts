@@ -46,12 +46,17 @@ export function buildHouse(plan: HomePlan, lib: MaterialLibrary): HouseModel {
   const out = outBatch.toGroup('outdoor')
   const inner = intBatch.toGroup('interior')
   group.add(shell, roof, ceilings, out, inner)
-  // glass never casts shadows (sun streams through windows)
+  // glass never casts shadows (sun streams through windows); shadow-only blockers never draw or receive
   group.traverse(o => {
     const m = o as THREE.Mesh
-    if (m.isMesh && (m.material as THREE.Material).name === 'glass') {
+    if (!m.isMesh) return
+    const name = (m.material as THREE.Material).name
+    if (name === 'glass') {
       m.castShadow = false
       m.renderOrder = 2
+    } else if (name === 'shadow-only') {
+      m.receiveShadow = false
+      m.userData.shadowOnly = true
     }
   })
 
