@@ -293,10 +293,11 @@ export class Engine {
     const room = this.plan.rooms.find(r => x >= r.rect[0] && x <= r.rect[2] && z >= r.rect[1] && z <= r.rect[3])
     const e = room ? light.get(room.id) : undefined
     if (!e) return Engine.INSIDE_BOOST
-    // the plan's median room keeps the tuned boost; darker rooms open up partly, like a camera's auto exposure
+    // the plan's median room keeps the tuned boost; darker rooms (facing away from the sun) open up most of the way,
+    // like a camera's auto exposure, so they read as dimmer but never murky
     const all = [...light.values()].sort((a, b) => a - b)
     const median = all[all.length >> 1]
-    return THREE.MathUtils.clamp(Engine.INSIDE_BOOST * Math.pow(median / e, 0.6), 1, 6)
+    return THREE.MathUtils.clamp(Engine.INSIDE_BOOST * Math.pow(median / e, 0.85), 1, 8)
   }
 
   isInside(p: THREE.Vector3) {
