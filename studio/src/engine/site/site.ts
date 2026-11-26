@@ -267,6 +267,8 @@ export class Site {
 
     // boulders on the slope (front half mostly), partly buried
     const place = (pieces: THREE.Mesh[], n: number, size: [number, number], where: [number, number], flat = 1) => {
+      // every rock model may have been skipped (see loadModel); the berm then keeps its pebbles and plants
+      if (!pieces.length) return
       for (let i = 0; i < n; i++) {
         const src = pieces[Math.floor(rand() * pieces.length)]
         const a = rand() * Math.PI * 2

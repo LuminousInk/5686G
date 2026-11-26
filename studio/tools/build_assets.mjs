@@ -2,7 +2,8 @@
 // Turns the raw Poly Haven downloads (.cache/raw, see fetch_assets.py) into web-ready files in public/assets/:
 //   hdri/<id>_<res>.hdr                 copied as-is (RGBE)
 //   tex/<id>_<res>_{d,n,arm}.webp        PBR maps (diffuse sRGB, OpenGL normal, AO/rough/metal)
-//   models/<id>.glb                      simplified meshes (meshoptimizer), webp textures, meshopt-compressed
+//   models{,-lo}/<id>.json + <id>_<n>.webp  simplified meshes as glTF JSON (one inline buffer, no meshopt:
+//                                        hosts may refuse WebAssembly) with textures as separate webp files
 //   trees/*.webp                         ez-tree bark and needle textures
 // Usage: node tools/build_assets.mjs [only-matching-substring]
 import fs from 'node:fs'
@@ -10,7 +11,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { NodeIO } from '@gltf-transform/core'
-import { ALL_EXTENSIONS, EXTMeshoptCompression } from '@gltf-transform/extensions'
+import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
 import { dedup, prune, weld, simplify, textureCompress, reorder, flatten, join } from '@gltf-transform/functions'
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer'
 
@@ -132,20 +133,25 @@ async function models() {
       prune(),
       reorder({ encoder: MeshoptEncoder }),
     )
-    doc.createExtension(EXTMeshoptCompression).setRequired(true).setEncoderOptions({
-      method: EXTMeshoptCompression.EncoderMethod.FILTER,
-    })
-    // self-contained glTF JSON (buffers and webp textures as data URIs): served everywhere as .json
-    const out = path.join(OUT, lo ? 'models-lo' : 'models', `${id}.json`)
+    // No EXT_meshopt_compression: its decoder is WebAssembly, which locked-down hosts (the artifact CSP) refuse.
+    const dir = path.join(OUT, lo ? 'models-lo' : 'models')
     const { json, resources } = await io.writeJSON(doc)
-    for (const b of json.buffers ?? []) {
-      if (b.uri && resources[b.uri]) b.uri = `data:application/octet-stream;base64,${Buffer.from(resources[b.uri]).toString('base64')}`
-    }
-    for (const im of json.images ?? []) {
-      if (im.uri && resources[im.uri]) im.uri = `data:${im.mimeType ?? 'image/webp'};base64,${Buffer.from(resources[im.uri]).toString('base64')}`
-    }
+    // geometry: one buffer, inline as base64. src/engine/models.ts decodes it itself; a strict host refuses to
+    // fetch data: URLs, so the loader never hands this URI to GLTFLoader.
+    if ((json.buffers ?? []).length !== 1) throw new Error(`${id}: expected one buffer, got ${json.buffers?.length ?? 0}`)
+    for (const b of json.buffers) b.uri = `data:application/octet-stream;base64,${Buffer.from(resources[b.uri]).toString('base64')}`
+    // textures: plain same-origin .webp files next to the model (fetched like any other texture)
+    for (const f of fs.readdirSync(dir).filter(f => f.startsWith(`${id}_`) && f.endsWith('.webp'))) fs.unlinkSync(path.join(dir, f))
+    let texBytes = 0
+    ;(json.images ?? []).forEach((im, i) => {
+      const name = `${id}_${i}.webp`
+      fs.writeFileSync(path.join(dir, name), Buffer.from(resources[im.uri]))
+      texBytes += resources[im.uri].byteLength
+      im.uri = name
+    })
+    const out = path.join(dir, `${id}.json`)
     fs.writeFileSync(out, JSON.stringify(json))
-    log('model', (lo ? 'lo ' : '') + id.padEnd(26), `${before} -> ${triCount(doc)} tris`, mb(fs.statSync(out).size))
+    log('model', (lo ? 'lo ' : '') + id.padEnd(26), `${before} -> ${triCount(doc)} tris`, 'geometry', mb(fs.statSync(out).size), 'textures', mb(texBytes))
     }
   }
 }

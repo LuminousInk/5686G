@@ -100,7 +100,8 @@ export function App() {
     }
   }, [])
 
-  // ------------------------------------------------------------ load plan when it changes
+  // ------------------------------------------------------------ load plan when it changes (or on Try again)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     if (!engine || !nav) return
     let cancelled = false
@@ -121,12 +122,15 @@ export function App() {
       })
       .catch(err => {
         console.error(err)
-        setState({ loading: { p: 1, label: 'Could not load this home. Reload the page to try again.' } })
+        if (cancelled) return
+        // say why: a screenshot of this screen is often the only report we get from a phone
+        const why = err instanceof Error ? err.message : String(err)
+        setState({ loading: { p: 1, label: 'Could not load this home.', error: why.slice(0, 180) } })
       })
     return () => {
       cancelled = true
     }
-  }, [planId])
+  }, [planId, attempt])
 
   // ------------------------------------------------------------ keep the share hash current
   useEffect(() => {
@@ -359,9 +363,18 @@ export function App() {
               <p className="eyebrow">Cuby Homes</p>
               <h1>{plan.name}</h1>
               <p className="loading-label">{loading.label}</p>
-              <div className="bar">
-                <span style={{ transform: `scaleX(${Math.max(0.04, loading.p)})` }} />
-              </div>
+              {loading.error !== undefined ? (
+                <>
+                  <p className="loading-error">{loading.error}</p>
+                  <button type="button" className="btn loading-retry" onClick={() => setAttempt(a => a + 1)}>
+                    Try again
+                  </button>
+                </>
+              ) : (
+                <div className="bar">
+                  <span style={{ transform: `scaleX(${Math.max(0.04, loading.p)})` }} />
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -15,7 +15,7 @@ python3 tools/fetch_assets.py     # CC0 assets from Poly Haven into .cache/raw (
 node tools/build_assets.mjs       # web-ready textures, models and skies into public/assets (about 40 MB)
 npm run dev                       # http://localhost:5173
 npm run build                     # static site in dist/ (relative paths)
-npm run check                     # oxlint, unit tests (plan data, share codes, editor), build
+npm run check                     # oxlint, unit tests (plan data, share codes, editor, host-safe models), build
 npm run smoke                     # drives every mode, desktop + phone (dev server running, or BASE=...)
 ```
 
@@ -33,6 +33,7 @@ node tools/interact.mjs [--mobile]     # drives every mode (walk, look up, tap-w
 node tools/photo.mjs                   # path tracer smoke test
 node tools/thumbs.mjs                  # plan card thumbnails into public/thumbs
 node tools/artifact.mjs                # after `npm run build`: dist/artifact.html + dist/artifact-files.json
+node tools/csp-preview.mjs             # serves dist/ under a strict CSP like the artifact host (port 4174)
 ```
 
 ## Controls
@@ -92,6 +93,19 @@ Pencil button. Select a volume and drag its handles (touching volumes, rooms and
 change roof type, heights, direction and cladding; move, add or delete windows and doors; draw, move or
 delete interior walls; add a volume. Undo/redo, reset. Edits rebuild the 3D house in place (landscape kept) and
 are saved in the browser (localStorage). "Copy plan data" copies the plan JSON.
+
+### Runs on a locked-down host
+
+The claude.ai artifact host enforces a strict Content-Security-Policy. A `vite preview` test does not, so always
+re-test a build with `node tools/csp-preview.mjs` and `BASE=http://localhost:4174/ npm run smoke`. What the policy
+rules out, and how the app avoids it:
+
+- WebAssembly is refused, so models are not meshopt-compressed (its decoder is WebAssembly).
+- `fetch()` of `data:` and `blob:` URLs is refused, so each model is a glTF JSON with one inline base64 buffer.
+  `src/engine/models.ts` turns it into a GLB in memory instead of letting GLTFLoader fetch the URI, and the model
+  textures are separate same-origin `.webp` files.
+- A model that still fails is skipped (`skippedModels`) and the home loads without it. A failed home load shows
+  the reason and a Try again button.
 
 ## Assets and licences
 

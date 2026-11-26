@@ -31,7 +31,8 @@ export interface AppState {
   time: string
   mode: UiMode
   sheet: Sheet
-  loading: { p: number; label: string } | null
+  /** progress of the current load; `error` is set when it failed (shown with a Try again button) */
+  loading: { p: number; label: string; error?: string } | null
   viewId: string | null
   toast: string | null
   photo: null | { state: 'rendering' | 'done'; samples: number; url?: string }

@@ -6,14 +6,19 @@ Cedar Ridge (the user's hero photo, recreated), Coastal Modern, Woodland Modern,
 Farmhouse (single storey). Features: walk through with full look up/down on phones, dollhouse, floor plan, finishes,
 time of day, share codes, a ray-traced photo mode and a plan editor (v1).
 
-`npm run check` passes: oxlint, 16 vitest tests and tsc plus the vite build. `npm run smoke` drives every mode on a
-1440 px desktop and on an emulated iPhone 13. It needs `npm run dev` running, or `BASE=http://localhost:4173/` with
-`npx vite preview` after a build.
+`npm run check` passes: oxlint, 25 vitest tests and tsc plus the vite build. `npm run smoke` drives every mode on a
+1440 px desktop and on an emulated iPhone 13. Point it at the strict-CSP server: `node tools/csp-preview.mjs`, then
+`BASE=http://localhost:4174/ npm run smoke`.
 
 The app is published privately as a claude.ai Artifact: https://claude.ai/artifact/Dc4CWcffvib7rsGXcgsxVC.
-Update it in place by passing that URL. Nothing is committed or pushed. The repository's stop hook asks for a commit
-to branch `claude/opencode-console-setup-wa7xho`, but the session's permission check blocked it because of the
-"No commit/push" constraint, so the user decides. Hermes (from the previous handoff) was not touched this session.
+Update it in place by passing that URL. The first 3D version failed on the user's Android phone ("Could not load
+this home") because of the host's CSP (see Gotchas). It is fixed and was verified under `tools/csp-preview.mjs`.
+After the fix the user still has to confirm it on the real phone.
+
+Git: the user allowed commits. Work is committed on branch `claude/opencode-console-setup-wa7xho`, but pushing failed
+with "Claude doesn't have GitHub access to LuminousInk/5686G". The user must connect GitHub at
+https://claude.ai/connect-github and install the Claude GitHub App on the repository. Until then the zip sent to the
+user is the only copy outside this container. Hermes (from the previous handoff) was not touched this session.
 
 ## What the user asked for
 - Phone viewing where you can move and look up and down, working like an archviz walkthrough
@@ -24,9 +29,9 @@ to branch `claude/opencode-console-setup-wa7xho`, but the session's permission c
   and r3f were considered.
 
 ## Constraints
-No commit/push. No public file hosts. Ask before credentials, money, public URLs or email. Artifacts: publish privately only.
-The repository's stop hook asks for commits on the session branch. Ask the user before committing; if they agree,
-use `claude/opencode-console-setup-wa7xho`, never `main`.
+No public file hosts. Ask before credentials, money, public URLs or email. Artifacts: publish privately only.
+Git: the old "No commit/push" was lifted by the user ("commit all you want"). Commit to
+`claude/opencode-console-setup-wa7xho` only, never `main`.
 
 ## Layout
 - `src/engine/`: renderer and loop, skies, materials, the plan-to-3D house builder, site and lawn, furnished
@@ -40,16 +45,22 @@ use `claude/opencode-console-setup-wa7xho`, never `main`.
   downloads) is not. To add or change assets, run `python3 tools/fetch_assets.py` and then `node tools/build_assets.mjs`.
 
 ## Publishing the Artifact
-1. `npm run build && node tools/artifact.mjs` writes `dist/artifact.html` and `dist/artifact-files.json`.
+1. `npm run build && node tools/artifact.mjs` writes `dist/artifact.html` and `dist/artifact-files.json`. Test the
+   build under `tools/csp-preview.mjs` first.
 2. Publish `dist/artifact.html` with `root: dist` to the URL above. Send only new or changed files: the hashed
    bundles change, and `public/` files keep their names. Send `null` for old bundle names.
 3. The host serves web file types only, so there are no `.hdr` or `.glb` files:
    - Skies are RGBE packed into lossless WebP (`tools/encode_hdri.py`).
-   - Models are glTF JSON with embedded buffers and textures.
+   - Models are glTF JSON with one inline buffer, decoded in JS, plus separate `.webp` textures. There is no
+     meshopt, because the host refuses WebAssembly.
    - Only a plain `#name` hash survives, so share codes look like `#c-<plan>-<time>-<option per zone>`.
    - Downloads are blocked, so photo mode shows the image to long-press or right-click.
 
 ## Gotchas
+- The Artifact host has a strict CSP that `vite preview` lacks. The first 3D publish failed on the user's phone with
+  "Could not load this home" because WebAssembly (the meshopt decoder) and `fetch()` of `data:` URLs (inline model
+  buffers and textures) were refused. Models are now plain glTF JSON decoded in JS, with external textures.
+  Always test with `node tools/csp-preview.mjs` and `BASE=http://localhost:4174/`.
 - Opening cuts: `buildExteriorWalls` cuts an opening only when it fits one stretch of wall. One across a joint between
   volumes, or on a wall shared with a lower volume below its roof, is silently skipped (the floor plan would still
   draw it). Keep `src/plans/plans.test.ts` green when editing plans.
