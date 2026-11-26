@@ -110,6 +110,8 @@ rules out, and how the app avoids it:
 ## Assets and licences
 
 Skies, textures and models: Poly Haven, CC0. Trees: ez-tree (MIT, vendored). Font: Chakra Petch (OFL).
+GlamVelvetSofa, SheenChair, SheenWoodLeatherSofa: Wayfair LLC, via the Khronos glTF Sample Assets
+(https://github.com/KhronosGroup/glTF-Sample-Assets), CC BY 4.0.
 three.js, postprocessing, n8ao, three-mesh-bvh, three-gpu-pathtracer: MIT.
 
 ## Known limits / next

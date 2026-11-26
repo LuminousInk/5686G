@@ -54,6 +54,13 @@ const MODELS = {
   throw_pillows_01: { tris: 6500, tex: 512 },
   side_table_01: { tris: 3000, tex: 512 },
   wooden_bowl_01: { tris: 3000, tex: 512, error: 0.004 },
+  modern_wooden_cabinet: { tris: 5000, tex: 1024 },
+  wooden_display_shelves_01: { tris: 5000, tex: 1024 },
+  desk_lamp_arm_01: { tris: 3000, tex: 512, error: 0.004 },
+  // Khronos glTF Sample Assets (CC BY 4.0, Wayfair); gltf-transform keeps their sheen/specular extensions
+  GlamVelvetSofa: { tris: 12000, tex: 1024 },
+  SheenChair: { tris: 12000, tex: 1024 },
+  SheenWoodLeatherSofa: { tris: 12000, tex: 1024 },
 }
 
 const log = (...a) => console.log(...a)
@@ -119,9 +126,13 @@ async function models() {
     const isRock = /rock|stone|boulder/.test(id)
     // furniture and props never need more than 512px; phones get 256 (rocks keep 512)
     const cfg = { ...cfg0, tex: lo ? (isRock ? 512 : 256) : Math.min(cfg0.tex, isRock ? 1024 : 512) }
-    const src = path.join(RAW, 'models', id, `${id}.gltf`)
-    if (!fs.existsSync(src)) { log('skip ', id); continue }
+    const base = path.join(RAW, 'models', id)
+    // Poly Haven ships .gltf + .bin + textures; the Khronos samples are self-contained .glb
+    const src = [path.join(base, `${id}.gltf`), path.join(base, `${id}.glb`)].find(f => fs.existsSync(f))
+    if (!src) { log('skip ', id); continue }
     const doc = await io.read(src)
+    // some samples carry a presentation light; furniture must not light the room it stands in
+    for (const node of doc.getRoot().listNodes()) node.setExtension('KHR_lights_punctual', null)
     const before = triCount(doc)
     const ratio = Math.min(1, cfg.tris / before)
     await doc.transform(
