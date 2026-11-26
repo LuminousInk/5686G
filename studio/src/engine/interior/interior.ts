@@ -3,12 +3,16 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { GeoBuilder, MeshBatch, V3 } from '../geo'
 import type { HouseModel } from '../house/build'
 import { blockAt, ceilingAt, sideIntervals, WALL_T } from '../house/massing'
-import type { HomePlan, RoomDef, Side } from '../house/types'
+import type { HomePlan, Opening, Rect, RoomDef, Side } from '../house/types'
 import type { MaterialLibrary } from '../materials/library'
 import { rng } from '../materials/textures'
 import { placeModel } from '../models'
 import type { QualitySettings } from '../quality'
 import type { Segment2 } from '../house/walls'
+import {
+  FURNITURE_FOOTPRINTS, areaRug, barStool, diningChair, diningTable, floorLamp, mediaConsole,
+  nightstand, platformBed, sideboard, tv, wardrobe,
+} from './modern'
 
 type Dir = Side
 
@@ -23,6 +27,27 @@ interface Anchor {
   inZ: number
 }
 
+interface Footprint {
+  x: number
+  z: number
+  w: number
+  d: number
+  yaw: number
+}
+
+interface RoomOpening {
+  side: Dir
+  at: number
+  width: number
+  kind: Opening['kind']
+  exterior: boolean
+}
+
+interface RoomLayout {
+  keepOuts: Rect[]
+  pieces: Footprint[]
+}
+
 /**
  * Furnishes rooms by type. Each room picks an anchor wall (the longest stretch of solid wall, not a door or a
  * floor-to-ceiling window) and lays out pieces relative to it.
@@ -34,6 +59,7 @@ export class Interior {
   private batch = new MeshBatch()
   private plan!: HomePlan
   private fy = 0
+  private layouts = new Map<string, RoomLayout>()
 
   constructor(
     private lib: MaterialLibrary,
@@ -45,6 +71,7 @@ export class Interior {
   async build(plan: HomePlan, house: HouseModel) {
     this.plan = plan
     this.fy = plan.floorY
+    this.layouts.clear()
     void house
     const jobs: Promise<void>[] = []
     for (const r of plan.rooms) {
@@ -161,6 +188,147 @@ export class Interior {
     return out.sort((a, b) => b.len - a.len)
   }
 
+  /** Openings on the four room boundaries, with positions in world metres. */
+  private roomOpenings(r: RoomDef): RoomOpening[] {
+    const [x0, z0, x1, z1] = r.rect
+    const out: RoomOpening[] = []
+    const sideAt = (axis: 'x' | 'z', line: number): Dir | null => {
+      if (axis === 'x') {
+        if (Math.abs(line - z0) < 0.08) return 'n'
+        if (Math.abs(line - z1) < 0.08) return 's'
+      } else {
+        if (Math.abs(line - x0) < 0.08) return 'w'
+        if (Math.abs(line - x1) < 0.08) return 'e'
+      }
+      return null
+    }
+    const add = (side: Dir | null, at: number, o: Opening, exterior: boolean) => {
+      if (!side) return
+      const lo = side === 'n' || side === 's' ? x0 : z0
+      const hi = side === 'n' || side === 's' ? x1 : z1
+      if (at + o.width / 2 < lo || at - o.width / 2 > hi) return
+      out.push({ side, at, width: o.width, kind: o.kind, exterior })
+    }
+    for (const b of this.plan.blocks) {
+      const [bx0, bz0, bx1, bz1] = b.rect
+      const sides: [Dir, 'x' | 'z', number, number][] = [
+        ['n', 'x', bz0, bx0], ['s', 'x', bz1, bx0], ['w', 'z', bx0, bz0], ['e', 'z', bx1, bz0],
+      ]
+      for (const [side, axis, line, start] of sides) {
+        if (sideAt(axis, line) !== side) continue
+        for (const o of this.plan.openings.filter(o2 => o2.block === b.id && o2.side === side)) add(side, start + o.at, o, true)
+      }
+    }
+    for (const w of this.plan.walls) {
+      const horiz = Math.abs(w.a[1] - w.b[1]) < 0.01
+      const axis = horiz ? 'x' : 'z'
+      const line = horiz ? w.a[1] : w.a[0]
+      const side = sideAt(axis, line)
+      const start = horiz ? Math.min(w.a[0], w.b[0]) : Math.min(w.a[1], w.b[1])
+      const rev = horiz ? w.a[0] > w.b[0] : w.a[1] > w.b[1]
+      const wl = horiz ? Math.abs(w.b[0] - w.a[0]) : Math.abs(w.b[1] - w.a[1])
+      for (const o of this.plan.openings.filter(o2 => o2.wall === w.id)) add(side, start + (rev ? wl - o.at : o.at), o, false)
+    }
+    return out
+  }
+
+  /** One-metre landing squares immediately inside every door and interior opening. */
+  private keepOuts(r: RoomDef): Rect[] {
+    const out: Rect[] = []
+    for (const o of this.roomOpenings(r)) {
+      if (o.exterior && o.kind !== 'door' && o.kind !== 'entry' && o.kind !== 'slider') continue
+      const [x0, z0, x1, z1] = r.rect
+      if (o.side === 'n') out.push([o.at - 0.5, z0, o.at + 0.5, z0 + 1])
+      if (o.side === 's') out.push([o.at - 0.5, z1 - 1, o.at + 0.5, z1])
+      if (o.side === 'w') out.push([x0, o.at - 0.5, x0 + 1, o.at + 0.5])
+      if (o.side === 'e') out.push([x1 - 1, o.at - 0.5, x1, o.at + 0.5])
+    }
+    return out
+  }
+
+  private layout(r: RoomDef): RoomLayout {
+    let l = this.layouts.get(r.id)
+    if (!l) {
+      l = { keepOuts: this.keepOuts(r), pieces: [] }
+      this.layouts.set(r.id, l)
+    }
+    return l
+  }
+
+  private bounds(f: Footprint): Rect {
+    const c = Math.abs(Math.cos(f.yaw))
+    const s = Math.abs(Math.sin(f.yaw))
+    const hw = (f.w * c + f.d * s) / 2
+    const hd = (f.w * s + f.d * c) / 2
+    return [f.x - hw, f.z - hd, f.x + hw, f.z + hd]
+  }
+
+  /** Distance between footprint bounds; negative values mean they overlap. */
+  private clearance(a: Footprint, b: Footprint): number {
+    const aa = this.bounds(a)
+    const bb = this.bounds(b)
+    const dx = Math.max(aa[0] - bb[2], bb[0] - aa[2], 0)
+    const dz = Math.max(aa[1] - bb[3], bb[1] - aa[3], 0)
+    if (dx > 0 || dz > 0) return Math.hypot(dx, dz)
+    return -Math.min(Math.min(aa[2], bb[2]) - Math.max(aa[0], bb[0]), Math.min(aa[3], bb[3]) - Math.max(aa[1], bb[1]))
+  }
+
+  private canPlace(r: RoomDef, x: number, z: number, w: number, d: number, yaw = 0, gap = 0, ignorePlaced = false) {
+    if (w <= 0 || d <= 0) return false
+    const f = { x, z, w, d, yaw }
+    const [ax0, az0, ax1, az1] = this.bounds(f)
+    const [x0, z0, x1, z1] = this.inner(r)
+    const e = 1e-4
+    if (ax0 < x0 - e || az0 < z0 - e || ax1 > x1 + e || az1 > z1 + e) return false
+    for (const k of this.layout(r).keepOuts) {
+      if (ax0 < k[2] - e && ax1 > k[0] + e && az0 < k[3] - e && az1 > k[1] + e) return false
+    }
+    if (!ignorePlaced) {
+      for (const p of this.layout(r).pieces) {
+        const c = this.clearance(f, p)
+        if ((gap === 0 && c < -e) || (gap > 0 && c < gap - e)) return false
+      }
+    }
+    return true
+  }
+
+  private occupy(r: RoomDef, f: Footprint, collide = false) {
+    this.layout(r).pieces.push(f)
+    if (collide) this.obstacle(f.x, f.z, f.w, f.d, f.yaw)
+    return f
+  }
+
+  private fitWidth(r: RoomDef, p: { x: number; z: number; yaw: number }, w: number, d: number, minW: number, gap = 0) {
+    for (let width = w; width >= minW - 1e-4; width -= 0.1) {
+      const f = { ...p, w: width, d }
+      if (this.canPlace(r, f.x, f.z, f.w, f.d, f.yaw, gap)) return f
+    }
+    return null
+  }
+
+  private wallPoint(a: Anchor, depth: number, along = 0) {
+    const rx = a.inZ
+    const rz = -a.inX
+    return {
+      x: a.x + rx * along + a.inX * (depth / 2 + 0.03),
+      z: a.z + rz * along + a.inZ * (depth / 2 + 0.03),
+      yaw: this.yaw(a.inX, a.inZ),
+    }
+  }
+
+  private localPoint(cx: number, cz: number, yaw: number, u: number, v: number) {
+    const c = Math.cos(yaw)
+    const s = Math.sin(yaw)
+    return [cx + u * c + v * s, cz - u * s + v * c] as const
+  }
+
+  private kit(g: THREE.Group, x: number, z: number, yaw: number, y = 0) {
+    g.position.set(x, this.fy + y, z)
+    g.rotation.y = yaw
+    this.group.add(g)
+    return g
+  }
+
   /** yaw so that a model facing +z faces along (dx, dz) */
   private yaw(dx: number, dz: number) {
     return Math.atan2(dx, dz)
@@ -266,38 +434,125 @@ export class Interior {
 
   private async living(r: RoomDef) {
     const [x0, z0, x1, z1] = this.inner(r)
-    const an = this.anchors(r)
-    // sofa against the longest solid wall, facing in
-    const a = an[0]
+    const solid = this.anchors(r, false)
+    const a = solid[0]
+    if (!a) return
     const jobs: Promise<unknown>[] = []
-    if (a) {
-      const sx = a.x + a.inX * 0.5
-      const sz = a.z + a.inZ * 0.5
-      const yaw = this.yaw(a.inX, a.inZ)
-      jobs.push(this.model('sofa_03', sx, sz, yaw, { size: Math.min(2.6, a.len - 0.4) }))
-      this.obstacle(sx, sz, 2.6, 1.0, yaw)
-      // coffee table + rug
-      const tx = a.x + a.inX * 1.75
-      const tz = a.z + a.inZ * 1.75
-      this.rug(a.x + a.inX * 1.6, a.z + a.inZ * 1.6, 3.2, 2.4, yaw)
-      jobs.push(this.model('coffee_table_round_01', tx, tz, yaw, { size: 1.0 }))
-      // two lounge chairs across the rug
-      const px = -a.inZ
-      const pz = a.inX
-      for (const k of [-1, 1]) {
-        const cx = a.x + a.inX * 2.95 + px * k * 0.85
-        const cz = a.z + a.inZ * 2.95 + pz * k * 0.85
-        jobs.push(this.model(k < 0 ? 'mid_century_lounge_chair' : 'modern_arm_chair_01', cx, cz, this.yaw(-a.inX, -a.inZ) + k * 0.35, { size: 0.85 }))
+    const rx = a.inZ
+    const rz = -a.inX
+    const depth = a.inX > 0 ? x1 - a.x : a.inX < 0 ? a.x - x0 : a.inZ > 0 ? z1 - a.z : a.z - z0
+    const wallWidth = a.inX === 0 ? x1 - x0 : z1 - z0
+    const along = (x: number, z: number) => (x - a.x) * rx + (z - a.z) * rz
+    const into = (x: number, z: number) => (x - a.x) * a.inX + (z - a.z) * a.inZ
+
+    // The TV is the focal point; all seating is laid out from this solid wall.
+    const mediaD = a.len < 1.6 ? 0.5 : FURNITURE_FOOTPRINTS.mediaConsole.d
+    const mediaW = Math.min(a.len < 1.6 ? 1.4 : 2.0, a.len - 0.4, wallWidth - 0.3)
+    const media = this.fitWidth(r, this.wallPoint(a, mediaD), mediaW, mediaD, 0.7)
+    if (media) {
+      this.occupy(r, media, true)
+      if (a.len >= 1.6) {
+        this.kit(mediaConsole(this.lib, media.w), media.x, media.z, media.yaw)
+      } else {
+        jobs.push((async () => {
+          const cabinet = await this.model('modern_wooden_cabinet', media.x, media.z, media.yaw, { size: media.w })
+          let top = 0.62
+          if (cabinet) {
+            const b = new THREE.Box3().setFromObject(cabinet)
+            if (!b.isEmpty()) top = b.max.y - this.fy
+          }
+          this.kit(tv(this.lib, Math.min(1.25, media.w)), media.x, media.z, media.yaw, top)
+        })())
       }
-      // side table + plant at the sofa end
-      jobs.push(this.model('side_table_01', a.x + a.inX * 0.45 + px * 1.6, a.z + a.inZ * 0.45 + pz * 1.6, yaw, { size: 0.5 }))
-      jobs.push(this.model('potted_plant_01', a.x + a.inX * 0.45 - px * 1.65, a.z + a.inZ * 0.45 - pz * 1.65, yaw, { height: 1.35 }))
-      // art above the sofa
-      const by = blockAt(this.plan.blocks, a.x, a.z)
-      const ch = by ? ceilingAt(by, a.x, a.z) : 2.7
-      if (ch > 2.6) this.art(a.x, this.fy + 1.55, a.z, 1.4, 0.9, a.inX, a.inZ, 3)
     }
-    void [x0, z0, x1, z1]
+
+    const opposite: Record<Dir, Dir> = { n: 's', s: 'n', w: 'e', e: 'w' }
+    const oppSolid = solid.find(s => s.side === opposite[a.side])
+    const oppLow = this.anchors(r, true).find(s => s.side === opposite[a.side])
+    const against = depth < 3.85
+    const sofaWall = against ? oppSolid ?? oppLow : undefined
+    const sofaYaw = this.yaw(-a.inX, -a.inZ)
+    const sofaSpan = (sofaWall ?? a).len
+    const sofaW = Math.min(2.4, sofaSpan - 0.3, wallWidth - 0.3)
+    let sofa: Footprint | null = null
+    const sofaSpots = against
+      ? [sofaWall
+        ? { ...this.wallPoint(sofaWall, 1), yaw: sofaYaw }
+        : { x: a.x + a.inX * (depth - 0.53), z: a.z + a.inZ * (depth - 0.53), yaw: sofaYaw }]
+      : [3.2, 3.0, 3.4].map(v => ({ x: a.x + a.inX * v, z: a.z + a.inZ * v, yaw: sofaYaw }))
+    for (const p of sofaSpots) {
+      sofa = this.fitWidth(r, p, sofaW, 1, 1.4)
+      if (sofa) break
+    }
+    if (!sofa) {
+      await Promise.all(jobs)
+      return
+    }
+    this.occupy(r, sofa, true)
+    jobs.push(this.model('GlamVelvetSofa', sofa.x, sofa.z, sofa.yaw, { size: sofa.w }))
+
+    const sofaU = along(sofa.x, sofa.z)
+    const sofaV = into(sofa.x, sofa.z)
+    const rugW = Math.min(2.8, wallWidth - 0.3)
+    const rugD = Math.min(2.0, depth - 0.3)
+    const rugV = (sofaV + into(media?.x ?? a.x, media?.z ?? a.z)) / 2
+    const rugX = a.x + rx * sofaU + a.inX * rugV
+    const rugZ = a.z + rz * sofaU + a.inZ * rugV
+    const rugYaw = this.yaw(a.inX, a.inZ)
+    if (this.canPlace(r, rugX, rugZ, rugW, rugD, rugYaw, 0, true)) this.rug(rugX, rugZ, rugW, rugD, rugYaw)
+
+    // A 45 cm sofa-to-table gap leaves the rest of the seating group open.
+    const coffeeV = sofaV - 0.5 - 0.45 - 0.45
+    const coffeeX = a.x + rx * sofaU + a.inX * coffeeV
+    const coffeeZ = a.z + rz * sofaU + a.inZ * coffeeV
+    if (this.canPlace(r, coffeeX, coffeeZ, 0.9, 0.9, rugYaw)) {
+      const f = this.occupy(r, { x: coffeeX, z: coffeeZ, w: 0.9, d: 0.9, yaw: rugYaw }, true)
+      jobs.push(this.model('coffee_table_round_01', f.x, f.z, f.yaw, { size: 0.9 }))
+    }
+
+    // Flank the rug rather than turning the seating into a second row facing the TV.
+    for (const k of [-1, 1]) {
+      const u = sofaU + k * (rugW / 2 + 0.48)
+      const v = rugV + 0.35
+      const x = a.x + rx * u + a.inX * v
+      const z = a.z + rz * u + a.inZ * v
+      const yaw = this.yaw(-k * rx, -k * rz) - k * (25 * Math.PI) / 180
+      if (!this.canPlace(r, x, z, 0.8, 0.8, yaw)) continue
+      this.occupy(r, { x, z, w: 0.8, d: 0.8, yaw })
+      jobs.push(this.model(k < 0 ? 'SheenChair' : 'mid_century_lounge_chair', x, z, yaw, { size: 0.8 }))
+    }
+
+    const lampD = FURNITURE_FOOTPRINTS.floorLamp.d
+    for (const k of [-1, 1]) {
+      const u = sofaU + k * (sofa.w / 2 + 0.28)
+      const v = sofaV - (against ? 0.35 : 0)
+      const x = a.x + rx * u + a.inX * v
+      const z = a.z + rz * u + a.inZ * v
+      if (!this.canPlace(r, x, z, lampD, lampD, rugYaw)) continue
+      this.occupy(r, { x, z, w: lampD, d: lampD, yaw: rugYaw })
+      this.kit(floorLamp(this.lib), x, z, rugYaw)
+      break
+    }
+
+    // Solid-wall endpoints are safe corners for a tall plant.
+    let plant: Footprint | null = null
+    for (const s of solid) {
+      for (const k of [-1, 1]) {
+        const p = this.wallPoint(s, 0.45, k * Math.max(0, s.len / 2 - 0.4))
+        if (!this.canPlace(r, p.x, p.z, 0.45, 0.45, p.yaw, 0.8)) continue
+        plant = { ...p, w: 0.45, d: 0.45 }
+        break
+      }
+      if (plant) break
+    }
+    if (plant) {
+      this.occupy(r, plant)
+      jobs.push(this.model('potted_plant_01', plant.x, plant.z, plant.yaw, { height: 1.3 }))
+    }
+
+    if (against && oppSolid && sofaWall === oppSolid) {
+      this.art(oppSolid.x, this.fy + 1.55, oppSolid.z, 1.4, 0.9, oppSolid.inX, oppSolid.inZ, 3)
+    }
     await Promise.all(jobs)
   }
 
@@ -307,18 +562,69 @@ export class Interior {
     const cz = (z0 + z1) / 2
     const along = x1 - x0 > z1 - z0
     const yaw = along ? 0 : Math.PI / 2
+    const roomLength = along ? x1 - x0 : z1 - z0
     const jobs: Promise<unknown>[] = []
-    jobs.push(this.model('dining_table', cx, cz, yaw, { size: 2.1 }))
-    this.obstacle(cx, cz, 2.2, 1.1, yaw)
-    for (const k of [-0.62, 0, 0.62])
-      for (const s of [-1, 1]) {
-        const ox = along ? k : s * 0.78
-        const oz = along ? s * 0.78 : k
-        jobs.push(this.model('dining_chair_02', cx + ox, cz + oz, along ? (s < 0 ? 0 : Math.PI) : s < 0 ? Math.PI / 2 : -Math.PI / 2, { height: 0.88 }))
+    const offsets = [[0, 0], [0, 0.3], [0, -0.3], [0.3, 0], [-0.3, 0], [0, 0.6], [0, -0.6]] as const
+    let table: Footprint | null = null
+    for (let length = Math.min(2.2, roomLength - 1.9); length >= 1.2 && !table; length -= 0.1) {
+      for (const [u, v] of offsets) {
+        const [x, z] = this.localPoint(cx, cz, yaw, u, v)
+        if (!this.canPlace(r, x, z, length, 0.95, yaw)) continue
+        table = { x, z, w: length, d: 0.95, yaw }
+        break
       }
-    const b = blockAt(this.plan.blocks, cx, cz)
-    const h = b ? ceilingAt(b, cx, cz) : 2.7
-    for (const k of [-0.45, 0.45]) this.pendant(cx + (along ? k : 0), this.fy + h, cz + (along ? 0 : k), 0.16, h - 1.65)
+    }
+    if (!table) return
+    this.occupy(r, table, true)
+    this.kit(diningTable(this.lib, table.w, table.d), table.x, table.z, table.yaw)
+
+    const chairs: Footprint[] = []
+    const chairSize = FURNITURE_FOOTPRINTS.diningChair
+    const count = Math.max(2, Math.floor(table.w / 0.62))
+    const spacing = table.w / count
+    for (let i = 0; i < count; i++) {
+      const u = (i - (count - 1) / 2) * spacing
+      for (const s of [-1, 1]) {
+        const v = s * (table.d / 2 + 0.27)
+        const [x, z] = this.localPoint(table.x, table.z, yaw, u, v)
+        const cyaw = yaw + (s < 0 ? 0 : Math.PI)
+        if (!this.canPlace(r, x, z, chairSize.w, chairSize.d, cyaw)) continue
+        const chair = this.occupy(r, { x, z, w: chairSize.w, d: chairSize.d, yaw: cyaw })
+        chairs.push(chair)
+        this.kit(diningChair(this.lib), x, z, cyaw)
+      }
+    }
+    for (const s of [-1, 1]) {
+      if ((roomLength - table.w) / 2 < 1.0) continue
+      const [x, z] = this.localPoint(table.x, table.z, yaw, s * (table.w / 2 + 0.55), 0)
+      const cyaw = yaw - s * Math.PI / 2
+      if (!this.canPlace(r, x, z, chairSize.w, chairSize.d, cyaw)) continue
+      const chair = this.occupy(r, { x, z, w: chairSize.w, d: chairSize.d, yaw: cyaw })
+      chairs.push(chair)
+      this.kit(diningChair(this.lib), x, z, cyaw)
+    }
+
+    const b = blockAt(this.plan.blocks, table.x, table.z)
+    const h = b ? ceilingAt(b, table.x, table.z) : 2.7
+    const pendantOffset = Math.min(0.45, table.w / 4)
+    for (const k of [-pendantOffset, pendantOffset]) {
+      const [x, z] = this.localPoint(table.x, table.z, yaw, k, 0)
+      this.pendant(x, this.fy + h, z, 0.16, h - 1.65)
+    }
+
+    const a = this.anchors(r, false)[0]
+    if (a) {
+      const d = FURNITURE_FOOTPRINTS.sideboard.d
+      const w = Math.min(1.8, a.len - 0.4)
+      const sb = this.fitWidth(r, this.wallPoint(a, d), w, d, 0.8)
+      if (sb && this.clearance(sb, table) >= 0.8 && chairs.every(c => this.clearance(sb, c) >= 1.0)) {
+        this.occupy(r, sb, true)
+        this.kit(sideboard(this.lib, sb.w), sb.x, sb.z, sb.yaw)
+        this.art(a.x, this.fy + 1.5, a.z, Math.min(1.3, sb.w * 0.8), 0.8, a.inX, a.inZ, 23)
+        const [vx, vz] = this.localPoint(sb.x, sb.z, sb.yaw, Math.min(0.4, sb.w * 0.25), 0)
+        jobs.push(this.model('ceramic_vase_02', vx, vz, sb.yaw, { height: 0.3, y: 0.84 }))
+      }
+    }
     await Promise.all(jobs)
   }
 
@@ -390,12 +696,16 @@ export class Interior {
       isl.position.set(icx, 0, icz)
       isl.rotation.y = yaw
       this.group.add(isl)
-      this.obstacle(icx, icz, iw, idp, yaw)
+      this.occupy(r, { x: icx, z: icz, w: iw, d: idp, yaw }, true)
       // stools on the far side
       for (const k of [-0.6, 0, 0.6]) {
         const sx = icx + px * k + run.inX * 0.72
         const sz = icz + pz * k + run.inZ * 0.72
-        jobs.push(this.model('bar_chair_round_01', sx, sz, this.yaw(-run.inX, -run.inZ), { height: 0.75 }))
+        const syaw = this.yaw(-run.inX, -run.inZ)
+        const stool = FURNITURE_FOOTPRINTS.barStool
+        if (!this.canPlace(r, sx, sz, stool.w, stool.d, syaw)) continue
+        this.occupy(r, { x: sx, z: sz, w: stool.w, d: stool.d, yaw: syaw })
+        this.kit(barStool(this.lib), sx, sz, syaw)
       }
       const b = blockAt(this.plan.blocks, icx, icz)
       const h = b ? ceilingAt(b, icx, icz) : 2.7
@@ -411,69 +721,97 @@ export class Interior {
   }
 
   private async bedroom(r: RoomDef) {
-    const an = this.anchors(r, true)
-    const a = an[0]
+    const [x0, z0, x1, z1] = this.inner(r)
+    const solid = this.anchors(r, false)
+    const a = solid[0]
     if (!a) return
-    const lib = this.lib
     const primary = r.type === 'primary'
-    const W = primary ? 1.95 : 1.6
-    const L = 2.15
     const yaw = this.yaw(a.inX, a.inZ)
-    const bx = a.x + a.inX * (L / 2 + 0.08)
-    const bz = a.z + a.inZ * (L / 2 + 0.08)
-    const bed = new THREE.Group()
-    const fy = this.fy
-    // platform frame, upholstered headboard, mattress, duvet, pillows
-    const frame = new THREE.Mesh(new RoundedBoxGeometry(W + 0.12, 0.28, L + 0.08, 2, 0.02), lib.darkWood)
-    frame.position.set(0, fy + 0.14, 0)
-    const head = new THREE.Mesh(new RoundedBoxGeometry(W + 0.2, 1.05, 0.1, 3, 0.04), lib.fabric2)
-    head.position.set(0, fy + 0.62, -L / 2 - 0.02)
-    const mat = new THREE.Mesh(new RoundedBoxGeometry(W, 0.24, L - 0.02, 3, 0.06), lib.linen)
-    mat.position.set(0, fy + 0.4, 0.01)
-    const duvet = new THREE.Mesh(new RoundedBoxGeometry(W + 0.08, 0.1, L * 0.68, 4, 0.045), lib.fabric)
-    duvet.position.set(0, fy + 0.54, L * 0.16)
-    const fold = new THREE.Mesh(new RoundedBoxGeometry(W + 0.09, 0.06, 0.22, 3, 0.028), lib.linen)
-    fold.position.set(0, fy + 0.6, -L * 0.17)
-    const throwBlanket = new THREE.Mesh(new RoundedBoxGeometry(W + 0.12, 0.04, 0.5, 3, 0.018), lib.fabric2)
-    throwBlanket.position.set(0, fy + 0.6, L * 0.36)
-    bed.add(frame, head, mat, duvet, fold, throwBlanket)
-    const pw = W / (primary ? 2 : 2) - 0.08
-    for (const k of [-1, 1]) {
-      const p = new THREE.Mesh(new RoundedBoxGeometry(pw, 0.16, 0.42, 4, 0.07), lib.linen)
-      p.position.set(k * (W / 4), fy + 0.6, -L / 2 + 0.3)
-      p.rotation.x = -0.35
-      const p2 = new THREE.Mesh(new RoundedBoxGeometry(pw * 0.8, 0.14, 0.36, 4, 0.06), lib.fabric)
-      p2.position.set(k * (W / 4), fy + 0.66, -L / 2 + 0.48)
-      p2.rotation.x = -0.25
-      bed.add(p, p2)
+    const depth = a.inX > 0 ? x1 - a.x : a.inX < 0 ? a.x - x0 : a.inZ > 0 ? z1 - a.z : a.z - z0
+    const wallWidth = a.inX === 0 ? x1 - x0 : z1 - z0
+    const maxW = Math.min(primary ? 1.8 : 1.5, a.len - 0.3, wallWidth - 0.3)
+    const maxL = Math.min(primary ? 2.1 : 2.0, depth - 0.28)
+    let bed: Footprint | null = null
+    let bw = 0
+    let bl = 0
+    for (let l = maxL; l >= 1.75 && !bed; l -= 0.1) {
+      for (let w = maxW; w >= 1.2; w -= 0.1) {
+        const p = this.wallPoint(a, l + 0.2)
+        if (!this.canPlace(r, p.x, p.z, w + 0.1, l + 0.2, yaw)) continue
+        bed = { ...p, w: w + 0.1, d: l + 0.2 }
+        bw = w
+        bl = l
+        break
+      }
     }
-    bed.traverse(o => {
-      const m = o as THREE.Mesh
-      if (m.isMesh) m.castShadow = m.receiveShadow = true
-    })
-    bed.position.set(bx, 0, bz)
-    bed.rotation.y = yaw
-    this.group.add(bed)
-    this.obstacle(bx, bz, W + 0.15, L + 0.1, yaw)
-    // nightstands + lamps
-    const px = -a.inZ
-    const pz = a.inX
+    if (!bed) return
+    this.occupy(r, bed, true)
+    this.kit(platformBed(this.lib, bw, bl), bed.x, bed.z, yaw)
+
+    const ns = FURNITURE_FOOTPRINTS.nightstand
+    const free = (a.len - bed.w) / 2
+    const both = free >= 0.55
+    let stands = 0
+    for (const k of [-1, 1]) {
+      if (stands >= (both ? 2 : 1)) break
+      const p = this.wallPoint(a, ns.d, k * (bed.w / 2 + 0.04 + ns.w / 2))
+      if (!this.canPlace(r, p.x, p.z, ns.w, ns.d, yaw)) continue
+      this.occupy(r, { ...p, w: ns.w, d: ns.d })
+      this.kit(nightstand(this.lib), p.x, p.z, yaw)
+      stands++
+    }
+
+    // The rug starts below the pillows and runs past the foot and both sides.
+    const rugStart = bl / 3
+    const rugEnd = Math.min(depth - 0.08, bl + 0.45)
+    const rugW = Math.min(bw + 1.2, wallWidth - 0.2)
+    const rugD = rugEnd - rugStart
+    const rugX = a.x + a.inX * ((rugStart + rugEnd) / 2)
+    const rugZ = a.z + a.inZ * ((rugStart + rugEnd) / 2)
+    if (rugD > 0.7 && this.canPlace(r, rugX, rugZ, rugW, rugD, yaw, 0, true)) {
+      this.kit(areaRug(this.lib, rugW, rugD), rugX, rugZ, yaw)
+    }
+
+    const b = solid[1]
+    if (b && b.len >= 1.1) {
+      const d = FURNITURE_FOOTPRINTS.wardrobe.d
+      const w = Math.min(2.0, b.len - 0.3)
+      const ward = this.fitWidth(r, this.wallPoint(b, d), w, d, 0.9, 0.8)
+      if (ward && this.clearance(ward, bed) >= 0.9) {
+        this.occupy(r, ward, true)
+        this.kit(wardrobe(this.lib, ward.w), ward.x, ward.z, ward.yaw)
+      }
+    }
+
     const jobs: Promise<unknown>[] = []
-    for (const k of [-1, 1]) {
-      const nx = a.x + a.inX * 0.3 + px * k * (W / 2 + 0.38)
-      const nz = a.z + a.inZ * 0.3 + pz * k * (W / 2 + 0.38)
-      this.box(lib.cabinet, nx, fy, nz, 0.5, 0.52, 0.42, yaw, 0.01)
-      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 0.22, 24, 1, true), lib.lamp('shade', '#ffe2b8', 4))
-      lamp.position.set(nx, fy + 0.84, nz)
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.06, 0.2, 16), lib.ceramic)
-      base.position.set(nx, fy + 0.62, nz)
-      this.group.add(lamp, base)
+    if (primary) {
+      const corners = [[x0, z0], [x0, z1], [x1, z0], [x1, z1]]
+      const spots: { x: number; z: number; score: number }[] = []
+      for (const o of this.roomOpenings(r)) {
+        if (!o.exterior || (o.kind !== 'window' && o.kind !== 'fixed')) continue
+        const inX = o.side === 'w' ? 1 : o.side === 'e' ? -1 : 0
+        const inZ = o.side === 'n' ? 1 : o.side === 's' ? -1 : 0
+        const rx = inZ
+        const rz = -inX
+        const wx = inX === 0 ? o.at : o.side === 'w' ? x0 : x1
+        const wz = inZ === 0 ? o.at : o.side === 'n' ? z0 : z1
+        for (const k of [-1, 1]) {
+          const x = wx + rx * k * (o.width / 2 + 0.55) + inX * 0.55
+          const z = wz + rz * k * (o.width / 2 + 0.55) + inZ * 0.55
+          const score = Math.min(...corners.map(([cx, cz]) => Math.hypot(x - cx, z - cz)))
+          spots.push({ x, z, score })
+        }
+      }
+      spots.sort((p, q) => p.score - q.score)
+      for (const p of spots) {
+        const cyaw = this.yaw((x0 + x1) / 2 - p.x, (z0 + z1) / 2 - p.z)
+        if (!this.canPlace(r, p.x, p.z, 0.8, 0.8, cyaw, 0.8)) continue
+        this.occupy(r, { x: p.x, z: p.z, w: 0.8, d: 0.8, yaw: cyaw })
+        jobs.push(this.model('SheenChair', p.x, p.z, cyaw, { size: 0.8 }))
+        break
+      }
     }
-    this.rug(bx + a.inX * 0.35, bz + a.inZ * 0.35, W + 1.4, L + 0.6, yaw)
-    // bench at the foot, plant in a corner, art over the bed
-    this.box(lib.fabric2, bx + a.inX * (L / 2 + 0.42), fy, bz + a.inZ * (L / 2 + 0.42), W * 0.75, 0.45, 0.42, yaw, 0.04)
-    if (an[1]) jobs.push(this.model('potted_plant_02', an[1].x + an[1].inX * 0.45, an[1].z + an[1].inZ * 0.45, 0, { height: 1.0 }))
-    this.art(a.x, fy + 1.5, a.z, primary ? 1.3 : 1.0, 0.75, a.inX, a.inZ, primary ? 11 : 17)
+    this.art(a.x, this.fy + 1.5, a.z, primary ? 1.3 : 1.0, 0.75, a.inX, a.inZ, primary ? 11 : 17)
     await Promise.all(jobs)
   }
 
@@ -538,35 +876,60 @@ export class Interior {
   }
 
   private async office(r: RoomDef) {
-    const an = this.anchors(r, true)
-    const a = an[0]
+    const solid = this.anchors(r, false)
+    const a = solid[0]
     if (!a) return
     const fy = this.fy
     const yaw = this.yaw(a.inX, a.inZ)
-    const dx = a.x + a.inX * 0.38
-    const dz = a.z + a.inZ * 0.38
-    this.box(this.lib.darkWood, dx, fy + 0.72, dz, Math.min(1.6, a.len - 0.3), 0.04, 0.7, yaw)
-    for (const k of [-1, 1]) this.box(this.lib.blackMetal, dx + -a.inZ * k * 0.72, fy, dz + a.inX * k * 0.72, 0.04, 0.72, 0.62, yaw)
-    await this.model('modern_arm_chair_01', a.x + a.inX * 1.05, a.z + a.inZ * 1.05, this.yaw(-a.inX, -a.inZ), { size: 0.75 })
-    await this.model('potted_plant_04', dx + -a.inZ * 0.55, dz + a.inX * 0.55, 0, { height: 0.28, y: 0.74 })
-    if (an[1]) {
-      // bookshelf on the second wall
-      const b = an[1]
-      const s = new GeoBuilder()
-      const byaw = this.yaw(b.inX, b.inZ)
-      const w = Math.min(1.8, b.len - 0.2)
-      const shelf = new THREE.Group()
-      s.box(-w / 2, 0, 0, w / 2, 0.02, 0.32)
-      for (let k = 1; k <= 5; k++) s.box(-w / 2, k * 0.4, 0, w / 2, k * 0.4 + 0.025, 0.32)
-      s.box(-w / 2, 0, 0, -w / 2 + 0.025, 2.05, 0.32)
-      s.box(w / 2 - 0.025, 0, 0, w / 2, 2.05, 0.32)
-      const m = new THREE.Mesh(s.build(), this.lib.cabinet)
-      m.castShadow = m.receiveShadow = true
-      shelf.add(m)
-      shelf.position.set(b.x, fy, b.z)
-      shelf.rotation.y = byaw
-      this.group.add(shelf)
+    const desk = this.fitWidth(r, this.wallPoint(a, 0.7), Math.min(1.4, a.len - 0.3), 0.7, 1.0)
+    if (!desk) return
+    this.occupy(r, desk, true)
+    this.box(this.lib.darkWood, desk.x, fy + 0.72, desk.z, desk.w, 0.04, 0.7, yaw)
+    for (const k of [-1, 1]) {
+      const [x, z] = this.localPoint(desk.x, desk.z, yaw, k * (desk.w / 2 - 0.06), 0)
+      this.box(this.lib.blackMetal, x, fy, z, 0.04, 0.72, 0.62, yaw)
     }
+
+    const chair = FURNITURE_FOOTPRINTS.diningChair
+    const cx = desk.x + a.inX * 0.72
+    const cz = desk.z + a.inZ * 0.72
+    const cyaw = yaw + Math.PI
+    if (this.canPlace(r, cx, cz, chair.w, chair.d, cyaw)) {
+      this.occupy(r, { x: cx, z: cz, w: chair.w, d: chair.d, yaw: cyaw })
+      this.kit(diningChair(this.lib), cx, cz, cyaw)
+    }
+    const jobs: Promise<unknown>[] = []
+    const accessoryOffset = Math.min(0.45, desk.w * 0.3)
+    const [lx, lz] = this.localPoint(desk.x, desk.z, yaw, -accessoryOffset, 0)
+    const [px, pz] = this.localPoint(desk.x, desk.z, yaw, accessoryOffset, 0)
+    jobs.push(this.model('desk_lamp_arm_01', lx, lz, yaw, { height: 0.42, y: 0.76 }))
+    jobs.push(this.model('potted_plant_04', px, pz, yaw, { height: 0.24, y: 0.76 }))
+
+    const b = solid[1]
+    if (b) {
+      const w = Math.min(1.2, b.len - 0.3)
+      const p = this.wallPoint(b, 0.38)
+      if (this.canPlace(r, p.x, p.z, w, 0.38, p.yaw, 0.8)) {
+        const shelf = await this.model('wooden_display_shelves_01', p.x, p.z, p.yaw, { height: 1.5 })
+        if (shelf) {
+          shelf.rotation.y = 0
+          shelf.updateMatrixWorld(true)
+          const box = new THREE.Box3().setFromObject(shelf)
+          const size = box.getSize(new THREE.Vector3())
+          const scale = box.isEmpty() || size.x <= 0 ? 1 : Math.min(1, w / size.x)
+          shelf.scale.multiplyScalar(scale)
+          const sw = size.x * scale
+          const sd = size.z * scale
+          shelf.rotation.y = p.yaw
+          if (this.canPlace(r, p.x, p.z, sw, sd, p.yaw, 0.8)) {
+            this.occupy(r, { ...p, w: sw, d: sd }, true)
+          } else {
+            this.group.remove(shelf)
+          }
+        }
+      }
+    }
+    await Promise.all(jobs)
   }
 
   private laundry(r: RoomDef) {
@@ -598,17 +961,18 @@ export class Interior {
   }
 
   private async entry(r: RoomDef) {
-    const an = this.anchors(r, true)
-    const a = an[0]
-    if (!a) return
-    const yaw = this.yaw(a.inX, a.inZ)
-    const fy = this.fy
-    if (r.type === 'entry') {
-      this.box(this.lib.darkWood, a.x + a.inX * 0.2, fy + 0.78, a.z + a.inZ * 0.2, Math.min(1.4, a.len - 0.2), 0.04, 0.36, yaw)
-      for (const k of [-1, 1]) this.box(this.lib.blackMetal, a.x + -a.inZ * k * 0.62 + a.inX * 0.2, fy, a.z + a.inX * k * 0.62 + a.inZ * 0.2, 0.03, 0.78, 0.3, yaw)
-      await this.model('ceramic_vase_02', a.x + a.inX * 0.2 + -a.inZ * 0.35, a.z + a.inZ * 0.2 + a.inX * 0.35, 0, { height: 0.32, y: 0.82 })
-      this.art(a.x, fy + 1.55, a.z, 0.9, 1.1, a.inX, a.inZ, 29)
-    }
+    const [x0, z0, x1, z1] = this.inner(r)
+    if (Math.min(x1 - x0, z1 - z0) < 1.4) return
+    const a = this.anchors(r, false)[0]
+    if (!a || a.len < 1.2) return
+    const d = FURNITURE_FOOTPRINTS.sideboard.d
+    const sb = this.fitWidth(r, this.wallPoint(a, d), Math.min(1.2, a.len - 0.3), d, 0.7)
+    if (!sb) return
+    this.occupy(r, sb, true)
+    this.kit(sideboard(this.lib, sb.w), sb.x, sb.z, sb.yaw)
+    this.art(a.x, this.fy + 1.5, a.z, Math.min(0.9, sb.w * 0.8), 0.9, a.inX, a.inZ, 29)
+    const [vx, vz] = this.localPoint(sb.x, sb.z, sb.yaw, Math.min(0.32, sb.w * 0.25), 0)
+    await this.model('ceramic_vase_02', vx, vz, sb.yaw, { height: 0.3, y: 0.84 })
   }
 
   dispose() {
