@@ -186,6 +186,7 @@ export const cedarRidge: HomePlan = {
     door: 'cedar',
     deck: 'ipe',
     palette: 'light',
+    walls: 'warm-white',
   },
-  zones: ['cedar', 'panel', 'panel2', 'roof', 'trim', 'door', 'deck', 'palette'],
+  zones: ['cedar', 'panel', 'panel2', 'roof', 'trim', 'door', 'deck', 'palette', 'walls'],
 }

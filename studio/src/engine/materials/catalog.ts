@@ -8,6 +8,8 @@ export interface MaterialParams {
   roughness: number
   metalness?: number
   tex?: TextureSetId | null
+  /** named procedural colour map (generated in textures.ts) instead of a bank texture set */
+  map?: 'limewash'
   /** texture tile scale multiplier */
   texScale?: number
   clearcoat?: number
@@ -35,6 +37,9 @@ const paint = (id: string, name: string, swatch: string, roughness = 0.5, metaln
   ({ id, name, swatch, params: { color: swatch, roughness, metalness, tex: null } })
 const paintedBoards = (id: string, name: string, swatch: string, roughness = 0.62): FinishOption =>
   ({ id, name, swatch, params: { color: swatch, roughness, metalness: 0, tex: null, variation: 0.12 } })
+// flat interior emulsion: matte, no sheen
+const wallPaint = (id: string, name: string, swatch: string): FinishOption =>
+  ({ id, name, swatch, params: { color: swatch, roughness: 0.9, metalness: 0, tex: null } })
 
 export const ZONES: Record<string, FinishZone> = {
   cedar: {
@@ -173,13 +178,27 @@ export const ZONES: Record<string, FinishZone> = {
       { id: 'ash', name: 'Ash & Slate', swatch: '#77736E', params: { color: '#ffffff', roughness: 0.5 } },
     ],
   },
+  walls: {
+    id: 'walls',
+    label: 'Interior walls',
+    group: 'interior',
+    options: [
+      wallPaint('warm-white', 'Warm white', '#ECE7DE'),
+      wallPaint('greige', 'Greige', '#D5CCBE'),
+      wallPaint('sage', 'Sage', '#B7C1AB'),
+      wallPaint('clay', 'Clay', '#CFB19C'),
+      wallPaint('fog', 'Fog blue', '#C2CAD0'),
+      wallPaint('charcoal', 'Charcoal', '#4B4C4A'),
+      // mottled plaster: near-white blotch map tinted by the colour, a touch rougher than flat paint
+      { id: 'limewash', name: 'Limewash', swatch: '#E2DACB', params: { color: '#E2DACB', roughness: 0.95, metalness: 0, tex: null, map: 'limewash' } },
+    ],
+  },
 }
 
 export interface InteriorPalette {
   floor: { tex: TextureSetId; color: string; roughness: number }
   cabinet: { tex: TextureSetId; color: string; roughness: number }
   counter: { color: string; roughness: number; speckle: string }
-  wall: string
   ceilingWood: { color: string }
   fabric: string
   fabric2: string
@@ -193,7 +212,6 @@ export const PALETTES: Record<string, InteriorPalette> = {
     floor: { tex: 'laminate_floor_02', color: '#FFF6EC', roughness: 0.55 },
     cabinet: { tex: 'white_oak_veneer', color: '#FFF4E6', roughness: 0.6 },
     counter: { color: '#E9E3D6', roughness: 0.35, speckle: '#CFC6B4' },
-    wall: '#F3F0E9',
     ceilingWood: { color: '#FFE9D2' },
     fabric: '#E6E0D4',
     fabric2: '#B9AE9C',
@@ -205,7 +223,6 @@ export const PALETTES: Record<string, InteriorPalette> = {
     floor: { tex: 'wood_floor', color: '#A98266', roughness: 0.5 },
     cabinet: { tex: 'natural_walnut_veneer', color: '#C79A7B', roughness: 0.55 },
     counter: { color: '#D8C7B0', roughness: 0.4, speckle: '#B9A184' },
-    wall: '#EDE6DA',
     ceilingWood: { color: '#D9A982' },
     fabric: '#CDBBA3',
     fabric2: '#6E5443',
@@ -217,7 +234,6 @@ export const PALETTES: Record<string, InteriorPalette> = {
     floor: { tex: 'wood_planks_grey', color: '#D8D4CF', roughness: 0.6 },
     cabinet: { tex: 'ash_veneer', color: '#9B958D', roughness: 0.6 },
     counter: { color: '#55585A', roughness: 0.45, speckle: '#3E4143' },
-    wall: '#E4E3DF',
     ceilingWood: { color: '#C8C2BA' },
     fabric: '#C9C7C2',
     fabric2: '#4A4C4E',

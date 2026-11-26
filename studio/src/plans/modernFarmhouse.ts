@@ -134,6 +134,6 @@ export const modernFarmhouse: HomePlan = {
     { id: 'great', label: 'Great room', kind: 'walk', pos: [2.4, 2.07, -0.6], target: [-2.0, 1.6, -8.5], fov: 66, room: 'great' },
     { id: 'kitchen', label: 'Kitchen', kind: 'walk', pos: [3.0, 2.07, -4.6], target: [6.0, 1.4, -9.2], fov: 66, room: 'kitchen' },
   ],
-  finishes: { body: 'arctic-white', roof: 'charcoal', trim: 'black', door: 'cedar', deck: 'ipe', palette: 'light' },
-  zones: ['body', 'roof', 'trim', 'door', 'deck', 'palette'],
+  finishes: { body: 'arctic-white', roof: 'charcoal', trim: 'black', door: 'cedar', deck: 'ipe', palette: 'light', walls: 'warm-white' },
+  zones: ['body', 'roof', 'trim', 'door', 'deck', 'palette', 'walls'],
 }
