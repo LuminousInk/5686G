@@ -57,6 +57,7 @@ export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: 
     // casings, door leaves, collisions
     const trim = new GeoBuilder()
     const leaf = new GeoBuilder()
+    const hardware = new GeoBuilder()
     let u = 0
     for (const d of doors) {
       if (d.u0 - u > 0.02) out.colliders.push(seg(ax, az, dx, dz, u, d.u0))
@@ -75,16 +76,54 @@ export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: 
       trim.box(d.u0 - 0.004, fy, -t / 2, d.u0, d.y1, t / 2)
       trim.box(d.u1, fy, -t / 2, d.u1 + 0.004, d.y1, t / 2)
       trim.box(d.u0, d.y1, -t / 2, d.u1, d.y1 + 0.004, t / 2)
-      // open door leaf, hinged at u0, swung ~95 degrees toward +w
+      // Swing into the larger room, defaulting to +w unless both sides can be compared.
+      const sideRooms = [1, -1].map(side => {
+        const x = ax + dx * d.o.at - dz * side * 0.6
+        const z = az + dz * d.o.at + dx * side * 0.6
+        return plan.rooms.find(r => x >= r.rect[0] && x <= r.rect[2] && z >= r.rect[1] && z <= r.rect[3])
+      })
+      let swing = 1
+      const [plusRoom, minusRoom] = sideRooms
+      if (plusRoom && minusRoom) {
+        const plusArea = (plusRoom.rect[2] - plusRoom.rect[0]) * (plusRoom.rect[3] - plusRoom.rect[1])
+        const minusArea = (minusRoom.rect[2] - minusRoom.rect[0]) * (minusRoom.rect[3] - minusRoom.rect[1])
+        if (minusArea > plusArea) swing = -1
+      }
+      // open door leaf, hinged at u0, swung 92 degrees into the larger room
       const lw = d.u1 - d.u0 - 0.01
-      const ang = THREE.MathUtils.degToRad(95)
-      const hinge = V3(d.u0 + 0.02, fy + 0.01, t / 2)
-      const c = hinge.clone().add(V3(Math.cos(ang) * lw * 0.5, (d.y1 - fy - 0.02) / 2, Math.sin(ang) * lw * 0.5))
-      leaf.orientedBox(c, lw / 2, (d.y1 - fy - 0.03) / 2, 0.02, -ang)
+      const bottom = fy + 0.01
+      const top = d.y1 - 0.003
+      const ang = THREE.MathUtils.degToRad(92)
+      const yaw = -swing * ang
+      const along = V3(Math.cos(ang), 0, swing * Math.sin(ang))
+      const normal = V3(-swing * Math.sin(ang), 0, Math.cos(ang))
+      const hinge = V3(d.u0 + 0.02, bottom, swing * t / 2)
+      const tip = hinge.clone().addScaledVector(along, lw)
+      const c = hinge.clone().addScaledVector(along, lw / 2)
+      c.y = (bottom + top) / 2
+      leaf.orientedBox(c, lw / 2, (top - bottom) / 2, 0.02, yaw)
+      // lever handles and roses on both faces, 65 mm in from the latch edge
+      const handle = hinge.clone().addScaledVector(along, lw - 0.065)
+      handle.y = fy + 1
+      for (const face of [-1, 1]) {
+        const rose = handle.clone().addScaledVector(normal, face * 0.024)
+        hardware.orientedBox(rose, 0.024, 0.024, 0.004, yaw)
+        const lever = handle.clone().addScaledVector(normal, face * 0.034).addScaledVector(along, -0.065)
+        hardware.orientedBox(lever, 0.065, 0.009, 0.007, yaw)
+      }
+      for (const y of [bottom + 0.2, (bottom + top) / 2, top - 0.2]) {
+        const knuckle = hinge.clone()
+        knuckle.y = y
+        hardware.orientedBox(knuckle, 0.012, 0.025, 0.012, yaw)
+      }
+      const worldHinge = hinge.clone().applyMatrix4(m)
+      const worldTip = tip.clone().applyMatrix4(m)
+      out.colliders.push({ ax: worldHinge.x, az: worldHinge.z, bx: worldTip.x, bz: worldTip.z })
     }
     if (len - u > 0.02) out.colliders.push(seg(ax, az, dx, dz, u, len))
     if (trim.vertexCount) batch.add(lib.ceiling, applyMatrixKeepWinding(trim.build(), m))
-    if (leaf.vertexCount) batch.add(lib.ceiling, applyMatrixKeepWinding(leaf.build(), m))
+    if (leaf.vertexCount) batch.add(lib.cabinet, applyMatrixKeepWinding(leaf.build(), m))
+    if (hardware.vertexCount) batch.add(lib.blackMetal, applyMatrixKeepWinding(hardware.build(), m))
   }
 
   // floors
