@@ -71,12 +71,39 @@ function patch(m: THREE.MeshStandardMaterial) {
   m.needsUpdate = true
 }
 
-const textures = new Map<string, Promise<THREE.DataTexture>>()
+/** A lightmap texture plus a coarse irradiance grid (mean of covered texels per block) for exposure metering. */
+interface Loaded {
+  tex: THREE.DataTexture
+  grid: Float32Array
+  gridSize: number
+}
 
-async function loadLightmap(url: string): Promise<THREE.DataTexture> {
+const GRID = 128
+const textures = new Map<string, Promise<Loaded>>()
+
+function coarse(data: Float32Array, W: number, H: number): Float32Array {
+  const sum = new Float32Array(GRID * GRID)
+  const n = new Float32Array(GRID * GRID)
+  for (let y = 0; y < H; y++) {
+    const gy = Math.min(GRID - 1, Math.floor((y / H) * GRID))
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4
+      const l = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
+      if (l <= 0) continue
+      const g = gy * GRID + Math.min(GRID - 1, Math.floor((x / W) * GRID))
+      sum[g] += l
+      n[g] += 1
+    }
+  }
+  for (let g = 0; g < sum.length; g++) sum[g] = n[g] ? sum[g] / n[g] : 0
+  return sum
+}
+
+async function loadLightmap(url: string): Promise<Loaded> {
   let p = textures.get(url)
   if (!p) {
     p = loadRgbeWebp(url).then(({ data, W, H }) => {
+      const grid = coarse(data, W, H)
       const half = new Uint16Array(data.length)
       for (let i = 0; i < data.length; i++) half[i] = THREE.DataUtils.toHalfFloat(Math.min(data[i], 65000))
       const t = new THREE.DataTexture(half, W, H, THREE.RGBAFormat, THREE.HalfFloatType)
@@ -89,7 +116,7 @@ async function loadLightmap(url: string): Promise<THREE.DataTexture> {
       t.minFilter = THREE.LinearFilter
       t.generateMipmaps = false
       t.needsUpdate = true
-      return t
+      return { tex: t, grid, gridSize: GRID }
     })
     textures.set(url, p)
     p.catch(() => textures.delete(url))
@@ -139,18 +166,69 @@ export async function applyLightmap(
     console.warn(`lightmap ${planId}-${presetId} was baked for other geometry (${meta.signature} vs ${layout.signature}); using live lighting`)
     return false
   }
-  let tex: THREE.DataTexture
+  let loaded: Loaded
   try {
-    tex = await loadLightmap(`${base}${lowRes ? '-1k' : ''}.webp`)
+    loaded = await loadLightmap(`${base}${lowRes ? '-1k' : ''}.webp`)
   } catch (err) {
     console.warn('lightmap failed to load; using live lighting', err)
     return false
   }
   for (const m of targetMaterials(lib)) {
     patch(m)
-    m.lightMap = tex
+    m.lightMap = loaded.tex
     m.lightMapIntensity = meta.scale
     m.needsUpdate = true
   }
+  roomLight.set(house, meterRooms(house, interior, loaded, meta.scale))
   return true
+}
+
+const roomLight = new WeakMap<HouseModel, Map<string, number>>()
+
+/** Baked floor irradiance per room (three.js units), for interior exposure; empty without a lightmap. */
+export function roomIrradiance(house: HouseModel): Map<string, number> {
+  return roomLight.get(house) ?? new Map()
+}
+
+/** Area-weighted mean baked irradiance on each room's floor. */
+function meterRooms(house: HouseModel, interior: THREE.Object3D | null, l: Loaded, scale: number): Map<string, number> {
+  const out = new Map<string, number>()
+  const floors = lightmapTargets(house, interior).filter(m => ['floor', 'tileFloor', 'concrete'].includes((m.material as THREE.Material).name))
+  const acc = new Map<string, [number, number]>()
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  for (const m of floors) {
+    const g = m.geometry
+    const pos = g.getAttribute('position')
+    const uv = g.getAttribute('uv1')
+    const idx = g.index
+    if (!uv || !idx) continue
+    for (let t = 0; t < idx.count; t += 3) {
+      const i0 = idx.getX(t)
+      const i1 = idx.getX(t + 1)
+      const i2 = idx.getX(t + 2)
+      a.fromBufferAttribute(pos, i0)
+      b.fromBufferAttribute(pos, i1)
+      c.fromBufferAttribute(pos, i2)
+      const area = b.clone().sub(a).cross(c.clone().sub(a)).length() / 2
+      if (area < 1e-4) continue
+      const cx = (a.x + b.x + c.x) / 3
+      const cz = (a.z + b.z + c.z) / 3
+      const room = house.plan.rooms.find(r => cx >= r.rect[0] && cx <= r.rect[2] && cz >= r.rect[1] && cz <= r.rect[3])
+      if (!room) continue
+      const u = (uv.getX(i0) + uv.getX(i1) + uv.getX(i2)) / 3
+      const v = (uv.getY(i0) + uv.getY(i1) + uv.getY(i2)) / 3
+      const gx = Math.min(l.gridSize - 1, Math.floor(u * l.gridSize))
+      const gy = Math.min(l.gridSize - 1, Math.floor(v * l.gridSize))
+      const e = l.grid[gy * l.gridSize + gx]
+      if (e <= 0) continue
+      const s = acc.get(room.id) ?? [0, 0]
+      s[0] += e * area
+      s[1] += area
+      acc.set(room.id, s)
+    }
+  }
+  for (const [id, [sum, area]] of acc) out.set(id, (sum / area) * scale)
+  return out
 }

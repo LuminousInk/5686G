@@ -85,6 +85,8 @@ function bakeMaterial(src: THREE.Material, cache: Map<THREE.Material, THREE.Mesh
 
 function exportable(m: THREE.Mesh): THREE.Material | null {
   if (!m.isMesh || (m as THREE.InstancedMesh).isInstancedMesh || (m as unknown as THREE.SkinnedMesh).isSkinnedMesh) return null
+  // lawn rings and grass tufts draw instanced geometry through plain meshes
+  if ((m.geometry as THREE.InstancedBufferGeometry).isInstancedBufferGeometry) return null
   const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as THREE.MeshStandardMaterial
   if (!mat || !mat.isMeshStandardMaterial) return null
   if (mat.name === 'glass' || mat.transparent || mat.alphaTest > 0 || mat.opacity < 1) return null

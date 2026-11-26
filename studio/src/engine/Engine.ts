@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { applyLightmap, clearLightmap } from './bake/lightmaps'
+import { applyLightmap, clearLightmap, roomIrradiance } from './bake/lightmaps'
 import { buildHouse, type HouseModel } from './house/build'
 import type { HomePlan } from './house/types'
 import { MaterialLibrary } from './materials/library'
@@ -282,6 +282,23 @@ export class Engine {
     this.invalidate()
   }
 
+  /** Interior exposure boost by day; with baked light it follows the metered brightness of the current room. */
+  static readonly INSIDE_BOOST = 2.35
+  private insideExposure(): number {
+    if (this.sky.preset.lamps > 0.5) return 1.0
+    if (!this.lightmapped || !this.house || !this.plan) return Engine.INSIDE_BOOST
+    const light = roomIrradiance(this.house)
+    if (!light.size) return Engine.INSIDE_BOOST
+    const { x, z } = this.camera.position
+    const room = this.plan.rooms.find(r => x >= r.rect[0] && x <= r.rect[2] && z >= r.rect[1] && z <= r.rect[3])
+    const e = room ? light.get(room.id) : undefined
+    if (!e) return Engine.INSIDE_BOOST
+    // the plan's median room keeps the tuned boost; darker rooms open up partly, like a camera's auto exposure
+    const all = [...light.values()].sort((a, b) => a - b)
+    const median = all[all.length >> 1]
+    return THREE.MathUtils.clamp(Engine.INSIDE_BOOST * Math.pow(median / e, 0.6), 1, 6)
+  }
+
   isInside(p: THREE.Vector3) {
     const plan = this.plan
     if (!plan || this.dollhouse) return false
@@ -341,7 +358,7 @@ export class Engine {
     }
     // eye adaptation (inside rooms are 2-3 stops darker than a sunny yard)
     const inside = this.isInside(this.camera.position)
-    const want = inside ? (this.sky.preset.lamps > 0.5 ? 1.0 : 2.35) : 1
+    const want = inside ? this.insideExposure() : 1
     if (Math.abs(want - this.adapt) > 0.004) {
       this.adapt += (want - this.adapt) * Math.min(1, dt * 2.2)
       this.pipeline.reset()

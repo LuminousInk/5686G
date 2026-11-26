@@ -9,7 +9,7 @@ Reads <prefix>.glb, <prefix>.sky.f32 and <prefix>.json; writes <out_dir>/<plan>-
 What is baked: light from the sky (direct through windows + all bounces) plus the bounce of the sun, but NOT the direct
 sun, which the app draws in real time with shadows. Two bakes give exactly that: sky with direct + indirect, then sun
 with indirect only. Values are Cycles' diffuse light passes (outgoing = albedo x value); three.js wants irradiance,
-so meta.scale = pi. Rows are stored with Blender's v = 0 first, which is also the first row WebGL uploads.
+so meta.scale = pi. Rows are stored with the app's v = 0 first (the first row WebGL uploads).
 Encoding: RGBE in lossless WebP (mantissa rows on top, exponent rows below), the format of the app's skies.
 """
 from __future__ import annotations
@@ -119,21 +119,52 @@ def setup(meta: dict, prefix: str, samples: int):
     return sc, world, light, atlas, len(targets)
 
 
-def denoise(rgb: np.ndarray, cover: np.ndarray, sigma: float, grow: int) -> np.ndarray:
-    """Coverage-normalised Gaussian blur (charts are 2 x pad texels apart, so a small sigma does not mix them),
-    then grow every chart into the empty gutter around it so bilinear filtering never reads black."""
+def grow(rgb: np.ndarray, cover: np.ndarray, steps: int) -> np.ndarray:
+    """Extend every chart into the empty gutter around it (so filtering never reads black)."""
+    out = np.where(cover[..., None], rgb, 0).astype(np.float32)
     m = cover.astype(np.float32)
-    k = int(math.ceil(sigma * 3)) * 2 + 1
-    num = cv2.GaussianBlur(rgb * m[..., None], (k, k), sigma)
-    den = cv2.GaussianBlur(m, (k, k), sigma)
-    out = np.where(cover[..., None], num / np.maximum(den, 1e-6)[..., None], 0).astype(np.float32)
-    for _ in range(grow):
+    for _ in range(steps):
         num = cv2.blur(out * m[..., None], (3, 3))
         den = cv2.blur(m, (3, 3))
         add = (m < 0.5) & (den > 0)
         out[add] = num[add] / den[add][..., None]
         m = np.where(add, 1.0, m).astype(np.float32)
     return out
+
+
+def oidn_lightmap(rgb: np.ndarray) -> np.ndarray | None:
+    """Intel Open Image Denoise, lightmap filter (HDR). bpy has already loaded the TBB it links against."""
+    try:
+        import oidn
+    except Exception as err:  # noqa: BLE001 - optional dependency
+        print('oidn unavailable, falling back to a blur:', err)
+        return None
+    h, w, _ = rgb.shape
+    src = np.ascontiguousarray(rgb, dtype=np.float32)
+    out = np.zeros_like(src)
+    dev = oidn.NewDevice()
+    oidn.CommitDevice(dev)
+    flt = oidn.NewFilter(dev, 'RTLightmap')
+    oidn.SetSharedFilterImage(flt, 'color', src, oidn.FORMAT_FLOAT3, w, h)
+    oidn.SetSharedFilterImage(flt, 'output', out, oidn.FORMAT_FLOAT3, w, h)
+    oidn.CommitFilter(flt)
+    oidn.ExecuteFilter(flt)
+    err = oidn.GetDeviceError(dev)
+    oidn.ReleaseFilter(flt)
+    oidn.ReleaseDevice(dev)
+    return out if not err else None
+
+
+def denoise(rgb: np.ndarray, cover: np.ndarray, pad_steps: int = 6) -> np.ndarray:
+    """Fill gutters, denoise the atlas (OIDN, else a coverage-normalised blur), keep chart texels, refill gutters."""
+    filled = grow(rgb, cover, pad_steps)
+    out = oidn_lightmap(filled)
+    if out is None:
+        m = cover.astype(np.float32)
+        num = cv2.GaussianBlur(rgb * m[..., None], (9, 9), 1.5)
+        den = cv2.GaussianBlur(m, (9, 9), 1.5)
+        out = num / np.maximum(den, 1e-6)[..., None]
+    return grow(np.maximum(out, 0), cover, pad_steps)
 
 
 def bake_pass(atlas, pass_filter: set[str]) -> np.ndarray:
@@ -168,8 +199,11 @@ def main() -> None:
     t2 = time.time()
     total = np.maximum(total, 0)
     cover = sky[..., 3] > 0.5
-    total = denoise(total, cover, sigma=1.5, grow=6)
+    total = denoise(total, cover)
 
+    # Blender's glTF import flips V (glTF's origin is top-left, Blender's bottom-left), so the baked rows run opposite
+    # to the app's uv1: flip them back so the first stored row is the app's v = 0
+    total = np.ascontiguousarray(total[::-1])
     os.makedirs(out_dir, exist_ok=True)
     name = f"{meta['plan']}-{meta['preset']}"
     rgbe_webp(total, os.path.join(out_dir, f'{name}.webp'))
