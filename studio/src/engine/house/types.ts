@@ -53,6 +53,15 @@ export interface Block {
 
 export type OpeningKind = 'window' | 'fixed' | 'slider' | 'door' | 'entry' | 'garage' | 'clerestory'
 
+export interface BuiltDoor {
+  /** index in HomePlan.openings */
+  openingIndex: number
+  kind: OpeningKind
+  leaf: boolean
+  glass: boolean
+  casing: boolean
+}
+
 export interface Opening {
   id?: string
   /** exterior: block id + side; interior: wall id */
