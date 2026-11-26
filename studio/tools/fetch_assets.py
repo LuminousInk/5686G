@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Download the CC0 Poly Haven assets Cuby Studio uses into studio/.cache/raw/.
+"""Download the assets Cuby Studio uses into studio/.cache/raw/.
 
     python3 tools/fetch_assets.py            # everything
     python3 tools/fetch_assets.py teak_veneer boulder_01
 
-All assets are CC0 (https://polyhaven.com/license). Re-running skips files that are already complete.
+Poly Haven assets are CC0 (https://polyhaven.com/license); the Khronos glTF sample models are CC BY 4.0
+(see README "Assets and licences"). Re-running skips files that are already complete.
 Then run `node tools/build_assets.mjs` to turn them into the web-ready files in public/assets/.
 """
 from __future__ import annotations
@@ -55,9 +56,14 @@ MODELS = [
     'sofa_03', 'Sofa_01', 'modern_arm_chair_01', 'mid_century_lounge_chair', 'coffee_table_round_01',
     'modern_coffee_table_01', 'dining_table', 'dining_chair_02', 'bar_chair_round_01', 'modern_ceiling_lamp_01',
     'potted_plant_01', 'potted_plant_02', 'potted_plant_04', 'ceramic_vase_01', 'ceramic_vase_02',
-    'ceramic_vase_03', 'ceramic_vase_04', 'throw_pillows_01', 'side_table_01', 'decorative_book_set_01',
+    'ceramic_vase_03', 'ceramic_vase_04', 'throw_pillows_01', 'side_table_01',
     'wooden_bowl_01',
+    # modern furniture
+    'modern_wooden_cabinet', 'wooden_display_shelves_01', 'desk_lamp_arm_01',
 ]
+# Khronos glTF Sample Assets (CC BY 4.0, donated by Wayfair) ship as GLB rather than Poly Haven glTF.
+KHRONOS = ('GlamVelvetSofa', 'SheenChair', 'SheenWoodLeatherSofa')
+KHRONOS_URL = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/{0}/glTF-Binary/{0}.glb'
 
 
 def get_json(url: str) -> dict:
@@ -78,6 +84,8 @@ def download(url: str, dest: str, size: int | None) -> str:
 
 
 def jobs_for(asset: str) -> list[tuple[str, str, int | None]]:
+    if asset in KHRONOS:
+        return [(KHRONOS_URL.format(asset), os.path.join(RAW, 'models', asset, f'{asset}.glb'), None)]
     files = get_json(API + asset)
     jobs: list[tuple[str, str, int | None]] = []
     if asset in HDRIS:
@@ -102,7 +110,7 @@ def jobs_for(asset: str) -> list[tuple[str, str, int | None]]:
 
 
 def main() -> int:
-    wanted = sys.argv[1:] or [*HDRIS, *TEXTURES, *MODELS]
+    wanted = sys.argv[1:] or [*HDRIS, *TEXTURES, *MODELS, *KHRONOS]
     with ThreadPoolExecutor(6) as ex:
         plans = list(ex.map(jobs_for, wanted))
     jobs = [j for p in plans for j in p]
