@@ -181,6 +181,20 @@ export interface LandscapeSpec {
   dining?: { x: number; z: number; rot: number }[]
   /** keep these areas free of tall planting (sight lines to the terrace, paths) */
   clear?: Rect[]
+  /** hillside lot (Pacific Palisades style): how the ground falls away from the house pad */
+  site?: SiteSpec
+}
+
+/** Hillside lot. The house sits on a level pad at grade (y = 0); beyond it the ground falls toward `downhill`. */
+export interface SiteSpec {
+  /** compass bearing the lot falls toward, degrees (0 = +z / front, 90 = +x) */
+  downhill: number
+  /** average slope beyond the pad, rise over run (0.12 = 12%) */
+  grade?: number
+  /** the ground drops `drop` metres along this side of the house, exposing a walkout lower level */
+  walkout?: { side: Side; drop: number }
+  /** ocean in the downhill direction, this far away in metres (omit for no ocean) */
+  oceanDistance?: number
 }
 
 export interface PlanFacts {
