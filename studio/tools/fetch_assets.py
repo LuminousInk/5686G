@@ -4,7 +4,7 @@
     python3 tools/fetch_assets.py            # everything
     python3 tools/fetch_assets.py teak_veneer boulder_01
 
-Poly Haven assets are CC0 (https://polyhaven.com/license); the Khronos glTF sample models are CC BY 4.0
+Poly Haven and ambientCG assets are CC0; the Khronos glTF sample models are CC BY 4.0
 (see README "Assets and licences"). Re-running skips files that are already complete.
 Then run `node tools/build_assets.mjs` to turn them into the web-ready files in public/assets/.
 """
@@ -15,6 +15,7 @@ import os
 import sys
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from zipfile import ZipFile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, '.cache', 'raw')
@@ -38,17 +39,20 @@ TEXTURES = {
     'ganges_river_pebbles': '1k',      # pebble border
     'black_painted_planks': '1k',      # fence
     'brushed_concrete': '1k',          # pavers, slabs
-    'laminate_floor_02': '1k,2k',      # light oak floor
+    'oak_wood_planks': '1k',           # wide oak floor
     'wood_floor': '1k',                # walnut floor (tinted)
     'wood_planks_grey': '1k',          # ash floor
     'white_oak_veneer': '1k',          # cabinets
     'natural_walnut_veneer': '1k',
     'ash_veneer': '1k',
-    'long_white_tiles': '1k',          # bath walls
-    'large_grey_tiles': '1k',          # bath floor
     'rough_linen': '1k',               # upholstery, bedding
     'withered_grass': '1k',            # dry summer grasses on coastal slopes
     'wood_chip_path': '1k',            # bark-mulched garden beds
+}
+AMBIENT_CG = {
+    'ambientcg_marble019': 'Marble019',
+    'ambientcg_tiles142': 'Tiles142',
+    'ambientcg_plaster001': 'Plaster001',
 }
 TEX_MAPS = ('Diffuse', 'nor_gl', 'arm')
 COASTAL_DIFFUSE = {'withered_grass', 'wood_chip_path'}
@@ -89,6 +93,10 @@ def download(url: str, dest: str, size: int | None) -> str:
 
 
 def jobs_for(asset: str) -> list[tuple[str, str, int | None]]:
+    if asset in AMBIENT_CG:
+        bundle = f'{AMBIENT_CG[asset]}_1K-JPG'
+        return [(f'https://ambientcg.com/get?file={bundle}.zip',
+                 os.path.join(RAW, 'ambientcg', f'{bundle}.zip'), None)]
     if asset in KHRONOS:
         return [(KHRONOS_URL.format(asset), os.path.join(RAW, 'models', asset, f'{asset}.glb'), None)]
     files = get_json(API + asset)
@@ -114,8 +122,27 @@ def jobs_for(asset: str) -> list[tuple[str, str, int | None]]:
     return jobs
 
 
+def unpack_ambient_cg(asset: str) -> None:
+    bundle = f'{AMBIENT_CG[asset]}_1K-JPG'
+    target = os.path.join(RAW, 'tex', asset, '1k')
+    required = {'Color': 'Diffuse', 'NormalGL': 'nor_gl', 'Roughness': 'rough'}
+    os.makedirs(target, exist_ok=True)
+    with ZipFile(os.path.join(RAW, 'ambientcg', f'{bundle}.zip')) as archive:
+        ao = f'{bundle}_AmbientOcclusion.jpg'
+        if ao in archive.namelist():
+            required['AmbientOcclusion'] = 'ao'
+        for source, name in required.items():
+            member = f'{bundle}_{source}.jpg'
+            dest = os.path.join(target, f'{name}.jpg')
+            if os.path.exists(dest) and os.path.getsize(dest) == archive.getinfo(member).file_size:
+                continue
+            with open(dest + '.part', 'wb') as output:
+                output.write(archive.read(member))
+            os.replace(dest + '.part', dest)
+
+
 def main() -> int:
-    wanted = sys.argv[1:] or [*HDRIS, *TEXTURES, *MODELS, *KHRONOS]
+    wanted = sys.argv[1:] or [*HDRIS, *TEXTURES, *AMBIENT_CG, *MODELS, *KHRONOS]
     with ThreadPoolExecutor(6) as ex:
         plans = list(ex.map(jobs_for, wanted))
     jobs = [j for p in plans for j in p]
@@ -128,6 +155,10 @@ def main() -> int:
             except Exception as e:  # noqa: BLE001
                 fails += 1
                 print('FAIL', e)
+    if not fails:
+        for asset in wanted:
+            if asset in AMBIENT_CG:
+                unpack_ambient_cg(asset)
     print(f'FETCH_OK {len(jobs) - fails}' if not fails else f'FETCH_FAIL {fails}')
     return 1 if fails else 0
 

@@ -22,7 +22,7 @@ describe('interior walls finish zone', () => {
     expect(ids).toEqual(['warm-white', 'greige', 'sage', 'clay', 'fog', 'charcoal', 'limewash'])
     for (const plan of PLANS) {
       const finish = zone.options.find(o => o.id === plan.finishes.walls)
-      expect(finish?.params.map, plan.id).toBe('limewash')
+      expect(finish?.params.tex, plan.id).toBe('ambientcg_plaster001')
       expect(finish?.params.roughness, plan.id).toBeGreaterThanOrEqual(0.9)
     }
     for (const o of zone.options) {

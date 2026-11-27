@@ -8,11 +8,10 @@ export interface MaterialParams {
   roughness: number
   metalness?: number
   tex?: TextureSetId | null
-  /** named procedural colour map (generated in textures.ts) instead of a bank texture set */
-  map?: 'limewash'
   /** texture tile scale multiplier */
   texScale?: number
-  clearcoat?: number
+  texRotation?: number
+  normalStrength?: number
   /** how strongly per-board colour variation shows (boards only) */
   variation?: number
 }
@@ -31,15 +30,21 @@ export interface FinishZone {
   options: FinishOption[]
 }
 
-const boards = (id: string, name: string, swatch: string, color: string, roughness = 0.78, variation = 1): FinishOption =>
-  ({ id, name, swatch, params: { color, roughness, tex: 'teak_veneer', variation } })
-const paint = (id: string, name: string, swatch: string, roughness = 0.5, metalness = 0.25): FinishOption =>
+const boards = (id: string, name: string, swatch: string, color: string, roughness = 0.86, variation = 1): FinishOption =>
+  ({ id, name, swatch, params: { color, roughness, tex: 'teak_veneer', normalStrength: 0.9, variation } })
+const cladding = (id: string, name: string, swatch: string, color: string, roughness: number, variation: number): FinishOption => {
+  const finish = boards(id, name, swatch, color, roughness, variation)
+  finish.params.texRotation = Math.PI / 2
+  return finish
+}
+const paint = (id: string, name: string, swatch: string, roughness = 0.5, metalness = 0.05): FinishOption =>
   ({ id, name, swatch, params: { color: swatch, roughness, metalness, tex: null } })
 const paintedBoards = (id: string, name: string, swatch: string, roughness = 0.62): FinishOption =>
   ({ id, name, swatch, params: { color: swatch, roughness, metalness: 0, tex: null, variation: 0.12 } })
-// Interior matte paint options retain the same share-code IDs.
-const wallPaint = (id: string, name: string, swatch: string, map?: 'limewash'): FinishOption =>
-  ({ id, name, swatch, params: { color: swatch, roughness: map ? 0.94 : 0.9, metalness: 0, tex: null, map } })
+const plaster = (id: string, name: string, swatch: string, normalStrength: number): FinishOption =>
+  ({ id, name, swatch, params: { color: swatch, roughness: 0.96, tex: 'ambientcg_plaster001', normalStrength } })
+const wallPaint = (id: string, name: string, swatch: string): FinishOption =>
+  plaster(id, name, swatch, id === 'limewash' ? 0.28 : 0.16)
 
 export const ZONES: Record<string, FinishZone> = {
   cedar: {
@@ -47,11 +52,11 @@ export const ZONES: Record<string, FinishZone> = {
     label: 'Cedar cladding',
     group: 'exterior',
     options: [
-      boards('natural-cedar', 'Natural Cedar', '#B07A4B', '#FFE2C4', 0.74, 1),
-      boards('smoked-oak', 'Smoked Oak', '#8C7A64', '#B59C86', 0.8, 0.7),
-      boards('weathered-cedar', 'Weathered Cedar', '#A08F7E', '#C9C0B4', 0.85, 0.6),
-      boards('charcoal', 'Charred Cedar', '#3E3B38', '#3B3734', 0.62, 0.35),
-      boards('chalk', 'Chalk', '#E5DECB', '#FFFFFF', 0.7, 0.15),
+      cladding('natural-cedar', 'Natural Cedar', '#B07A4B', '#F1DFCD', 0.9, 1),
+      cladding('smoked-oak', 'Smoked Oak', '#8C7A64', '#B59C86', 0.8, 0.7),
+      cladding('weathered-cedar', 'Weathered Cedar', '#A08F7E', '#C9C0B4', 0.85, 0.6),
+      cladding('charcoal', 'Charred Cedar', '#3E3B38', '#55514E', 0.98, 0.85),
+      cladding('chalk', 'Chalk', '#E5DECB', '#F0EBDF', 0.94, 0.26),
     ],
   },
   coastal: {
@@ -61,7 +66,7 @@ export const ZONES: Record<string, FinishZone> = {
     options: [
       paintedBoards('chalk', 'Chalk', '#E5DECB'),
       paintedBoards('sand', 'Sand', '#CDB89C'),
-      boards('weathered-cedar', 'Weathered Cedar', '#A77750', '#E0B791', 0.8, 0.7),
+      cladding('weathered-cedar', 'Weathered Cedar', '#A77750', '#E0B791', 0.8, 0.7),
     ],
   },
   body: {
@@ -82,11 +87,11 @@ export const ZONES: Record<string, FinishZone> = {
     label: 'Metal panels',
     group: 'exterior',
     options: [
-      paint('charcoal', 'Charcoal', '#33373C', 0.46, 0.35),
-      paint('graphite', 'Graphite', '#4A4E52', 0.46, 0.35),
-      paint('iron-ore', 'Iron Ore', '#3D3B37', 0.5, 0.3),
-      paint('bronze', 'Dark Bronze', '#4E4236', 0.42, 0.4),
-      paint('pewter', 'Pewter', '#8B8E8F', 0.4, 0.45),
+      paint('charcoal', 'Charcoal', '#33373C', 0.46, 0.07),
+      paint('graphite', 'Graphite', '#4A4E52', 0.46, 0.07),
+      paint('iron-ore', 'Iron Ore', '#3D3B37', 0.5, 0.06),
+      paint('bronze', 'Dark Bronze', '#4E4236', 0.42, 0.12),
+      paint('pewter', 'Pewter', '#8B8E8F', 0.4, 0.28),
       paint('chalk', 'Chalk', '#E4DDCC', 0.55, 0.1),
     ],
   },
@@ -95,10 +100,10 @@ export const ZONES: Record<string, FinishZone> = {
     label: 'Upper panels',
     group: 'exterior',
     options: [
-      paint('pewter', 'Pewter', '#9A9FA2', 0.42, 0.4),
-      paint('charcoal', 'Charcoal', '#33373C', 0.46, 0.35),
+      paint('pewter', 'Pewter', '#9A9FA2', 0.42, 0.12),
+      paint('charcoal', 'Charcoal', '#33373C', 0.46, 0.07),
       paint('chalk', 'Chalk', '#E4DDCC', 0.55, 0.1),
-      paint('bronze', 'Dark Bronze', '#4E4236', 0.42, 0.4),
+      paint('bronze', 'Dark Bronze', '#4E4236', 0.42, 0.12),
     ],
   },
   stucco: {
@@ -106,10 +111,10 @@ export const ZONES: Record<string, FinishZone> = {
     label: 'Stucco',
     group: 'exterior',
     options: [
-      paint('chalk', 'Chalk', '#E7E1D2', 0.9, 0),
-      paint('sand', 'Sand', '#CBB79B', 0.9, 0),
-      paint('fog', 'Fog', '#B9BAB4', 0.9, 0),
-      paint('graphite', 'Graphite', '#55585A', 0.88, 0),
+      plaster('chalk', 'Chalk', '#E7E1D2', 0.58),
+      plaster('sand', 'Sand', '#CBB79B', 0.58),
+      plaster('fog', 'Fog', '#B9BAB4', 0.58),
+      plaster('graphite', 'Graphite', '#55585A', 0.58),
     ],
   },
   siding: {
@@ -129,10 +134,10 @@ export const ZONES: Record<string, FinishZone> = {
     label: 'Roof',
     group: 'exterior',
     options: [
-      paint('charcoal', 'Charcoal Seam', '#2C2F33', 0.42, 0.55),
-      paint('slate', 'Slate Seam', '#4F5458', 0.42, 0.55),
-      paint('galvalume', 'Galvalume', '#9DA2A5', 0.3, 0.85),
-      paint('bronze', 'Bronze Seam', '#4A3F35', 0.42, 0.55),
+      paint('charcoal', 'Charcoal Seam', '#313438', 0.46, 0.06),
+      paint('slate', 'Slate Seam', '#4F5458', 0.46, 0.06),
+      paint('galvalume', 'Galvalume', '#AEB4B7', 0.41, 0.86),
+      paint('bronze', 'Bronze Seam', '#514437', 0.46, 0.08),
     ],
   },
   trim: {
@@ -140,9 +145,9 @@ export const ZONES: Record<string, FinishZone> = {
     label: 'Windows & trim',
     group: 'exterior',
     options: [
-      paint('black', 'Matte Black', '#151618', 0.45, 0.5),
-      paint('charcoal', 'Charcoal', '#2F3134', 0.45, 0.5),
-      paint('bronze', 'Bronze', '#3E342B', 0.42, 0.55),
+      paint('black', 'Matte Black', '#202225', 0.48, 0.05),
+      paint('charcoal', 'Charcoal', '#2F3134', 0.46, 0.05),
+      paint('bronze', 'Bronze', '#3E342B', 0.44, 0.18),
       paint('chalk', 'Chalk', '#E4DDCC', 0.5, 0.1),
     ],
   },
@@ -183,14 +188,13 @@ export const ZONES: Record<string, FinishZone> = {
     label: 'Interior walls',
     group: 'interior',
     options: [
-      wallPaint('warm-white', 'Warm white', '#F1EBE1', 'limewash'),
-      wallPaint('greige', 'Greige', '#D9CEC0', 'limewash'),
-      wallPaint('sage', 'Sage', '#DDDCCD', 'limewash'),
-      wallPaint('clay', 'Clay', '#E5D3C1', 'limewash'),
-      wallPaint('fog', 'Fog blue', '#E6E7E3', 'limewash'),
+      wallPaint('warm-white', 'Warm white', '#F1EBE1'),
+      wallPaint('greige', 'Greige', '#D9CEC0'),
+      wallPaint('sage', 'Sage', '#DDDCCD'),
+      wallPaint('clay', 'Clay', '#E5D3C1'),
+      wallPaint('fog', 'Fog blue', '#E6E7E3'),
       wallPaint('charcoal', 'Charcoal', '#4B4C4A'),
-      // mottled plaster: near-white blotch map tinted by the colour, a touch rougher than flat paint
-      wallPaint('limewash', 'Limewash', '#E3D8C8', 'limewash'),
+      wallPaint('limewash', 'Limewash', '#E3D8C8'),
     ],
   },
 }
@@ -198,7 +202,7 @@ export const ZONES: Record<string, FinishZone> = {
 export interface InteriorPalette {
   floor: { tex: TextureSetId; color: string; roughness: number }
   cabinet: { tex: TextureSetId; color: string; roughness: number }
-  counter: { color: string; roughness: number; speckle: string }
+  counter: { color: string; roughness: number; coat: number }
   ceilingWood: { color: string }
   fabric: string
   fabric2: string
@@ -209,9 +213,9 @@ export interface InteriorPalette {
 
 export const PALETTES: Record<string, InteriorPalette> = {
   light: {
-    floor: { tex: 'laminate_floor_02', color: '#FFF1DD', roughness: 0.57 },
+    floor: { tex: 'oak_wood_planks', color: '#F6F4EF', roughness: 0.96 },
     cabinet: { tex: 'white_oak_veneer', color: '#F1D2AD', roughness: 0.62 },
-    counter: { color: '#F3ECE0', roughness: 0.5, speckle: '#D9CFBD' },
+    counter: { color: '#F4F0EA', roughness: 0.97, coat: 0.24 },
     ceilingWood: { color: '#FFE9D2' },
     fabric: '#EEE3D1',
     fabric2: '#A49379',
@@ -220,9 +224,9 @@ export const PALETTES: Record<string, InteriorPalette> = {
     stone: '#E9E3D6',
   },
   walnut: {
-    floor: { tex: 'laminate_floor_02', color: '#E8CDA9', roughness: 0.6 },
+    floor: { tex: 'oak_wood_planks', color: '#E5CDB0', roughness: 0.95 },
     cabinet: { tex: 'white_oak_veneer', color: '#CBA57F', roughness: 0.62 },
-    counter: { color: '#E9E0D0', roughness: 0.51, speckle: '#CDBDA7' },
+    counter: { color: '#E8DDCC', roughness: 1, coat: 0.15 },
     ceilingWood: { color: '#E9CAA9' },
     fabric: '#E5D9C9',
     fabric2: '#837459',
@@ -231,9 +235,9 @@ export const PALETTES: Record<string, InteriorPalette> = {
     stone: '#D8C7B0',
   },
   ash: {
-    floor: { tex: 'wood_planks_grey', color: '#D8D4CF', roughness: 0.6 },
+    floor: { tex: 'wood_planks_grey', color: '#D8D4CF', roughness: 0.88 },
     cabinet: { tex: 'ash_veneer', color: '#9B958D', roughness: 0.6 },
-    counter: { color: '#55585A', roughness: 0.45, speckle: '#3E4143' },
+    counter: { color: '#77797B', roughness: 0.92, coat: 0.18 },
     ceilingWood: { color: '#C8C2BA' },
     fabric: '#C9C7C2',
     fabric2: '#4A4C4E',

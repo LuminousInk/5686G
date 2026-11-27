@@ -1,10 +1,33 @@
 import * as THREE from 'three'
 import { PALETTES, ZONES, zoneOption, type InteriorPalette, type MaterialParams } from './catalog'
-import { limestoneTexture, limewashTexture, noiseTexture, solarTexture, TextureBank, type TextureSetId } from './textures'
+import { noiseTexture, solarTexture, TextureBank, type TextureSetId } from './textures'
 import type { QualitySettings } from '../quality'
 
 type Std = THREE.MeshStandardMaterial
 type Phys = THREE.MeshPhysicalMaterial
+const LINEN_SHEEN = new THREE.Color('#E3D7C8')
+
+/** The model loader registers its materials here. Preserve the sofa scans and add the physical sheen lobe. */
+class InteriorMaterials extends Set<Std> {
+  override add(material: Std): this {
+    const sofaFabric = material.name === 'Tela_Victoria' || material.name === 'Material_2145965798'
+    if (sofaFabric && !(material as Phys).isMeshPhysicalMaterial && !material.userData.upholsterySheen) {
+      material.userData.upholsterySheen = true
+      material.roughness = Math.max(0.78, material.roughness)
+      const original = material.onBeforeCompile
+      const cacheKey = material.customProgramCacheKey()
+      material.onBeforeCompile = (shader, renderer) => {
+        original.call(material, shader, renderer)
+        shader.fragmentShader = '#define USE_SHEEN\n' + shader.fragmentShader
+        shader.uniforms.sheenColor = { value: new THREE.Color(0.17, 0.155, 0.135) }
+        shader.uniforms.sheenRoughness = { value: 0.79 }
+      }
+      material.customProgramCacheKey = () => `${cacheKey}|upholstery-sheen`
+      material.needsUpdate = true
+    }
+    return super.add(material)
+  }
+}
 
 /**
  * Shared materials, created on first use. Zone materials (`zone:<id>`) follow the finish catalog and are updated in
@@ -15,8 +38,7 @@ export class MaterialLibrary {
   private cache = new Map<string, THREE.Material>()
   private noise: THREE.Texture
   private fineNoise: THREE.Texture
-  private limewash?: THREE.Texture
-  private limestone?: THREE.Texture
+  private coatedMetal: THREE.Texture
   /** emissive materials that turn on at dusk/night: material -> full emissive intensity */
   private lamps = new Map<THREE.MeshStandardMaterial, number>()
   palette: InteriorPalette = PALETTES.light
@@ -30,6 +52,8 @@ export class MaterialLibrary {
     this.noise.repeat.set(0.25, 0.25)
     this.fineNoise = noiseTexture(256, 4, 9, 1.4)
     this.fineNoise.repeat.set(2, 2)
+    this.coatedMetal = noiseTexture(128, 3, 17, 0.24, 0.88)
+    this.coatedMetal.repeat.set(0.95, 0.38)
   }
 
   /** Every material created so far (named by its library key). */
@@ -47,7 +71,7 @@ export class MaterialLibrary {
     return m
   }
 
-  /** Physically based material with an optional Poly Haven texture set. */
+  /** Physically based material with an optional CC0 texture set. */
   private pbr(tex: TextureSetId | null | undefined, params: Partial<THREE.MeshStandardMaterialParameters>, scale = 1, rotate = 0): Std {
     const m = new THREE.MeshStandardMaterial(params)
     if (tex) this.assignTex(m, tex, scale, rotate)
@@ -62,6 +86,39 @@ export class MaterialLibrary {
     m.aoMap = s.arm
     m.aoMapIntensity = 0.6
     m.normalScale.set(1, 1)
+  }
+
+  /** World-space colour modulation keeps large surfaces from repeating in lockstep with the scan. */
+  private withMacroVariation(m: Std, surface: 'floor' | 'wall') {
+    const uv = surface === 'floor' ? 'finishPosition.xz * 0.11' : 'vec2(finishPosition.x + finishPosition.z * 0.79, finishPosition.y) * 0.071'
+    const strength = surface === 'floor' ? 0.36 : 0.19
+    m.onBeforeCompile = shader => {
+      shader.uniforms.finishNoise = { value: this.noise }
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 finishPosition;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nfinishPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;')
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 finishPosition;\nuniform sampler2D finishNoise;')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          diffuseColor.rgb *= 1.0 + (texture2D(finishNoise, ${uv}).g - 0.5) * ${strength};`)
+    }
+    m.customProgramCacheKey = () => `finish-macro:${surface}`
+    return m
+  }
+
+  /** The same metre-scale stone pattern crosses slab edges and upstands with one sample per map. */
+  private stoneProjection<T extends Std>(m: T): T {
+    // Cabinet boxes have 0..1 UVs per face. An oblique projection gives all three face axes a nonzero footprint.
+    m.onBeforeCompile = shader => {
+      shader.vertexShader = shader.vertexShader.replace('#include <uv_vertex>', `#include <uv_vertex>
+        vec3 slab = (modelMatrix * vec4(position, 1.0)).xyz;
+        vec2 stoneUv = vec2((slab.x - slab.z) * 0.7071, (slab.x + slab.z) * 0.4082 + slab.y * 0.8165);
+        vMapUv = (mapTransform * vec3(stoneUv, 1.0)).xy;
+        vNormalMapUv = (normalMapTransform * vec3(stoneUv, 1.0)).xy;
+        vRoughnessMapUv = (roughnessMapTransform * vec3(stoneUv, 1.0)).xy;`)
+    }
+    m.customProgramCacheKey = () => 'stone-projection'
+    return m
   }
 
   /** Per-board colour variation, scaled by a uniform so muted finishes vary less. */
@@ -82,6 +139,7 @@ export class MaterialLibrary {
   // ---------------------------------------------------------------- zones
 
   zone(zone: string): Std {
+    if (zone === 'walls') return this.wall
     return this.put(`zone:${zone}`, () => {
       const def = ZONES[zone]
       const opt = zoneOption(zone, this.currentFinish(zone))
@@ -107,33 +165,41 @@ export class MaterialLibrary {
     m.color.set(p.color)
     m.roughness = p.roughness
     m.metalness = p.metalness ?? 0
-    const hadMap = !!m.map
-    const hadRough = !!m.roughnessMap
-    if (p.map === 'limewash') {
-      m.map = this.limewash ??= limewashTexture()
-      m.normalMap = null
-      m.aoMap = null
-      // Keep plaster evenly matte under the baked diffuse light.
-      m.roughnessMap = null
-      m.userData.tex = null
-    } else if (p.tex) {
+    const previous = [m.map, m.normalMap, m.aoMap, m.roughnessMap, m.bumpMap]
+    m.bumpMap = null
+    if (p.tex) {
       const scale = p.texScale ?? (zone === 'deck' ? 1.2 : 1)
-      if (m.userData.tex !== p.tex || m.userData.texScale !== scale) this.assignTex(m, p.tex, scale)
+      const rotation = p.texRotation ?? 0
+      if (m.userData.tex !== p.tex || m.userData.texScale !== scale || m.userData.texRotation !== rotation) {
+        this.assignTex(m, p.tex, scale, rotation)
+      }
       m.userData.tex = p.tex
       m.userData.texScale = scale
-      // roughness map multiplies: keep wood a little glossier than its raw scan
-      m.roughness = p.roughness * 1.15
+      m.userData.texRotation = rotation
+      m.normalScale.setScalar(p.normalStrength ?? 1)
+      if (zone === 'walls') {
+        // Keep the broad specular lobe even under baked diffuse light.
+        m.roughnessMap = null
+        m.aoMap = null
+      }
     } else {
       m.map = null
       m.normalMap = null
       m.aoMap = null
-      // painted metal: subtle roughness breakup so large panels don't look CG-flat
-      m.roughnessMap = zone === 'walls' ? null : this.noise
+      m.roughnessMap = this.coatedMetal
+      if (zone === 'roof' || zone === 'panel' || zone === 'panel2') {
+        m.bumpMap = this.coatedMetal
+        m.bumpScale = zone === 'roof' ? 0.014 : 0.006
+      } else if (zone === 'body' || zone === 'coastal' || zone === 'siding') {
+        m.bumpMap = this.fineNoise
+        m.bumpScale = 0.0016
+      }
       m.userData.tex = null
     }
     const v = m.userData.variation as { value: number } | undefined
     if (v) v.value = p.variation ?? 0
-    if (hadMap !== !!m.map || hadRough !== !!m.roughnessMap) m.needsUpdate = true
+    const maps = [m.map, m.normalMap, m.aoMap, m.roughnessMap, m.bumpMap]
+    if (previous.some((map, i) => !!map !== !!maps[i])) m.needsUpdate = true
   }
 
   // ---------------------------------------------------------------- fixed exterior materials
@@ -238,23 +304,39 @@ export class MaterialLibrary {
   }
 
   get cushion(): Std {
-    return this.put('cushion', () => this.pbr('rough_linen', { color: '#F4F1EA', roughness: 0.95 }, 1))
+    return this.put('cushion', () => this.textile('#E7E2D9', 1))
   }
 
   // ---------------------------------------------------------------- interior (palette driven)
 
   get floor(): Std {
-    return this.put('floor', () => this.pbr(this.palette.floor.tex, { color: this.palette.floor.color, roughness: this.palette.floor.roughness }, 1))
+    return this.put('floor', () => {
+      const m = this.withMacroVariation(new THREE.MeshStandardMaterial(), 'floor')
+      this.applyFloor(m, this.palette.floor)
+      return m
+    })
+  }
+
+  private applyFloor(m: Std, floor: InteriorPalette['floor']) {
+    m.color.set(floor.color)
+    m.roughness = floor.roughness
+    if (m.userData.tex !== floor.tex) {
+      this.assignTex(m, floor.tex)
+      m.userData.tex = floor.tex
+    }
+    m.normalScale.setScalar(floor.tex === 'oak_wood_planks' ? 1.35 : 0.62)
   }
 
   get tileFloor(): Std {
-    return this.put('tileFloor', () => new THREE.MeshStandardMaterial({
-      color: '#CCBEAA', map: limestoneTexture(0.72, true), roughness: 0.77, bumpMap: this.fineNoise, bumpScale: 0.004,
-    }))
+    return this.put('tileFloor', () => {
+      const m = this.pbr('ambientcg_tiles142', { color: '#E9E4DB', roughness: 0.98 }, 1.5)
+      m.normalScale.setScalar(1.3)
+      return m
+    })
   }
 
   get tileWall(): Std {
-    return this.put('tileWall', () => this.pbr('long_white_tiles', { color: '#FFFFFF', roughness: 0.35 }, 0.8, Math.PI / 2))
+    return this.put('tileWall', () => this.pbr('ambientcg_tiles142', { color: '#F0EBE2', roughness: 0.88 }))
   }
 
   get wall(): Std {
@@ -264,7 +346,7 @@ export class MaterialLibrary {
       const opt = zoneOption('walls', this.currentFinish('walls'))
       const m = new THREE.MeshStandardMaterial({ color: opt.params.color })
       this.applyParams(m, opt.params, 'walls')
-      return m
+      return this.withMacroVariation(m, 'wall')
     })
   }
 
@@ -277,21 +359,43 @@ export class MaterialLibrary {
   }
 
   get cabinet(): Std {
-    return this.put('cabinet', () => this.pbr(this.palette.cabinet.tex, { color: this.palette.cabinet.color, roughness: this.palette.cabinet.roughness }, 1))
+    return this.put('cabinet', () => {
+      const m = this.pbr(this.palette.cabinet.tex, { color: this.palette.cabinet.color, roughness: this.palette.cabinet.roughness })
+      m.userData.tex = this.palette.cabinet.tex
+      m.normalScale.setScalar(1.16)
+      return m
+    })
   }
 
   get counter(): Phys {
-    return this.put('counter', () =>
-      new THREE.MeshPhysicalMaterial({ color: this.palette.counter.color, roughness: this.palette.counter.roughness, map: this.limestone ??= limestoneTexture(0.95), bumpMap: this.fineNoise, bumpScale: 0.003, clearcoat: 0.14, clearcoatRoughness: 0.35 }),
-    )
+    return this.put('counter', () => {
+      const p = this.palette.counter
+      const m = new THREE.MeshPhysicalMaterial({
+        color: p.color, roughness: p.roughness, clearcoat: p.coat, clearcoatRoughness: 0.27,
+      })
+      this.assignTex(m, 'ambientcg_marble019')
+      m.normalScale.setScalar(0.6)
+      m.aoMap = null
+      return this.stoneProjection(m)
+    })
+  }
+
+  private textile(color: string, scale: number, params: THREE.MeshPhysicalMaterialParameters = {}): Phys {
+    const m = new THREE.MeshPhysicalMaterial({
+      color, roughness: 1, sheen: 0.38, sheenColor: new THREE.Color(color).lerp(LINEN_SHEEN, 0.35),
+      sheenRoughness: 0.83, ...params,
+    })
+    this.assignTex(m, 'rough_linen', scale)
+    m.normalScale.setScalar(0.46)
+    return m
   }
 
   get fabric(): Std {
-    return this.put('fabric', () => this.pbr('rough_linen', { color: this.palette.fabric, roughness: 1 }, 1))
+    return this.put('fabric', () => this.textile(this.palette.fabric, 0.82))
   }
 
   get fabric2(): Std {
-    return this.put('fabric2', () => this.pbr('rough_linen', { color: this.palette.fabric2, roughness: 1 }, 1))
+    return this.put('fabric2', () => this.textile(this.palette.fabric2, 0.82))
   }
 
   get rug(): Std {
@@ -313,9 +417,17 @@ export class MaterialLibrary {
     return m
   }
 
-  get sageCabinet(): Std { return this.interiorFinish('sage-cabinet', '#7C8663', 0.78) }
-  get oliveCabinet(): Std { return this.interiorFinish('olive-cabinet', '#6B6D50', 0.78) }
-  get sageVanity(): Std { return this.interiorFinish('sage-vanity', '#626D51', 0.76) }
+  private lacquer(key: string, color: string): Phys {
+    const m = this.put(`interior:${key}`, () => new THREE.MeshPhysicalMaterial({
+      color, roughness: 0.56, clearcoat: 0.24, clearcoatRoughness: 0.36,
+    }))
+    this.interiorExtra.add(m)
+    return m
+  }
+
+  get sageCabinet(): Std { return this.lacquer('sage-cabinet', '#758270') }
+  get oliveCabinet(): Std { return this.lacquer('olive-cabinet', '#6B6D50') }
+  get sageVanity(): Std { return this.lacquer('sage-vanity', '#626D51') }
   get bronze(): Std { return this.interiorFinish('bronze', '#887052', 0.39, 0.62) }
   get brass(): Std { return this.interiorFinish('brass', '#C19257', 0.37, 0.62) }
   get agedBrass(): Std { return this.interiorFinish('aged-brass', '#A3794E', 0.38, 0.62) }
@@ -335,7 +447,7 @@ export class MaterialLibrary {
 
   get throwLinen(): Std {
     const m = this.put('interior:throw-linen', () =>
-      this.pbr('rough_linen', { color: '#A18972', roughness: 0.98, side: THREE.DoubleSide }, 0.6))
+      this.textile('#A18972', 0.6, { side: THREE.DoubleSide }))
     this.interiorExtra.add(m)
     return m
   }
@@ -365,7 +477,11 @@ export class MaterialLibrary {
     }))
   }
 
-  get rustLinen(): Std { return this.interiorFinish('rust-linen', '#9A6B51', 0.93) }
+  get rustLinen(): Std {
+    const m = this.put('interior:rust-linen', () => this.textile('#9A6B51', 0.65))
+    this.interiorExtra.add(m)
+    return m
+  }
   get foliageStem(): Std { return this.interiorFinish('foliage-stem', '#786844', 0.91) }
 
   get foliage(): Std {
@@ -375,21 +491,26 @@ export class MaterialLibrary {
   }
 
   get drapery(): Std {
-    const m = this.interiorFinish('drapery', '#E4DAC9', 0.95)
-    m.side = THREE.DoubleSide
+    // Drapery is cut from a 0..1 UV plane, so repeat the weave several times across the panel.
+    const m = this.put('interior:drapery', () => this.textile('#E4DAC9', 0.4, { side: THREE.DoubleSide, sheen: 0.24 }))
+    this.interiorExtra.add(m)
     return m
   }
 
   get bathStone(): Std {
-    const m = this.put('bathStone', () => new THREE.MeshStandardMaterial({
-      color: '#D5C5AD', map: this.limestone ??= limestoneTexture(0.95), roughness: 0.76, bumpMap: this.fineNoise, bumpScale: 0.006,
-    }))
+    const m = this.put('bathStone', () => {
+      const stone = this.pbr('ambientcg_marble019', { color: '#D6C5AD', roughness: 0.72 }, 0.72)
+      stone.roughnessMap = this.coatedMetal
+      stone.aoMap = null
+      stone.normalScale.setScalar(0.7)
+      return this.stoneProjection(stone)
+    })
     this.interiorExtra.add(m)
     return m
   }
 
   get oliveLinen(): Std {
-    const m = this.put('oliveLinen', () => this.pbr('rough_linen', { color: '#77795A', roughness: 0.94 }, 0.45))
+    const m = this.put('oliveLinen', () => this.textile('#77795A', 0.55))
     this.interiorExtra.add(m)
     return m
   }
@@ -425,7 +546,7 @@ export class MaterialLibrary {
   }
 
   get linen(): Std {
-    return this.put('linen', () => this.pbr('rough_linen', { color: '#F5F3EE', roughness: 1 }, 1))
+    return this.put('linen', () => this.textile('#EBE7DF', 0.82))
   }
 
   get appliance(): Std {
@@ -434,7 +555,7 @@ export class MaterialLibrary {
 
   static readonly INTERIOR = ['floor', 'tileFloor', 'tileWall', 'zone:walls', 'ceiling', 'ceilingWood', 'cabinet', 'counter', 'fabric', 'fabric2', 'rug', 'fixtureMetal', 'stone', 'porcelain', 'mirror', 'blackMetal', 'darkWood', 'linen', 'appliance']
   /** extra interior materials (loaded models) that should share the interior light probe */
-  readonly interiorExtra = new Set<THREE.MeshStandardMaterial>()
+  readonly interiorExtra: Set<Std> = new InteriorMaterials()
 
   /** Interior surfaces: use a captured interior light probe as their environment (or dim sky light as fallback). */
   interiorEnv(level = 0.32, probe: THREE.Texture | null = null) {
@@ -457,20 +578,14 @@ export class MaterialLibrary {
     this.palette = PALETTES[id] ?? PALETTES.light
     const p = this.palette
     const floor = this.cache.get('floor') as Std | undefined
-    if (floor) {
-      floor.color.set(p.floor.color)
-      floor.roughness = p.floor.roughness
-      if (floor.userData.tex !== p.floor.tex) {
-        this.assignTex(floor, p.floor.tex, 1)
-        floor.userData.tex = p.floor.tex
-      }
-    }
+    if (floor) this.applyFloor(floor, p.floor)
     const cab = this.cache.get('cabinet') as Std | undefined
     if (cab) {
       cab.color.set(p.cabinet.color)
       cab.roughness = p.cabinet.roughness
       if (cab.userData.tex !== p.cabinet.tex) {
         this.assignTex(cab, p.cabinet.tex, 1)
+        cab.normalScale.setScalar(1.16)
         cab.userData.tex = p.cabinet.tex
       }
     }
@@ -478,10 +593,19 @@ export class MaterialLibrary {
       const m = this.cache.get(k) as Std | undefined
       if (m) f(m)
     }
-    set('counter', m => { m.color.set(p.counter.color); m.roughness = p.counter.roughness })
+    const counter = this.cache.get('counter') as Phys | undefined
+    if (counter) {
+      counter.color.set(p.counter.color)
+      counter.roughness = p.counter.roughness
+      counter.clearcoat = p.counter.coat
+    }
     set('ceilingWood', m => m.color.set(p.ceilingWood.color))
-    set('fabric', m => m.color.set(p.fabric))
-    set('fabric2', m => m.color.set(p.fabric2))
+    const textile = (m: Phys, color: string) => {
+      m.color.set(color)
+      m.sheenColor.copy(m.color).lerp(LINEN_SHEEN, 0.35)
+    }
+    set('fabric', m => textile(m as Phys, p.fabric))
+    set('fabric2', m => textile(m as Phys, p.fabric2))
     set('rug', m => m.color.set(p.rug))
     set('fixtureMetal', m => { m.color.set(p.metal.color); m.roughness = p.metal.roughness; m.metalness = p.metal.metalness })
     set('stone', m => m.color.set(p.stone))
