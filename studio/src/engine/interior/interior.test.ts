@@ -272,6 +272,33 @@ describe.each(sections)('$name interior', ({ plan }) => {
     }
   })
 
+  it('stages each hero room with bake-excluded decor on its existing furniture', () => {
+    for (const room of plan.rooms) {
+      const objects = interior.group.children.filter(o => inRoom(room, o))
+      const placed = (name: string) => {
+        const prop = objects.map(o => o.getObjectByName(name)).find(Boolean)
+        expect(prop?.userData.bakeIgnore, `${room.id} / ${name}`).toBe(true)
+      }
+      if (room.id === 'great' || room.id === 'living') {
+        for (const name of ['sofa-throw', 'woven-throw-basket', 'coffee-table-candles', 'ceramic-knot', 'potted_plant_02']) placed(name)
+      }
+      if (room.id === 'kitchen') {
+        for (const name of ['electric-kettle', 'cutting-boards-and-oil', 'seasonal-fruit', 'eucalyptus-branches', 'potted_plant_04']) placed(name)
+      }
+      if (room.id === 'dining') placed('linen-table-runner')
+      if (room.type === 'primary' || room.id === 'bed5' || room.id === 'bed6') {
+        for (const name of ['bed-knit-throw', 'tailored-cushion', 'bedside-catchall']) placed(name)
+        const bed = objects.find(o => o.name.startsWith('bed_'))!
+        expect(bed.children.filter(node => node.name === 'tailored-cushion'), room.id).toHaveLength(2)
+      }
+      if (['pbath', 'primary-bath', 'bath5', 'bath6'].includes(room.id)) {
+        placed('bath-tray-and-soap')
+        placed('draped-hand-towel')
+        if (objects.some(o => o.name === 'bath_angelo')) placed('oak-bath-caddy')
+      }
+    }
+  })
+
   it('uses image textures in its framed prints and keeps window dressing out of the bake', () => {
     interior.group.traverse(object => {
       if (object.name === 'framed-art') {
