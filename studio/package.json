@@ -18,6 +18,10 @@
   },
   "dependencies": {
     "@dgreenheck/ez-tree": "^1.1.0",
+    "@monogrid/gainmap-js": "^3.7.3",
+    "@takram/three-atmosphere": "^0.19.1",
+    "@takram/three-clouds": "^0.7.6",
+    "@takram/three-geospatial": "^0.9.1",
     "n8ao": "^2.1.0",
     "postprocessing": "^6.39.6",
     "react": "^19.3.1",
