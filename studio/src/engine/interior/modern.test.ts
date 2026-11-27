@@ -11,6 +11,7 @@ const makeLib = () =>
     cabinet: new THREE.MeshStandardMaterial({ color: '#c9a77d' }),
     darkWood: new THREE.MeshStandardMaterial({ color: '#7a5a42' }),
     blackMetal: new THREE.MeshStandardMaterial({ color: '#1a1b1d' }),
+    fixtureMetal: new THREE.MeshStandardMaterial({ color: '#5a5351' }),
     fabric: new THREE.MeshStandardMaterial({ color: '#f4f1ea' }),
     fabric2: new THREE.MeshStandardMaterial({ color: '#b9ae9c' }),
     porcelain: new THREE.MeshStandardMaterial({ color: '#f7f7f4' }),

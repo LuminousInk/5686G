@@ -317,6 +317,18 @@ describe('cooking', () => {
 })
 
 describe('island', () => {
+  it('recesses the sink below the stone and mounts the faucet on the remaining deck', () => {
+    const island = kitchenIsland(makeLib(), 2.5, 0.9, true)
+    island.updateMatrixWorld(true)
+    const surfaceAt = (x: number, z: number) => {
+      const ray = new THREE.Raycaster(new THREE.Vector3(x, 2, z), new THREE.Vector3(0, -1, 0))
+      return ray.intersectObject(island)[0]?.point.y
+    }
+    expect(surfaceAt(0.4, 0)).toBeCloseTo(ISLAND_TOP, 3)
+    expect(surfaceAt(-0.5, 0)).toBeCloseTo(0.807, 3)
+    expect(surfaceAt(-0.5, -0.303)).toBeGreaterThan(ISLAND_TOP + 0.2)
+  })
+
   it('faces the run with drawer stacks behind 3 mm reveals', () => {
     for (const w of [1.6, 2.4, 2.52]) {
       const cols = columns(islandFronts(w))

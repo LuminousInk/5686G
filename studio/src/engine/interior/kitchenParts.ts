@@ -176,14 +176,14 @@ function carcass(b: MeshBatch, lib: MaterialLibrary, w: number, top: number, bac
 }
 
 /** Base run `w` wide and `d` deep (to the face of the fronts) with its stone top and upstand. */
-export function baseCabinets(lib: MaterialLibrary, w: number, d = 0.62): THREE.Group {
+export function baseCabinets(lib: MaterialLibrary, w: number, d = 0.62, backsplash = BACKSPLASH_H): THREE.Group {
   const b = new MeshBatch()
   const frontZ = d / 2
   carcass(b, lib, w - 0.006, COUNTER_TOP - COUNTER_T, -d / 2, frontZ, 1)
   addFronts(b, lib, baseFronts(w), frontZ, 1)
   // 40 mm top overhanging the fronts by 20 mm, and a slim upstand of the same stone up to the shelves
   box(b, lib.counter, 0, w, COUNTER_TOP - COUNTER_T, COUNTER_T, -d / 2, frontZ + 0.02, 0.004, 2)
-  box(b, lib.counter, 0, w, COUNTER_TOP, BACKSPLASH_H, -d / 2, -d / 2 + 0.015, 0.002)
+  if (backsplash > 0) box(b, lib.counter, 0, w, COUNTER_TOP, backsplash, -d / 2, -d / 2 + 0.015, 0.002)
   return b.toGroup('kitchen-base')
 }
 
@@ -263,14 +263,54 @@ export function rangeHood(lib: MaterialLibrary, w = 0.9, h = 0.78, d = 0.54): TH
  * Island `w` x `d` with a waterfall counter. Its cabinet faces the run (-z) with drawer stacks; the stool side (+z)
  * keeps a knee-space overhang under the counter.
  */
-export function kitchenIsland(lib: MaterialLibrary, w: number, d = 1): THREE.Group {
+export function kitchenIsland(lib: MaterialLibrary, w: number, d = 1, withSink = false): THREE.Group {
   const b = new MeshBatch()
   const top = ISLAND_TOP - COUNTER_T
   const cw = w - 2 * WATERFALL_T
   const frontZ = -d / 2 + 0.03
-  carcass(b, lib, cw, top, d / 2 - KNEE, frontZ, -1, 0.05)
+  carcass(b, lib, cw, withSink ? top - 0.125 : top, d / 2 - KNEE, frontZ, -1, 0.05)
   addFronts(b, lib, islandFronts(cw), frontZ, -1)
-  box(b, lib.counter, 0, w, top, COUNTER_T, -d / 2, d / 2, 0.004, 2)
+  if (withSink) {
+    // Cap the opening above the recessed carcass at the seating side.
+    box(b, lib.cabinet, 0, cw, top - 0.125, 0.125, d / 2 - KNEE - 0.019, d / 2 - KNEE)
+    islandSink(b, lib, w, d, top)
+  } else {
+    box(b, lib.counter, 0, w, top, COUNTER_T, -d / 2, d / 2, 0.004, 2)
+  }
   for (const s of [-1, 1]) box(b, lib.counter, s * (w / 2 - WATERFALL_T / 2), WATERFALL_T, 0, top, -d / 2, d / 2, 0.003)
   return b.toGroup('kitchen-island')
+}
+
+/** Counter slabs surround an opening with an inset stainless basin and deck-mounted tap. */
+function islandSink(b: MeshBatch, lib: MaterialLibrary, w: number, d: number, top: number) {
+  const x = -w * 0.2
+  const left = x - 0.25
+  const right = x + 0.25
+  const back = -0.225
+  const front = 0.12
+  for (const [a, e] of [[-w / 2, left], [right, w / 2]]) {
+    box(b, lib.counter, (a + e) / 2, e - a, top, COUNTER_T, -d / 2, d / 2)
+  }
+  box(b, lib.counter, x, right - left, top, COUNTER_T, -d / 2, back)
+  box(b, lib.counter, x, right - left, top, COUNTER_T, front, d / 2)
+  const bottom = top - 0.105
+  const steel = lib.fixtureMetal
+  box(b, steel, x, 0.5, bottom, 0.012, back, front, 0.005)
+  box(b, steel, x, 0.5, bottom, 0.128, back, back + 0.009)
+  box(b, steel, x, 0.5, bottom, 0.128, front - 0.009, front)
+  for (const e of [left + 0.004, right - 0.004]) box(b, steel, e, 0.009, bottom, 0.128, back, front)
+  const drain = new THREE.CylinderGeometry(0.028, 0.028, 0.004, 16)
+  drain.translate(x, bottom + 0.013, -0.04)
+  b.add(darkGlass, drain)
+  const faucetZ = back - 0.078
+  const base = new THREE.CylinderGeometry(0.027, 0.028, 0.032, 16)
+  base.translate(x, ISLAND_TOP + 0.016, faucetZ)
+  b.add(steel, base)
+  const arc = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(x, ISLAND_TOP + 0.015, faucetZ),
+    new THREE.Vector3(x, ISLAND_TOP + 0.24, faucetZ),
+    new THREE.Vector3(x, ISLAND_TOP + 0.29, faucetZ + 0.09),
+    new THREE.Vector3(x, ISLAND_TOP + 0.23, faucetZ + 0.17),
+  ])
+  b.add(steel, new THREE.TubeGeometry(arc, 14, 0.013, 8, false))
 }
