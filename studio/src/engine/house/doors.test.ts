@@ -149,8 +149,24 @@ describe('door census', () => {
       ],
       decks: [], porches: [], stairs: [], terraces: [], landscape: {}, views: [], finishes: {}, zones: [],
     }
-    const out = buildExteriorWalls(plan, makeLib(), new MeshBatch())
+    const batch = new MeshBatch()
+    const out = buildExteriorWalls(plan, makeLib(), batch)
     expect(out.doors).toHaveLength(1)
     expect(out.doors[0]).toMatchObject({ openingIndex: 0, kind: 'door', leaf: true, casing: true })
+
+    const shell = batch.toGroup('shell')
+    const wallHits = (y: number, z: number, side: number) => {
+      const origin = new THREE.Vector3(4 + side * 0.4, y, z)
+      const ray = new THREE.Raycaster(origin, new THREE.Vector3(-side, 0, 0), 0, 0.8)
+      return ray.intersectObject(shell, true).filter(hit => hit.object.userData.material === 'wall')
+    }
+    for (const side of [-1, 1]) {
+      expect(wallHits(1, 2, side)).toHaveLength(0)
+      expect(wallHits(2.3, 2, side).length).toBeGreaterThan(0)
+      expect(wallHits(1, 1.4, side).length).toBeGreaterThan(0)
+    }
+    shell.traverse(object => {
+      if (object instanceof THREE.Mesh) object.geometry.dispose()
+    })
   })
 })

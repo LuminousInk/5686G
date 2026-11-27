@@ -65,7 +65,7 @@ export const modernFarmhouse: HomePlan = {
     { wall: 'f-hall-s', at: 2.0, width: 0.85, height: 2.1, kind: 'door' },
     { wall: 'f-hall-s', at: 6.0, width: 0.85, height: 2.1, kind: 'door' },
     { wall: 'f-hall-n', at: 2.0, width: 0.85, height: 2.1, kind: 'door' },
-    { wall: 'f-hall-n', at: 6.4, width: 0.8, height: 2.1, kind: 'door' },
+    { wall: 'f-hall-n', at: 6.95, width: 0.8, height: 2.1, kind: 'door' },
     { wall: 'f-primary-e', at: 1.0, width: 0.8, height: 2.1, kind: 'door' },
     { wall: 'f-bed4-w', at: 3.0, width: 0.85, height: 2.1, kind: 'door' },
     { wall: 'f-garage', at: 3.0, width: 0.9, height: 2.1, kind: 'door' },

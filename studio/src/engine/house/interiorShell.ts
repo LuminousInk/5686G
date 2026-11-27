@@ -5,7 +5,7 @@ import { buildInteriorDoor } from './interiorDoor'
 import { subtractRect } from './levels'
 import { blockAt, ceilingAt, INT_WALL_T, sideIntervals, sidePoint, SIDES, WALL_T } from './massing'
 import type { BuiltDoor, HomePlan, Rect } from './types'
-import type { Segment2 } from './walls'
+import { partitionShape, type Segment2 } from './walls'
 
 export interface InteriorShellOutput {
   colliders: Segment2[]
@@ -33,27 +33,9 @@ export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: 
     const m = new THREE.Matrix4().set(dx, 0, -dz, ax, 0, 1, 0, 0, dz, 0, dx, az, 0, 0, 0, 1)
     const doors = plan.openings
       .filter(o => o.wall === w.id)
-      .map(o => ({ u0: o.at - o.width / 2, u1: o.at + o.width / 2, y1: fy + o.height, o, openingIndex: plan.openings.indexOf(o) }))
+      .map(o => ({ u0: o.at - o.width / 2, u1: o.at + o.width / 2, y0: fy, y1: fy + o.height, o, openingIndex: plan.openings.indexOf(o) }))
       .sort((a, b) => a.u0 - b.u0)
-    // outline with a sampled top that follows vaulted ceilings
-    const shape = new THREE.Shape()
-    shape.moveTo(0, fy)
-    shape.lineTo(len, fy)
-    const steps = Math.max(1, Math.ceil(len / 0.25))
-    for (let i = steps; i >= 0; i--) {
-      const u = (i / steps) * len
-      shape.lineTo(u, ceil(ax + dx * u, az + dz * u) - 0.002)
-    }
-    shape.closePath()
-    for (const d of doors) {
-      const p = new THREE.Path()
-      p.moveTo(d.u0, fy - 0.01)
-      p.lineTo(d.u0, d.y1)
-      p.lineTo(d.u1, d.y1)
-      p.lineTo(d.u1, fy - 0.01)
-      p.closePath()
-      shape.holes.push(p)
-    }
+    const shape = partitionShape(0, len, fy, u => ceil(ax + dx * u, az + dz * u) - 0.002, doors)
     const g = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false })
     g.translate(0, 0, -t / 2)
     batch.add(lib.wall, applyMatrixKeepWinding(g, m))
