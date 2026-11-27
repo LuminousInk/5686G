@@ -132,6 +132,9 @@ a.site-header-cta { display: inline-flex; align-items: center; justify-content: 
 .site-breadcrumb { display: inline-flex; min-height: 44px; align-items: center; gap: 5px; margin-left: -4px; margin-bottom: clamp(10px, 1.6vw, 23px); font-size: 14px; }
 .site-breadcrumb svg { width: 17px; color: var(--accent); }
 .site-home-title-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 20px; }
+.site-home-ctas { display: flex; flex-wrap: wrap; gap: 8px; }
+a.site-tour-cta { background: transparent; color: var(--ink); border-color: var(--line); }
+a.site-tour-cta:hover { background: var(--hover); border-color: var(--ink-2); }
 .site-home-heading h1 { font-size: clamp(44px, 7.1vw, 104px); }
 .site-home-render { position: relative; max-width: 1600px; margin-inline: auto; }
 .site-home-render img { display: block; width: 100%; height: auto; aspect-ratio: 2.65; object-fit: cover; background: #222c26; }

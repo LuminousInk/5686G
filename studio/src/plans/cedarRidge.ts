@@ -177,6 +177,18 @@ export const cedarRidge: HomePlan = {
     { id: 'test-window', label: 'Window', kind: 'orbit', pos: [5.2, 2.0, 6.5], target: [5.6, 2.2, 0.2], fov: 50 },
     { id: 'aerial', label: 'Aerial', kind: 'orbit', pos: [-25, 24, -29], target: [2, 1.6, 15], fov: 48 },
     { id: 'ocean', label: 'Ocean outlook', kind: 'orbit', pos: [-13, 8.5, -15], target: [0, -2, 43], fov: 53 },
+    { id: 'tour-hero', label: 'Garden elevation', kind: 'orbit', pos: [-9.5, 3.1, 23.5], target: [2, 2.6, -2.6], fov: 44 },
+    { id: 'tour-entry', label: 'Entry approach', kind: 'walk', pos: [-3.7, 2.1, -13.45], target: [-1.45, 1.85, -9.45], fov: 60 },
+    { id: 'tour-living', label: 'Great room · terrace', kind: 'walk', pos: [-2.48, 2.26, -6.06], target: [1.6, 2.27, -0.55], fov: 67, room: 'great' },
+  ],
+  tour: [
+    { view: 'tour-hero', title: 'Cedar Ridge', caption: 'The cedar-clad great room looks onto the raised garden terrace.' },
+    { view: 'tour-entry', title: 'Entry approach', caption: 'A wide entry door opens into the foyer behind the great room.' },
+    { view: 'tour-living', title: 'Great room', caption: 'A vaulted wood ceiling leads the eye out to the paver terrace.' },
+    { view: 'kitchen', title: 'Kitchen', caption: 'The roughly 17 × 15 ft kitchen sits beside the dining area.' },
+    { view: 'primary', title: 'Primary suite', caption: 'The roughly 22 × 13 ft bedroom sits in the low east wing.' },
+    { view: 'terrace', title: 'Garden terrace', caption: 'Raised pavers meet the rock garden beside the covered deck.' },
+    { view: 'ocean', title: 'Ocean outlook', caption: 'The lot slopes away toward the Pacific beyond the garden.' },
   ],
   finishes: {
     cedar: 'natural-cedar',
