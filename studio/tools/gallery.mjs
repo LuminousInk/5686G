@@ -3,21 +3,22 @@
 import { createRequire } from 'node:module'
 import { mkdir, writeFile } from 'node:fs/promises'
 import sharp from 'sharp'
+import { fileURLToPath } from 'node:url'
+import { galleryCyclesArgs, readCatalog, renderCycles } from './cycles/render.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require('playwright')
-const base = new URL(process.env.BASE ?? 'http://localhost:4187/')
 const out = new URL('../public/gallery/', import.meta.url)
 const width = 1600
 const height = 900
 const frames = Number(process.env.FRAMES ?? 12)
-if (!Number.isInteger(frames) || frames < 1) throw new Error('FRAMES must be a positive integer')
 
-// Reuse the elevation's camera and finishes, taking only the time from the lighting reference.
-const comparisonShots = [
-  { id: 'woodland-garden-day', camera: 'woodland-modern-golden', lighting: 'woodland-day' },
-  { id: 'aspen-walkout-dusk', camera: 'aspen-custom-golden', lighting: 'aspen-dusk' },
-]
+const { values, positionals: ids } = galleryCyclesArgs(process.argv.slice(2))
+const { engine, ...cyclesOptions } = values
+if (!['webgl', 'cycles'].includes(engine)) throw new Error('Use --engine webgl or --engine cycles')
+if (engine === 'webgl' && Object.keys(cyclesOptions).length) throw new Error('Render options require --engine cycles')
+if (engine === 'webgl' && (!Number.isInteger(frames) || frames < 1)) throw new Error('FRAMES must be a positive integer')
+const base = new URL(process.env.BASE ?? (engine === 'cycles' ? 'http://localhost:4201/' : 'http://localhost:4187/'))
 
 const args = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
 async function withPage(run) {
@@ -61,25 +62,13 @@ async function capture(page, entry, errors) {
   return Math.round(webp.length / 1000)
 }
 
-const catalog = await withPage(async page => {
-  const url = new URL(base)
-  url.searchParams.set('gallery', 'catalog')
-  url.hash = '#studio'
-  await page.goto(url.href)
-  await page.waitForFunction(() => !!window.__gallery)
-  return page.evaluate(() => window.__gallery)
-})
-for (const { id, camera, lighting } of comparisonShots) {
-  const source = catalog.images.find(image => image.id === camera)
-  const light = catalog.images.find(image => image.id === lighting)
-  if (!source || !light) throw new Error(`Missing comparison source for ${id}`)
-  const time = light.share.split('-')[2]
-  catalog.images.push({
-    ...source, id, light: light.light,
-    share: source.share.replace(/^(#c-\d+-)\d+/, (_, prefix) => prefix + time),
-  })
+const browser = await chromium.launch({ args })
+let catalog
+try {
+  catalog = await readCatalog(browser, base)
+} finally {
+  await browser.close()
 }
-const ids = process.argv.slice(2)
 for (const id of ids) if (!catalog.images.some(image => image.id === id)) throw new Error(`Unknown gallery image: ${id}`)
 await mkdir(out, { recursive: true })
 
@@ -89,6 +78,13 @@ for (const home of catalog.homes) {
     .filter(entry => entry.plan === home.id && (!ids.length || ids.includes(entry.id)))
     .sort((a, b) => a.light.localeCompare(b.light))
   if (!shots.length) continue
+  if (engine === 'cycles') {
+    for (const shot of shots) {
+      console.log(`Rendering ${shot.id}`)
+      await renderCycles({ ...cyclesOptions, shot, base, output: fileURLToPath(new URL(`${shot.id}.webp`, out)) })
+    }
+    continue
+  }
   await withPage(async (page, errors) => {
     const url = new URL(base)
     url.search = new URLSearchParams({ gallery: '1', quality: 'high', frames: String(frames), sheet: 'none', ui: '0' })

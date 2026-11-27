@@ -52,6 +52,9 @@ declare global {
     __gallery?: GalleryCatalog
     /** offline bake hook (tools/bake): the loaded home as GLB + world sky + sun, base64 encoded */
     __bakeExport?: () => Promise<{ glb: string; sky: string; meta: unknown }>
+    __beautyExport?: (finishes?: Record<string, string>) => Promise<{
+      glb: string; sky: string; meta: import('../engine/photo/exportBeauty').BeautyMeta
+    }>
     __models?: { load: (id: string) => Promise<THREE.Group>; lowRes: (lo: boolean) => void; three: typeof THREE; kit: typeof kit; skipped: string[]; yaw: Record<string, number> }
   }
 }
@@ -228,6 +231,27 @@ export function App({ target, visible, requested, onLoad }: {
         })
       return { glb: await b64(r.glb), sky: await b64(r.sky.buffer as ArrayBuffer), meta: r.meta }
     }
+    window.__beautyExport = async finishes => {
+      const current = engine
+      if (!current?.plan) throw new Error('No home loaded')
+      for (const [zone, option] of Object.entries(finishes ?? {})) {
+        if (!current.plan.zones.includes(zone) || !ZONES[zone]?.options.some(o => o.id === option)) {
+          throw new Error(`Unknown finish: ${zone} / ${option}`)
+        }
+      }
+      for (const [zone, option] of Object.entries(finishes ?? {})) current.setFinish(zone, option)
+      await current.lib.bank.ready()
+      const { exportBeauty } = await import('../engine/photo/exportBeauty')
+      const view = nav?.capturePose()
+      const r = await exportBeauty(current, { target: view?.target, useExposureAnchor: params.get('gallery') === 'export' })
+      const encode = (buffer: ArrayBuffer) => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = () => reject(reader.error)
+        reader.readAsDataURL(new Blob([buffer]))
+      })
+      return { glb: await encode(r.glb), sky: await encode(r.sky.buffer as ArrayBuffer), meta: r.meta }
+    }
     // test hook: tools render each furniture model on its own to check it is assembled correctly
     window.__models = { load: loadModel, lowRes: setModelQuality, three: THREE, kit, skipped: skippedModels, yaw: MODEL_YAW }
     const blockKeys = (event: KeyboardEvent) => {
@@ -244,7 +268,7 @@ export function App({ target, visible, requested, onLoad }: {
     window.addEventListener('scroll', trackScroll, { capture: true, passive: true })
     nav = new Navigator(engine, canvas)
     // Gallery stills hold the exact shot camera while exposure and shadows converge.
-    if (params.get('gallery') === '1') nav.update = () => {}
+    if (params.get('gallery') === '1' || params.get('gallery') === 'export') nav.update = () => {}
     window.__nav = nav
     engine.keepAlive = cameraMoving
     nav.onModeChange = (m: NavMode) => {
@@ -403,22 +427,25 @@ export function App({ target, visible, requested, onLoad }: {
         await waitForPage()
         if (cancelled) return
         progress(1, 'Preparing the first view')
-        if (!reusePlan) await currentEngine.prepareFrame()
-        if (cancelled) return
-        // Warm the actual entry camera in the hidden canvas. Stop after one frame
-        // so previewing the website doesn't also run the accumulation loop.
-        await new Promise<void>(resolve => {
-          firstFrame.current = () => {
-            firstFrame.current = null
-            if (!latest.current.visible) {
-              currentEngine.paused = true
-              currentEngine.stop()
+        // An offline geometry export can use the app's exposure anchors without drawing a WebGL frame.
+        if (new URLSearchParams(location.search).get('gallery') !== 'export') {
+          if (!reusePlan) await currentEngine.prepareFrame()
+          if (cancelled) return
+          // Warm the actual entry camera in the hidden canvas. Stop after one frame
+          // so previewing the website doesn't also run the accumulation loop.
+          await new Promise<void>(resolve => {
+            firstFrame.current = () => {
+              firstFrame.current = null
+              if (!latest.current.visible) {
+                currentEngine.paused = true
+                currentEngine.stop()
+              }
+              resolve()
             }
-            resolve()
-          }
-          currentEngine.paused = false
-          currentEngine.start()
-        })
+            currentEngine.paused = false
+            currentEngine.start()
+          })
+        }
         if (cancelled) return
         setState({ loading: null })
         window.__ready = true
