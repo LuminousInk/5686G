@@ -261,12 +261,17 @@ export function bench(lib: MaterialLibrary, w: number, d: number): THREE.Group {
   return p.build('entryBench')
 }
 
-export function towelRail(lib: MaterialLibrary, w: number): THREE.Group {
+export function towelRail(lib: MaterialLibrary, w: number, textile?: THREE.Group): THREE.Group {
   const p = new Piece()
   for (const k of [-1, 1]) {
     p.box(lib.fixtureMetal, 0.028, 0.028, 0.074, k * (w / 2 - 0.018), 0, 0, 0.004)
   }
   p.box(lib.fixtureMetal, w, 0.014, 0.014, 0, 0, 0.033, 0.006)
+  if (textile) {
+    const rail = decor(p.build('towelRail'))
+    rail.add(textile)
+    return rail
+  }
   const towelW = w * 0.76
   p.box(lib.fabric2, towelW, 0.35, 0.016, 0, -0.161, 0.041, 0.006)
   p.box(lib.fabric2, towelW, 0.29, 0.014, 0, -0.129, 0.057, 0.006)
