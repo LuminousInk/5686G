@@ -15,6 +15,7 @@ import { GALLERY_SHOTS, designView, galleryView, type GalleryCatalog, type Galle
 import { ZONES } from '../engine/materials/catalog'
 import { TIME_PRESETS } from '../engine/env/environment'
 import { isStudioRoute, type StudioLoad, type StudioTarget } from './routes'
+import manifest from '../../public/gallery/gallery.json'
 import './styles.css'
 
 function galleryCatalog(): GalleryCatalog {
@@ -37,7 +38,7 @@ function galleryCatalog(): GalleryCatalog {
     }
   })
   const homes = PLANS.map(({ id, name, style, facts: { area, beds, baths } }) => ({ id, name, style, area, beds, baths }))
-  return { homes, images }
+  return { homes, images, comparisons: manifest.comparisons }
 }
 
 declare global {

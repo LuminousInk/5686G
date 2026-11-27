@@ -24,10 +24,11 @@ export interface FloorPlanProps {
   rotate?: boolean
   onOpen?: (level: string) => void
   initialLevel?: string
+  onLevelChange?: (level: string) => void
 }
 
 /** Architectural floor plan drawn from the plan data (walls, openings, door swings, rooms, outdoor areas). */
-export function FloorPlan({ plan, you, compact, onRoom, selected, className, rotate, onOpen, initialLevel }: FloorPlanProps) {
+export function FloorPlan({ plan, you, compact, onRoom, selected, className, rotate, onOpen, initialLevel, onLevelChange }: FloorPlanProps) {
   const [choice, setChoice] = useState<{ plan: string; level: string; walking?: string }>()
   const requested = choice?.plan === plan.id && choice.walking === you?.level ? choice.level : initialLevel ?? you?.level
   const level = plan.levels?.some(l => l.id === requested) ? requested! : levelId(plan)
@@ -83,6 +84,7 @@ export function FloorPlan({ plan, you, compact, onRoom, selected, className, rot
             className={onRoom ? 'plan-room' : undefined}
             role={onRoom ? 'button' : undefined}
             aria-label={onRoom ? r.name : undefined}
+            aria-pressed={onRoom && selected !== undefined ? sel : undefined}
             tabIndex={onRoom ? 0 : undefined}
             onClick={onRoom ? () => onRoom(r.id, cx, cz) : undefined}
             onKeyDown={onRoom ? e => {
@@ -162,7 +164,10 @@ export function FloorPlan({ plan, you, compact, onRoom, selected, className, rot
   if (!plan.levels || plan.levels.length < 2) return svg
   return <div className={`plan-level-layout ${className ?? ''}`}>
     <div className="plan-level-switch" role="group" aria-label="Floor level">
-      {plan.levels.map(l => <button key={l.id} type="button" aria-pressed={level === l.id} onClick={() => setChoice({ plan: plan.id, level: l.id, walking: you?.level })}>
+      {plan.levels.map(l => <button key={l.id} type="button" aria-pressed={level === l.id} onClick={() => {
+        setChoice({ plan: plan.id, level: l.id, walking: you?.level })
+        onLevelChange?.(l.id)
+      }}>
         {compact ? l.label.replace(' level', '') : l.label}
       </button>)}
     </div>

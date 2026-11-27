@@ -41,6 +41,38 @@
       "baths": 3.5
     }
   ],
+  "comparisons": [
+    {
+      "before": "cedar-ridge-golden",
+      "after": "cedar-charred",
+      "beforeLabel": "Natural Cedar",
+      "afterLabel": "Charred Cedar"
+    },
+    {
+      "before": "coastal-modern-golden",
+      "after": "coastal-weathered",
+      "beforeLabel": "Chalk · Golden hour",
+      "afterLabel": "Weathered Cedar · Afternoon"
+    },
+    {
+      "before": "modern-farmhouse-golden",
+      "after": "farmhouse-sage",
+      "beforeLabel": "Arctic White · Golden hour",
+      "afterLabel": "Sage · Afternoon"
+    },
+    {
+      "before": "woodland-modern-golden",
+      "after": "woodland-garden-day",
+      "beforeLabel": "Golden hour",
+      "afterLabel": "Afternoon"
+    },
+    {
+      "before": "aspen-custom-golden",
+      "after": "aspen-walkout-dusk",
+      "beforeLabel": "Golden hour",
+      "afterLabel": "Dusk"
+    }
+  ],
   "images": [
     {
       "id": "cedar-ridge-golden",

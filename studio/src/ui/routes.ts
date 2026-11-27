@@ -1,4 +1,14 @@
+import { planById } from '../plans'
+
 const studioFlags = ['plan', 'time', 'view', 'quality', 'frames', 'tm', 'ui', 'sheet', 'gallery']
+
+const homePrefix = '#home-'
+
+export const homeRoute = (id: string) => homePrefix + id
+
+export function homeFromRoute(hash: string) {
+  return hash.startsWith(homePrefix) ? planById(hash.slice(homePrefix.length)) : undefined
+}
 
 export interface StudioTarget { hash: string }
 
