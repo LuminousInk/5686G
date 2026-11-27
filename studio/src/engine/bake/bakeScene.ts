@@ -77,6 +77,11 @@ function meshKey(mesh: THREE.Mesh, material: THREE.Material, target: boolean,
   return h.digest()
 }
 
+/** Site meshes whose geometry follows the quality tier; they are left out so phones and desktops share one bake. */
+const TIER_DEPENDENT_SITE = new Set([
+  'Coastal canyon', 'Board-formed terrace walls', 'Decomposed granite paths', 'Hillside residential streets', 'Sandstone garden treads',
+])
+
 /** Stable, opaque scene shared by the baker and validity check. Roof/ceiling visibility is a viewer mode. */
 export function collectBakeMeshes(house: HouseModel, interior: THREE.Object3D | null, site: Site | null): BakeMesh[] {
   const out: BakeMesh[] = []
@@ -95,7 +100,8 @@ export function collectBakeMeshes(house: HouseModel, interior: THREE.Object3D | 
       if (siteObjects) {
         // Trees, lawn, pebbles and foliage are tier-dependent detail. Model pieces on berms also have
         // tier-dependent placements. Keep the authored hardscape, furnishings, soil and fence.
-        if (mesh.name.includes(':') || ['Coastal canyon', 'Board-formed terrace walls'].includes(mesh.name)) return
+        // Paths, streets and treads drape over the tier's terrain triangulation, so their vertices differ between tiers.
+        if (mesh.name.includes(':') || TIER_DEPENDENT_SITE.has(mesh.name)) return
         if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox()
         if (!box.copy(mesh.geometry.boundingBox!).applyMatrix4(mesh.matrixWorld).intersectsBox(near)) return
       }
