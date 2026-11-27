@@ -83,7 +83,10 @@ async function hdris() {
 
 async function textures() {
   const base = path.join(RAW, 'tex')
+  // Old raw caches can still contain these replaced sets.
+  const retired = new Set(['laminate_floor_02', 'large_grey_tiles', 'long_white_tiles'])
   for (const id of fs.readdirSync(base)) {
+    if (retired.has(id)) continue
     if (only && !only.split(',').some(o => id === o || id.includes(o))) continue
     for (const res of fs.readdirSync(path.join(base, id))) {
       const dir = path.join(base, id, res)
@@ -92,21 +95,61 @@ async function textures() {
           .toFile(path.join(OUT, 'tex', `${id}_512_d.webp`))
         continue
       }
+      if (id.startsWith('ambientcg_')) {
+        for (const [label, size] of [['1k', 1024], ['512', 512]]) {
+          const out = suffix => path.join(OUT, 'tex', `${id}_${label}_${suffix}.webp`)
+          const diffuse = sharp(path.join(dir, 'Diffuse.jpg')).resize(size, size)
+          // The wall palette supplies the pigment. Keep the plaster's small tonal changes in the colour map.
+          if (id === 'ambientcg_plaster001') diffuse.linear(0.8, 70)
+          if (id === 'ambientcg_marble019') diffuse.modulate({ saturation: 0.55 }).linear(0.72, 65)
+          if (id === 'ambientcg_tiles142') diffuse.modulate({ saturation: 0.72 })
+          await diffuse.webp({ quality: 86, effort: 5 }).toFile(out('d'))
+          await sharp(path.join(dir, 'nor_gl.jpg')).resize(size, size)
+            .webp({ quality: 92, effort: 5 }).toFile(out('n'))
+          const channel = file => sharp(path.join(dir, file)).resize(size, size).extractChannel(0).raw().toBuffer()
+          const aoPath = path.join(dir, 'ao.jpg')
+          const [rough, ao] = await Promise.all([
+            channel('rough.jpg'),
+            fs.existsSync(aoPath) ? channel('ao.jpg') : Buffer.alloc(size * size, 255),
+          ])
+          const arm = Buffer.alloc(size * size * 3)
+          for (let i = 0; i < rough.length; i++) {
+            arm[i * 3] = ao[i]
+            // Bring the stone tile out of polished territory. Quantise roughness before lossless packing
+            // to keep 512 px downloads small while preserving the neutral AO and metal channels.
+            const value = id === 'ambientcg_tiles142' ? 94 + 0.66 * rough[i] : rough[i]
+            arm[i * 3 + 1] = Math.min(255, Math.round(value / 8) * 8)
+          }
+          await sharp(arm, { raw: { width: size, height: size, channels: 3 } })
+            .webp({ lossless: true }).toFile(out('arm'))
+        }
+        log('tex  ', id, res)
+        continue
+      }
       const jobs = [
         ['Diffuse.jpg', 'd', 84],
         ['nor_gl.jpg', 'n', 90],
         ['arm.jpg', 'arm', 86],
       ]
+      const image = (src, suffix) => {
+        const map = sharp(path.join(dir, src))
+        if (id === 'oak_wood_planks' && suffix === 'd') {
+          // Lightly bleached, oil-finished oak. Preserve the grain and reduce the source varnish's orange cast.
+          map.recomb([[0.83, 0.13, 0.04], [0.08, 0.89, 0.03], [0.14, 0.17, 0.69]]).linear(1.08, 21)
+        }
+        if (id === 'oak_wood_planks' && suffix === 'arm') map.linear([1, 0.75, 1], [0, 65, 0])
+        return map
+      }
       for (const [src, suffix, q] of jobs) {
         const out = path.join(OUT, 'tex', `${id}_${res}_${suffix}.webp`)
-        await sharp(path.join(dir, src)).webp({ quality: q, effort: 5 }).toFile(out)
+        await image(src, suffix).webp({ quality: q, effort: 5 }).toFile(out)
       }
       const total = jobs.reduce((s, [, suffix]) => s + fs.statSync(path.join(OUT, 'tex', `${id}_${res}_${suffix}.webp`)).size, 0)
       log('tex  ', id, res, mb(total))
       if (res === '1k') {
         // phone variant: half resolution
         for (const [src, suffix, q] of jobs) {
-          await sharp(path.join(dir, src)).resize(512, 512).webp({ quality: q, effort: 5 }).toFile(path.join(OUT, 'tex', `${id}_512_${suffix}.webp`))
+          await image(src, suffix).resize(512, 512).webp({ quality: q, effort: 5 }).toFile(path.join(OUT, 'tex', `${id}_512_${suffix}.webp`))
         }
       }
     }
