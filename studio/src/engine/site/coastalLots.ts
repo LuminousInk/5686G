@@ -1,31 +1,7 @@
 import * as THREE from 'three'
 import { coastalStreets, coastalStreetWidth, type Neighbor } from './coastalLayout'
 import { type Hillside, surface } from './hillside'
-import { coastalHaze, type CoastalMaps, type CoastalSky } from './ocean'
-
-export function buildCoastalLawn(rect: [number, number, number, number], hill: Hillside, maps: CoastalMaps) {
-  const [u0, v0, u1, v1] = rect
-  const positions: number[] = []
-  const uvs: number[] = []
-  const indices: number[] = []
-  const rows = 9, columns = 21
-  for (let row = 0; row < rows; row++) {
-    for (let column = 0; column < columns; column++) {
-      const u = THREE.MathUtils.lerp(u0, u1, column / (columns - 1))
-      const v = THREE.MathUtils.lerp(v0, v1, row / (rows - 1))
-      const [x, z] = hill.world(u, v)
-      positions.push(x, hill.surfaceHeight(u, v) + 0.035, z)
-      uvs.push(u * 0.91, v * 0.91)
-      if (row && column) {
-        const a = (row - 1) * columns + column - 1
-        indices.push(a, a + columns, a + 1, a + 1, a + columns, a + columns + 1)
-      }
-    }
-  }
-  return surface(positions, uvs, indices, new THREE.MeshStandardMaterial({
-    color: '#64793d', roughness: 0.93, bumpMap: maps.grass, bumpScale: 0.04,
-  }), 'Terrace lawn')
-}
+import { coastalHaze, type CoastalSky } from './ocean'
 
 const roofColors = ['#756863', '#8c5944', '#505858', '#8f7460', '#5f5555']
 const houseColors = ['#c4b7a9', '#b9aa9e', '#c8b99f', '#b3a393', '#c7c5b7']

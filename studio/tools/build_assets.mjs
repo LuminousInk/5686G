@@ -24,7 +24,7 @@ const args = process.argv.slice(2)
 const steps = args.filter(a => a.startsWith('--')).map(a => a.slice(2))
 const only = args.find(a => !a.startsWith('--')) ?? ''
 const run = (name) => !steps.length || steps.includes(name)
-const COASTAL_DIFFUSE = new Set(['withered_grass', 'wood_chip_path'])
+const COASTAL_SURFACES = new Set(['withered_grass', 'wood_chip_path', 'gravelly_sand', 'coast_sand_rocks_02', 'Grass001'])
 
 // target triangle counts (approximate) and texture size per model
 const MODELS = {
@@ -87,9 +87,20 @@ async function textures() {
     if (only && !only.split(',').some(o => id === o || id.includes(o))) continue
     for (const res of fs.readdirSync(path.join(base, id))) {
       const dir = path.join(base, id, res)
-      if (COASTAL_DIFFUSE.has(id)) {
-        await sharp(path.join(dir, 'Diffuse.jpg')).resize(512, 512).webp({ quality: 83, effort: 5 })
-          .toFile(path.join(OUT, 'tex', `${id}_512_d.webp`))
+      if (COASTAL_SURFACES.has(id)) {
+        if (res !== '1k') continue
+        // Pack roughness into normal alpha to keep both tiers within the texture and file budgets.
+        for (const [size, tag] of [[512, '512'], [1024, '1k']]) {
+          const roughness = await sharp(path.join(dir, 'Rough.jpg')).resize(size, size).greyscale().raw().toBuffer()
+          await Promise.all([
+            sharp(path.join(dir, 'Diffuse.jpg')).resize(size, size).webp({ quality: 87, effort: 5 })
+              .toFile(path.join(OUT, 'tex', `${id}_${tag}_d.webp`)),
+            sharp(path.join(dir, 'nor_gl.jpg')).resize(size, size)
+              .joinChannel(roughness, { raw: { width: size, height: size, channels: 1 } })
+              .webp({ quality: 80, alphaQuality: 66, effort: 5 })
+              .toFile(path.join(OUT, 'tex', `${id}_${tag}_nr.webp`)),
+          ])
+        }
         continue
       }
       const jobs = [
@@ -111,6 +122,30 @@ async function textures() {
       }
     }
   }
+}
+
+// Periodic derivative field, tiled and cross-scrolled by the ocean's Water2-style shader.
+async function oceanNormals() {
+  const size = 256
+  const octaves = [[2, 5, 0.6], [5, 3, 1.7], [-4, 7, 2.9], [9, 10, 4.5], [-7, 13, 0.3],
+    [14, 15, 1.3], [17, -16, 3.7], [25, 23, 4.9], [-29, 19, 2.1]]
+  const pixels = Buffer.alloc(size * size * 3)
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    let sx = 0, sz = 0
+    for (const [kx, kz, phase] of octaves) {
+      const length = Math.hypot(kx, kz)
+      const slope = Math.cos((kx * x + kz * y) * 2 * Math.PI / size + phase) * 0.55 / Math.sqrt(length)
+      sx += slope * kx / length
+      sz += slope * kz / length
+    }
+    const inv = 1 / Math.hypot(sx, sz, 1)
+    const i = (y * size + x) * 3
+    pixels[i] = Math.round(127.5 + sx * inv * 127.5)
+    pixels[i + 1] = Math.round(127.5 + sz * inv * 127.5)
+    pixels[i + 2] = Math.round(127.5 + inv * 127.5)
+  }
+  await sharp(pixels, { raw: { width: size, height: size, channels: 3 } })
+    .webp({ quality: 85 }).toFile(path.join(OUT, 'tex', 'coastal_water_n.webp'))
 }
 
 function triCount(doc) {
@@ -265,7 +300,10 @@ async function art() {
 }
 
 if (run('hdri')) await hdris()
-if (run('tex')) await textures()
+if (run('tex')) {
+  if (only !== 'coastal_water') await textures()
+  if (!only || only === 'coastal_water') await oceanNormals()
+}
 if (run('models')) await models()
 if (run('trees')) await trees()
 if (run('art')) await art()

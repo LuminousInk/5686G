@@ -21,14 +21,15 @@ export class CoastalSky {
       const background = scene.background
       if (!(background instanceof THREE.Texture) || background.mapping !== THREE.EquirectangularReflectionMapping) return
       const u = this.uniforms
-      if (background === u.coastSky.value && u.coastBrightness.value === scene.backgroundIntensity) return
-      u.coastSky.value = background
-      u.coastBrightness.value = scene.backgroundIntensity
-      this.rotation.setFromMatrix4(this.matrix.makeRotationFromEuler(scene.backgroundRotation)).transpose()
+      if (background !== u.coastSky.value || u.coastBrightness.value !== scene.backgroundIntensity) {
+        u.coastSky.value = background
+        u.coastBrightness.value = scene.backgroundIntensity
+        this.rotation.setFromMatrix4(this.matrix.makeRotationFromEuler(scene.backgroundRotation)).transpose()
+      }
       const sun = scene.children.find(o => o instanceof THREE.DirectionalLight)
       if (sun instanceof THREE.DirectionalLight) {
         u.coastSunDirection.value.subVectors(sun.position, sun.target.position).normalize()
-        u.coastSunColor.value.copy(sun.color).multiplyScalar(Math.min(sun.intensity, 6) * 0.55)
+        u.coastSunColor.value.copy(sun.color).multiplyScalar(sun.visible ? Math.min(sun.intensity, 6) * 0.55 : 0)
       }
     }
   }
@@ -51,26 +52,6 @@ vec3 horizonSky(vec2 heading) {
 const worldVertex = /* glsl */`
 varying vec3 vCoastalWorld;
 `
-export interface CoastalMaps {
-  grass: THREE.Texture | null
-  bark: THREE.Texture | null
-}
-
-export async function loadCoastalMaps(): Promise<CoastalMaps> {
-  const loader = new THREE.TextureLoader()
-  const load = async (id: string) => {
-    const map = await loader.loadAsync(`./assets/tex/${id}_512_d.webp`).catch(() => null)
-    if (map) {
-      map.wrapS = map.wrapT = THREE.RepeatWrapping
-      map.colorSpace = THREE.SRGBColorSpace
-      map.anisotropy = 4
-    }
-    return map
-  }
-  const [grass, bark] = await Promise.all([load('withered_grass'), load('wood_chip_path')])
-  return { grass, bark }
-}
-
 export function coastalHaze(material: THREE.MeshStandardMaterial, sky: CoastalSky, key: string) {
   const configure = material.onBeforeCompile.bind(material)
   material.onBeforeCompile = (shader, renderer) => {
@@ -104,55 +85,6 @@ export function coastalHaze(material: THREE.MeshStandardMaterial, sky: CoastalSk
   return material
 }
 
-export function canyonMaterial(lib: MaterialLibrary, hill: Hillside, sky: CoastalSky, maps: CoastalMaps) {
-  const scan = lib.soil
-  const material = new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.96,
-    normalMap: scan.normalMap, normalScale: new THREE.Vector2(0.38, 0.38),
-  })
-  // Vertex colors carry the medium-scale plant stands and transitions into beds and beach.
-  // The scans add detail down to the twigs and grass blades at walking distance.
-  material.onBeforeCompile = shader => {
-    shader.uniforms.coastGrass = { value: maps.grass ?? scan.map }
-    shader.uniforms.coastBark = { value: maps.bark ?? scan.map }
-    shader.uniforms.coastSeaLevel = { value: hill.oceanDistance === undefined ? -1e5 : hill.seaLevel }
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec2 groundCover; varying vec2 vGroundCover;')
-      .replace('#include <color_vertex>', '#include <color_vertex>\nvGroundCover = groundCover;')
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', /* glsl */`
-        #include <common>
-        varying vec2 vGroundCover;
-        uniform sampler2D coastGrass;
-        uniform sampler2D coastBark;
-        uniform float coastSeaLevel;
-        float groundHash(vec2 p) {
-          return fract(sin(dot(p, vec2(37.1, 17.7))) * 43758.5453);
-        }
-        float groundNoise(vec2 p) {
-          vec2 i = floor(p), f = fract(p);
-          f = f * f * (3.0 - 2.0 * f);
-          return mix(mix(groundHash(i), groundHash(i + vec2(1, 0)), f.x),
-            mix(groundHash(i + vec2(0, 1)), groundHash(i + vec2(1)), f.x), f.y);
-        }
-      `)
-      .replace('#include <color_fragment>', /* glsl */`
-        #include <color_fragment>
-        if (vCoastalWorld.y < coastSeaLevel - 0.025) discard;
-        vec2 ground = vCoastalWorld.xz;
-        float distanceToEye = distance(ground, cameraPosition.xz);
-        float fine = 1.0 - smoothstep(46.0, 140.0, distanceToEye);
-        float grass = dot(texture2D(coastGrass, ground * 0.54).rgb, vec3(0.27, 0.62, 0.11));
-        float bark = dot(texture2D(coastBark, ground * 0.86).rgb, vec3(0.45, 0.44, 0.11));
-        float grain = mix(0.58 + grass * 1.8, 0.53 + bark * 2.35, vGroundCover.x);
-        float edge = groundNoise(ground * 0.58) * 0.64 + groundNoise(ground * 1.87) * 0.36;
-        float mottle = mix(0.57, 1.23, smoothstep(0.14, 0.85, edge));
-        diffuseColor.rgb = vColor.rgb * mix(mottle * mix(1.0, grain, fine), 0.98, vGroundCover.y);
-      `)
-  }
-  return coastalHaze(material, sky, 'coastal-canyon')
-}
-
 export function retainingMaterial(lib: MaterialLibrary) {
   const material = lib.concrete.clone()
   material.color.set('#b1a390')
@@ -171,7 +103,12 @@ export function retainingMaterial(lib: MaterialLibrary) {
         float timber = sin(vForm.y * 630.0 + knots * 1.3 + sin(vForm.x * 14.0)) * 0.032;
         float joints = 1.0 - smoothstep(0.001, 0.004, abs(fract(vForm.x * 0.41 + course * 0.38) - 0.5));
         float tie = 1.0 - smoothstep(0.008, 0.015, length(vec2(fract(vForm.x * 0.71) - 0.5, fract(vForm.y * 1.83) - 0.5)));
-        diffuseColor.rgb *= (0.91 + 0.1 * sin(course * 7.67) + timber) * (0.70 + 0.30 * seam) * (1.0 - 0.18 * joints - 0.38 * tie);
+        float streak = sin(vForm.x * 1.59 + sin(vForm.x * 0.52) * 2.7)
+          * sin(vForm.x * 4.37 + vForm.y * 2.1 + knots * 0.36);
+        float runoff = smoothstep(0.18, 0.91, streak + sin(vForm.y * 1.7 + course * 0.36) * 0.21);
+        vec3 mineral = mix(vec3(1.02, 1.01, 0.97), vec3(0.72, 0.77, 0.69), runoff * 0.48);
+        diffuseColor.rgb *= mineral * (0.91 + 0.1 * sin(course * 7.67) + timber)
+          * (0.70 + 0.30 * seam) * (1.0 - 0.18 * joints - 0.38 * tie);
       `)
   }
   material.customProgramCacheKey = () => 'board-formed-concrete'
@@ -180,10 +117,14 @@ export function retainingMaterial(lib: MaterialLibrary) {
 
 export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: number }, low: boolean) {
   const geom = new THREE.PlaneGeometry(44000, 44000).rotateX(-Math.PI / 2)
+  const normalMap = new THREE.TextureLoader().load('./assets/tex/coastal_water_n.webp')
+  normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping
+  normalMap.anisotropy = low ? 1 : 4
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       ...sky.uniforms,
       oceanTime: time,
+      oceanNormal: { value: normalMap },
       oceanOrigin: { value: new THREE.Vector2(hill.cx, hill.cz) },
       oceanBearing: { value: new THREE.Vector2(hill.dx, hill.dz) },
       oceanDistance: { value: hill.oceanDistance },
@@ -216,6 +157,7 @@ export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: numbe
       #include <common>
       ${skyGLSL}
       uniform float oceanTime;
+      uniform sampler2D oceanNormal;
       uniform float oceanDistance;
       uniform float oceanSeaLevel;
       uniform vec2 oceanOrigin;
@@ -247,34 +189,47 @@ export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: numbe
           + 245.0 * bell((u - 450.0) / sqrt(28000.0))
           + 410.0 * bell((u - 1050.0) / sqrt(180000.0));
         float offshore = v - beach;
-        float t = oceanTime * 0.64;
-        float gust = sin(u * 0.024 + v * 0.052) * 1.6 + sin(u * 0.068 - v * 0.034)
-          + sin(u * 0.137 + v * 0.092) * 1.2;
-        vec2 swell = vec2(
-          wave(u * 0.22 + v * 0.74 - t * 2.0 + gust) * 0.024 + wave(u * 0.81 - v * 0.46 + t) * 0.016,
-          wave(u * 0.36 + v * 0.63 - t * 1.7 - gust) * 0.034 + wave(u * 1.22 + v * 0.30 + t) * 0.019
-        );
+        if (offshore < -4.0) discard;
+        float t = oceanTime;
+        vec2 swash = vec2(u, v);
+        vec2 gust = vec2(sin(u * 0.036 + v * 0.04), sin(u * 0.021 - v * 0.127));
+        swash += 4.5 * gust;
+        // Cross-scroll a periodic normal field, following the three.js Water2 approach (MIT).
+        vec2 swell = texture2D(oceanNormal, swash * vec2(0.059, 0.047) + vec2(0.018, -0.045) * t).rg * 2.0 - 1.0;
+        vec2 oblique = mat2(0.60, -0.80, 0.80, 0.60) * swash;
+        swell += (texture2D(oceanNormal, oblique * 0.091 + vec2(-0.04, 0.02) * t).gr * 2.0 - 1.0) * 0.65;
         #if COAST_LOW == 0
-          swell += vec2(wave(u * 2.3 + v * 1.9 - t * 2.4), wave(u * 1.3 - v * 2.7 + t)) * 0.018;
+          swell += (texture2D(oceanNormal, swash * 0.31 - vec2(0.035, 0.065) * t).rg * 2.0 - 1.0) * 0.21;
         #endif
-        swell *= (1.0 - smoothstep(110.0, 360.0, distanceToEye)) * smoothstep(0.055, 0.23, eye.y);
-        vec3 normal = normalize(vec3(swell.x, 1.0, swell.y));
+        vec2 bearingAcross = vec2(oceanBearing.y, -oceanBearing.x);
+        float chop = (0.82 + 0.18 * gust.x) * (1.0 - smoothstep(800.0, 3400.0, distanceToEye));
+        vec2 perturbation = (bearingAcross * swell.x + oceanBearing * swell.y) * chop * 0.49;
+        vec3 normal = normalize(vec3(perturbation.x, 1.0, perturbation.y));
         vec3 reflected = reflect(-eye, normal);
-        reflected.y = max(0.018, reflected.y);
-        vec3 reflection = min(skyAt(reflected), vec3(1.55));
-        float fresnel = 0.035 + 0.965 * pow(1.0 - max(dot(normal, eye), 0.0), 5.0);
-        float shallows = 1.0 - smoothstep(0.0, 50.0, offshore);
-        vec3 deep = mix(vec3(0.007, 0.047, 0.149), vec3(0.013, 0.138, 0.217), shallows);
-        if (coastAtmosphere) deep *= vec3(1.22, 1.06, 0.76);
-        deep *= (0.91 + swell.y * 1.6) * pow(coastBrightness, 0.8);
-        vec3 water = mix(deep, reflection * vec3(0.45, 0.63, 0.79), 0.16 * fresnel);
+        reflected.y = max(0.015, reflected.y);
+        vec3 reflection = min(skyAt(reflected), vec3(1.25));
+        float fresnel = 0.028 + 0.75 * pow(1.0 - max(dot(normal, eye), 0.0), 5.0);
+        float depth = smoothstep(0.0, 66.0, offshore);
+        float shiftingSand = sin(u * 0.14 + v * 0.11) * sin(u * 0.19 - v * 0.09);
+        vec3 shallows = mix(vec3(0.15, 0.28, 0.23), vec3(0.021, 0.18, 0.22), smoothstep(-1.0, 16.0, offshore));
+        shallows *= 1.0 + 0.085 * shiftingSand * (1.0 - depth);
+        vec3 deep = vec3(0.009, 0.053, 0.109);
+        vec3 water = mix(shallows, deep, depth) * pow(coastBrightness, 0.8);
+        water = mix(water, reflection * vec3(0.39, 0.56, 0.73), 0.40 * fresnel);
+        water *= 1.0 + (swell.x * 0.11 + swell.y * 0.13) * chop;
         float glint = max(dot(normal, normalize(eye + coastSunDirection)), 0.0);
-        water += coastSunColor * (0.10 * pow(glint, 52.0) + 0.26 * pow(glint, 255.0));
-        float stripe = offshore - 4.1 - 0.7 * sin(u * 0.13 + t);
-        float breakers = 0.70 * bell(stripe / 0.65) + 0.23 * bell((stripe - 5.5) / 1.1);
-        float foam = pow(0.5 + 0.5 * wave(offshore * 1.63 - t * 2.1 + sin(u * 0.62) * 0.65), 9.0);
-        foam *= smoothstep(-0.2, 0.9, offshore) * (1.0 - smoothstep(4.0, 17.0, offshore));
-        water = mix(water, vec3(0.48, 0.59, 0.61) * coastBrightness, (foam * 0.31 + breakers) * (0.70 + sin(u * 0.43) * 0.24));
+        float roughGlint = mix(31.0, 14.0, smoothstep(220.0, 1200.0, distanceToEye));
+        water += coastSunColor * (0.085 * pow(glint, roughGlint) + 0.86 * pow(glint, 168.0))
+          * smoothstep(-0.04, 0.14, coastSunDirection.y);
+
+        float lag = sin(u * 0.101 + v * 0.036) * 0.84 + sin(u * 0.043) * 1.21;
+        float foamPhase = offshore * 0.86 + lag - t * 0.84;
+        float spill = 0.5 + 0.5 * wave(foamPhase);
+        float wash = smoothstep(0.82, 0.99, spill + swell.x * 0.12) * (1.0 - smoothstep(1.0, 19.0, offshore));
+        float shoreEdge = bell((offshore - 1.9 + 0.76 * sin(t * 0.52 + lag)) / 0.69);
+        float foam = max(wash * 0.61, shoreEdge * 0.73) * smoothstep(-0.15, 0.55, offshore);
+        foam *= 0.48 + 0.52 * (0.5 + 0.5 * sin(u * 1.85 + offshore * 0.45 + lag));
+        water = mix(water, vec3(0.53, 0.67, 0.69) * coastBrightness, foam);
         if (!coastAtmosphere) {
           float haze = 1.0 - exp(-max(0.0, distanceToEye - 145.0) * 0.00043);
           vec3 air = horizonSky(-toEye.xz);
@@ -287,6 +242,7 @@ export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: numbe
     `,
   })
   const mesh = new THREE.Mesh(geom, mat)
+  mat.addEventListener('dispose', () => normalMap.dispose())
   mesh.name = 'Pacific Ocean'
   mesh.position.set(hill.cx, hill.seaLevel, hill.cz)
   mesh.frustumCulled = false

@@ -7,12 +7,13 @@ import { modelPieces } from '../models'
 import type { QualitySettings } from '../quality'
 import type { TimePreset } from '../env/environment'
 import { wind } from './grass'
-import { plantHillside } from './coastalPlanting'
+import { buildLawnTufts, plantHillside } from './coastalPlanting'
 import { coastalLawn, coastalNeighbors } from './coastalLayout'
-import { buildCoastalLawn, buildCoastalLots, buildCoastalStreets } from './coastalLots'
-import { buildGravelPaths } from './gravelPaths'
+import { buildCoastalLots, buildCoastalStreets } from './coastalLots'
+import { buildGardenSteps, buildGravelPaths } from './gravelPaths'
 import type { Hillside } from './hillside'
-import { buildOcean, canyonMaterial, CoastalSky, loadCoastalMaps, retainingMaterial, type CoastalMaps } from './ocean'
+import { buildOcean, CoastalSky, retainingMaterial } from './ocean'
+import { canyonMaterial, disposeCoastalMaps, loadCoastalMaps, type CoastalMaps } from './groundMaterials'
 import { GrassField } from './grassField'
 import { buildOrnamental } from './ornamental'
 import { Terrain, type Berm } from './terrain'
@@ -35,7 +36,7 @@ export class Site {
   private instanced: THREE.InstancedMesh[] = []
   private shaderInstanced: THREE.Mesh[] = []
   private coast: THREE.Group | null = null
-  private coastalMaps: CoastalMaps = { grass: null, bark: null }
+  private coastalMaps: CoastalMaps | null = null
   private coastalSky = new CoastalSky()
   private coastalLots: THREE.InstancedMesh[] = []
   private coastalLotMaterial: THREE.Material | null = null
@@ -64,7 +65,8 @@ export class Site {
     this.terrain = new Terrain(plan, house.bounds)
     const t = this.terrain
     if (t.hillside) {
-      this.coastalMaps = await loadCoastalMaps()
+      this.group.userData.coastalShadow = true
+      this.coastalMaps = await loadCoastalMaps(this.quality.tier === 'low')
       const neighbors = coastalNeighbors(t.hillside)
       this.buildCoastalGround(plan, t.hillside, neighbors)
       const planting = await plantHillside(plan, t.hillside, this.quality, neighbors, this.coastalSky, this.renderer, this.grassMotion)
@@ -167,18 +169,29 @@ export class Site {
 
   private buildCoastalGround(plan: HomePlan, hill: Hillside, neighbors = coastalNeighbors(hill)) {
     const sky = this.coastalSky
+    const maps = this.coastalMaps!
     const low = this.quality.tier === 'low'
-    const ground = hill.buildSurface(canyonMaterial(this.lib, hill, sky, this.coastalMaps), retainingMaterial(this.lib), low)
+    const lawn = coastalLawn(plan, hill)
+    const ground = hill.buildSurface(canyonMaterial(hill, sky, maps, lawn, low), retainingMaterial(this.lib), low)
     this.coast = ground
     sky.bind(ground.children[0] as THREE.Mesh)
-    if (plan.landscape.paths?.length) ground.add(buildGravelPaths(plan.landscape.paths, hill, this.lib))
-    const lawn = coastalLawn(plan, hill)
-    if (lawn) ground.add(buildCoastalLawn(lawn, hill, this.coastalMaps))
+    if (plan.landscape.paths?.length) {
+      ground.add(buildGravelPaths(plan.landscape.paths, hill, maps))
+      if (plan.landscape.site?.walkout) {
+        const steps = buildGardenSteps(plan.landscape.paths, hill, maps)
+        if (steps) ground.add(steps)
+      }
+    }
     if (neighbors.length) {
       const { meshes, material } = buildCoastalLots(hill, neighbors, sky)
       this.coastalLots = meshes
       this.coastalLotMaterial = material
       ground.add(...meshes, buildCoastalStreets(hill, neighbors, sky))
+    }
+    if (lawn) {
+      const tuft = buildLawnTufts(lawn, hill, low, this.grassMotion)
+      this.coastalLots.push(tuft)
+      ground.add(tuft)
     }
     if (hill.oceanDistance !== undefined) {
       const ocean = buildOcean(hill, sky, wind.uTime, low)
@@ -557,8 +570,7 @@ export class Site {
       (forest.material as THREE.Material).dispose()
       forest.userData.target.dispose()
     }
-    this.coastalMaps.grass?.dispose()
-    this.coastalMaps.bark?.dispose()
+    disposeCoastalMaps(this.coastalMaps)
     for (const d of this.disposables) d.dispose()
     this.lawn?.dispose()
   }
