@@ -15,8 +15,8 @@ export class MaterialLibrary {
   private cache = new Map<string, THREE.Material>()
   private noise: THREE.Texture
   private fineNoise: THREE.Texture
-  private limewash: THREE.Texture
-  private limestone: THREE.Texture
+  private limewash?: THREE.Texture
+  private limestone?: THREE.Texture
   /** emissive materials that turn on at dusk/night: material -> full emissive intensity */
   private lamps = new Map<THREE.MeshStandardMaterial, number>()
   palette: InteriorPalette = PALETTES.light
@@ -30,8 +30,6 @@ export class MaterialLibrary {
     this.noise.repeat.set(0.25, 0.25)
     this.fineNoise = noiseTexture(256, 4, 9, 1.4)
     this.fineNoise.repeat.set(2, 2)
-    this.limewash = limewashTexture()
-    this.limestone = limestoneTexture(0.95)
   }
 
   /** Every material created so far (named by its library key). */
@@ -58,8 +56,7 @@ export class MaterialLibrary {
 
   private assignTex(m: Std, tex: TextureSetId, scale = 1, rotate = 0) {
     const s = this.bank.scaled(tex, scale, rotate)
-    // the linen scan is dyed blue: use its weave (normal/roughness) but not its colour
-    m.map = tex === 'rough_linen' ? null : s.map
+    m.map = s.map
     m.normalMap = s.normalMap
     m.roughnessMap = s.arm
     m.aoMap = s.arm
@@ -87,7 +84,7 @@ export class MaterialLibrary {
   zone(zone: string): Std {
     return this.put(`zone:${zone}`, () => {
       const def = ZONES[zone]
-      const opt = zoneOption(zone, undefined)
+      const opt = zoneOption(zone, this.currentFinish(zone))
       const m = this.pbr(null, { color: opt.params.color })
       this.applyParams(m, opt.params, def ? zone : '')
       return this.withVariation(m, opt.params.variation ?? 0)
@@ -113,7 +110,7 @@ export class MaterialLibrary {
     const hadMap = !!m.map
     const hadRough = !!m.roughnessMap
     if (p.map === 'limewash') {
-      m.map = this.limewash
+      m.map = this.limewash ??= limewashTexture()
       m.normalMap = null
       m.aoMap = null
       // Keep plaster evenly matte under the baked diffuse light.
@@ -285,7 +282,7 @@ export class MaterialLibrary {
 
   get counter(): Phys {
     return this.put('counter', () =>
-      new THREE.MeshPhysicalMaterial({ color: this.palette.counter.color, roughness: this.palette.counter.roughness, map: this.limestone, bumpMap: this.fineNoise, bumpScale: 0.003, clearcoat: 0.14, clearcoatRoughness: 0.35 }),
+      new THREE.MeshPhysicalMaterial({ color: this.palette.counter.color, roughness: this.palette.counter.roughness, map: this.limestone ??= limestoneTexture(0.95), bumpMap: this.fineNoise, bumpScale: 0.003, clearcoat: 0.14, clearcoatRoughness: 0.35 }),
     )
   }
 
@@ -341,7 +338,7 @@ export class MaterialLibrary {
 
   get bathStone(): Std {
     const m = this.put('bathStone', () => new THREE.MeshStandardMaterial({
-      color: '#D5C5AD', map: this.limestone, roughness: 0.76, bumpMap: this.fineNoise, bumpScale: 0.006,
+      color: '#D5C5AD', map: this.limestone ??= limestoneTexture(0.95), roughness: 0.76, bumpMap: this.fineNoise, bumpScale: 0.006,
     }))
     this.interiorExtra.add(m)
     return m

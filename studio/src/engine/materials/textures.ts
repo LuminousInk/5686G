@@ -25,7 +25,7 @@ export const TEXTURE_SETS = {
 export type TextureSetId = keyof typeof TEXTURE_SETS
 
 export interface PbrSet {
-  map: THREE.Texture
+  map: THREE.Texture | null
   normalMap: THREE.Texture
   arm: THREE.Texture
   size: number
@@ -33,11 +33,76 @@ export interface PbrSet {
 
 const base = './assets/tex/'
 
+export const AssetPriority = { shell: 0, view: 1, rest: 2 } as const
+
+/** One budget for model files and decoded images. A slot is released before any dependent load starts. */
+export class AssetQueue {
+  private active = 0
+  private waiting: { priority: number; start: () => void }[] = []
+
+  constructor(private limit: number) {}
+
+  run<T>(priority: number, work: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const start = () => {
+        this.active++
+        void Promise.resolve().then(work).then(resolve, reject).finally(() => {
+          this.active--
+          this.waiting.shift()?.start()
+        })
+      }
+      if (this.active < this.limit) start()
+      else {
+        const index = this.waiting.findIndex(job => job.priority > priority)
+        this.waiting.splice(index < 0 ? this.waiting.length : index, 0, { priority, start })
+      }
+    })
+  }
+}
+
+export const assets = new AssetQueue(6)
+
+export function yieldToBrowser(): Promise<void> {
+  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler
+  return scheduler?.yield?.() ?? new Promise(resolve => setTimeout(resolve, 0))
+}
+
+export async function decodeImage(blob: Blob, flipY = false): Promise<ImageBitmap | HTMLImageElement> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      return await createImageBitmap(blob, {
+        imageOrientation: flipY ? 'flipY' : 'from-image',
+        colorSpaceConversion: 'none',
+        premultiplyAlpha: 'none',
+      })
+    } catch {
+      // Some browsers expose ImageBitmap but cannot decode every image format with it.
+    }
+  }
+  const url = URL.createObjectURL(blob)
+  try {
+    const image = new Image()
+    image.src = url
+    await image.decode()
+    return image
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+export function loadImage(url: string, flipY: boolean, priority: number) {
+  return assets.run(priority, async () => {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${url}`)
+    return decodeImage(await response.blob(), flipY)
+  })
+}
+
 export class TextureBank {
-  private loader = new THREE.TextureLoader()
   private sets = new Map<TextureSetId, PbrSet>()
-  private pending: Promise<unknown>[] = []
+  private pending = new Set<Promise<void>>()
   private anisotropy: number
+  priority: number = AssetPriority.rest
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -47,22 +112,18 @@ export class TextureBank {
   }
 
   private load(url: string, srgb: boolean): THREE.Texture {
-    const tex = this.loader.load(url)
+    const tex = new THREE.Texture()
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping
     tex.anisotropy = this.anisotropy
     if (srgb) tex.colorSpace = THREE.SRGBColorSpace
-    this.pending.push(
-      new Promise<void>(resolve => {
-        const done = () => resolve()
-        // TextureLoader.load has no promise; poll the image
-        const check = () => {
-          const img = tex.image as HTMLImageElement | undefined
-          if (img && (img.complete || (img as unknown as ImageBitmap).width)) done()
-          else setTimeout(check, 30)
-        }
-        check()
-      }),
-    )
+    const pending = loadImage(url, true, this.priority).then(image => {
+      // Scaled textures share the Source, so clones made before decoding receive the same image.
+      tex.image = image
+      tex.needsUpdate = true
+    }).catch(error => {
+      console.warn('Texture could not be loaded:', error)
+    }).finally(() => this.pending.delete(pending))
+    this.pending.add(pending)
     return tex
   }
 
@@ -74,7 +135,8 @@ export class TextureBank {
       const res = this.preferRes === '512' ? '512' : (def.res as readonly string[]).includes(this.preferRes) ? this.preferRes : '1k'
       const p = `${base}${id}_${res}_`
       s = {
-        map: this.load(`${p}d.webp`, true),
+        // The linen scan is dyed blue. Its weave is used without the albedo.
+        map: id === 'rough_linen' ? null : this.load(`${p}d.webp`, true),
         normalMap: this.load(`${p}n.webp`, false),
         arm: this.load(`${p}arm.webp`, false),
         size: def.size,
@@ -97,7 +159,7 @@ export class TextureBank {
       }
       return n
     }
-    return { map: c(s.map), normalMap: c(s.normalMap), arm: c(s.arm), size: s.size * scale }
+    return { map: s.map && c(s.map), normalMap: c(s.normalMap), arm: c(s.arm), size: s.size * scale }
   }
 
   async ready() {

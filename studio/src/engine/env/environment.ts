@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { AssetPriority, assets, decodeImage, yieldToBrowser } from '../materials/textures'
 import type { QualitySettings } from '../quality'
 
 export interface TimePreset {
@@ -56,7 +57,7 @@ interface Analysed {
   original: THREE.DataTexture
   sunless: THREE.DataTexture
   /** sunless sky + a 0.7 degree sun disk carrying the measured energy (fits half floats; for the path tracer) */
-  traced: THREE.DataTexture
+  getTraced(): THREE.DataTexture
   /** raw sun direction in HDRI space (unit), null if the sky has no sun */
   sunDir: THREE.Vector3 | null
   /** sun irradiance at normal incidence (linear RGB) */
@@ -70,11 +71,13 @@ const cache = new Map<string, Promise<Analysed>>()
  * serve web formats. Decode to linear float RGBA, rows top-first like a Radiance file.
  */
 export async function loadRgbeWebp(url: string, maxBytes = Infinity): Promise<{ data: Float32Array; W: number; H: number; bytes: number }> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`RGBE texture HTTP ${res.status}: ${url}`)
-  const blob = await res.blob()
-  if (blob.size > maxBytes) throw new Error(`phone atlas exceeds ${maxBytes} bytes (${blob.size})`)
-  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })
+  const { bmp, bytes } = await assets.run(AssetPriority.shell, async () => {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`RGBE texture HTTP ${res.status}: ${url}`)
+    const blob = await res.blob()
+    if (blob.size > maxBytes) throw new Error(`phone atlas exceeds ${maxBytes} bytes (${blob.size})`)
+    return { bmp: await decodeImage(blob), bytes: blob.size }
+  })
   const W = bmp.width
   const H2 = bmp.height
   const cv = document.createElement('canvas')
@@ -82,7 +85,7 @@ export async function loadRgbeWebp(url: string, maxBytes = Infinity): Promise<{ 
   cv.height = H2
   const ctx = cv.getContext('2d', { willReadFrequently: true })!
   ctx.drawImage(bmp, 0, 0)
-  bmp.close()
+  if ('close' in bmp) bmp.close()
   const px = ctx.getImageData(0, 0, W, H2).data
   const H = H2 / 2
   const data = new Float32Array(W * H * 4)
@@ -97,7 +100,7 @@ export async function loadRgbeWebp(url: string, maxBytes = Infinity): Promise<{ 
     }
     data[j + 3] = 1
   }
-  return { data, W, H, bytes: blob.size }
+  return { data, W, H, bytes }
 }
 
 /**
@@ -184,10 +187,7 @@ async function analyse(url: string): Promise<Analysed> {
       }
     if (dir.lengthSq() > 0) sunDir = dir.normalize()
   }
-  const mk = (arr: Float32Array) => {
-    // half floats: linear filtering of float32 textures is not available on iOS
-    const half = new Uint16Array(arr.length)
-    for (let i = 0; i < arr.length; i++) half[i] = THREE.DataUtils.toHalfFloat(Math.min(arr[i], 65000))
+  const mk = (half: Uint16Array<ArrayBuffer>) => {
     const t = new THREE.DataTexture(half, W, H, THREE.RGBAFormat, THREE.HalfFloatType)
     t.mapping = THREE.EquirectangularReflectionMapping
     t.colorSpace = THREE.LinearSRGBColorSpace
@@ -198,8 +198,17 @@ async function analyse(url: string): Promise<Analysed> {
     t.needsUpdate = true
     return t
   }
-  // path tracer sky: re-add the sun as a slightly larger disk so its energy survives half-float storage
-  const traced = new Float32Array(sunless)
+  const encode = (arr: Float32Array) => {
+    // Half floats support linear filtering on iOS.
+    const half = new Uint16Array(arr.length)
+    for (let i = 0; i < arr.length; i++) half[i] = THREE.DataUtils.toHalfFloat(Math.min(arr[i], 65000))
+    return half
+  }
+  await yieldToBrowser()
+  const original = mk(encode(data))
+  await yieldToBrowser()
+  const half = encode(sunless)
+  const tracedSun: { i: number; r: number; g: number; b: number }[] = []
   if (sunDir) {
     const rad = THREE.MathUtils.degToRad(0.7)
     const cosR = Math.cos(rad)
@@ -221,13 +230,29 @@ async function analyse(url: string): Promise<Analysed> {
     }
     if (pix.length && omega > 0) {
       for (const i of pix) {
-        traced[i * 4] += sunE.r / omega
-        traced[i * 4 + 1] += sunE.g / omega
-        traced[i * 4 + 2] += sunE.b / omega
+        tracedSun.push({ i: i * 4,
+          r: sunless[i * 4] + sunE.r / omega,
+          g: sunless[i * 4 + 1] + sunE.g / omega,
+          b: sunless[i * 4 + 2] + sunE.b / omega,
+        })
       }
     }
   }
-  return { original: mk(data), sunless: mk(sunless), traced: mk(traced), sunDir, sunE }
+  let traced: THREE.DataTexture | undefined
+  return {
+    original, sunless: mk(half), sunDir, sunE,
+    getTraced() {
+      if (traced) return traced
+      // Restore the measured sun energy in a slightly wider disk for the path tracer.
+      const pixels = half.slice()
+      for (const { i, r, g, b } of tracedSun) {
+        pixels[i] = THREE.DataUtils.toHalfFloat(Math.min(Math.fround(r), 65000))
+        pixels[i + 1] = THREE.DataUtils.toHalfFloat(Math.min(Math.fround(g), 65000))
+        pixels[i + 2] = THREE.DataUtils.toHalfFloat(Math.min(Math.fround(b), 65000))
+      }
+      return traced = mk(pixels)
+    },
+  }
 }
 
 export class SkyEnvironment {
@@ -292,19 +317,32 @@ export class SkyEnvironment {
 
   private presetRevision = 0
 
-  async setPreset(preset: TimePreset, sunAzimuthDeg: number) {
-    const revision = ++this.presetRevision
+  prepare(preset: TimePreset) {
     const res = this.quality.hdriRes === '2k' && preset.maxRes === '2k' ? '2k' : '1k'
     const url = `./assets/hdri/${preset.hdri}_${res}.webp`
     let p = cache.get(url)
     if (!p) {
-      const fallback = `./assets/hdri/${preset.hdri}_1k.webp`
-      p = analyse(url).catch(err => (url === fallback ? Promise.reject(err) : analyse(fallback)))
+      p = analyse(url).catch(err => {
+        if (res === '2k') return analyse(`./assets/hdri/${preset.hdri}_1k.webp`)
+        throw err
+      }).catch(err => {
+        cache.delete(url)
+        throw err
+      })
       cache.set(url, p)
     }
-    const a = await p
+    return p
+  }
+
+  async setPreset(preset: TimePreset, sunAzimuthDeg: number) {
+    const revision = ++this.presetRevision
+    const a = await this.prepare(preset)
     if (revision !== this.presetRevision) return false
     this.preset = preset
+    if (!this.envRT || this.current !== a) {
+      this.envRT?.dispose()
+      this.envRT = this.pmrem.fromEquirectangular(a.sunless)
+    }
     this.current = a
     // rotate the sky so its sun sits at the plan's chosen azimuth
     let rotY = 0
@@ -317,8 +355,6 @@ export class SkyEnvironment {
     this.scene.environmentRotation.copy(rot)
     this.scene.backgroundRotation.copy(rot)
 
-    if (this.envRT) this.envRT.dispose()
-    this.envRT = this.pmrem.fromEquirectangular(a.sunless)
     this.scene.environment = this.envRT.texture
     this.scene.background = a.original
     this.scene.environmentIntensity = preset.envScale
@@ -395,7 +431,7 @@ export class SkyEnvironment {
 
   /** The sky with the sun for the path tracer (sun as a soft 0.7 degree disk with the measured energy). */
   get originalHdri(): THREE.DataTexture | null {
-    return this.current?.traced ?? null
+    return this.current?.getTraced() ?? null
   }
 
   dispose() {

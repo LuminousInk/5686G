@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { WebGLRenderer } from 'three'
 import { TIME_PRESETS } from '../engine/env/environment'
 import { neighbours } from '../engine/house/massing'
 import { ZONES } from '../engine/materials/catalog'
+import { AssetPriority, AssetQueue, TextureBank } from '../engine/materials/textures'
+import { modelsForEntry } from '../engine/models'
 import { PLANS, planById } from '../plans'
 import catalog from '../../public/gallery/gallery.json'
 import { GALLERY_SHOTS, galleryView } from './galleryShots'
@@ -59,7 +62,9 @@ describe('website entry points', () => {
   })
 
   it('matches each published caption and share code to its camera and design', () => {
-    expect(catalog.homes.map(home => home.id)).toEqual(PLANS.map(plan => plan.id))
+    expect(catalog.homes).toEqual(PLANS.map(({ id, name, style, facts: { area, beds, baths } }) => ({
+      id, name, style, area, beds, baths,
+    })))
     expect(catalog.images.map(image => image.id)).toEqual(GALLERY_SHOTS.map(shot => shot.id))
     for (const [i, image] of catalog.images.entries()) {
       const plan = planById(image.plan)!
@@ -71,6 +76,68 @@ describe('website entry points', () => {
       expect(decoded.finishes![plan.id]).toEqual({ ...plan.finishes, ...shot.finishes })
       expect(view.pos[1]).toEqual(view.target[1])
       expect(image.kind).toBe(view.kind === 'walk' ? 'interior' : 'exterior')
+    }
+  })
+})
+
+describe('studio preload', () => {
+  it('bounds concurrency, gives shell and entry assets precedence, and keeps going after a failure', async () => {
+    const queue = new AssetQueue(2)
+    const started: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const first = queue.run(AssetPriority.rest, () => {
+      started.push('first')
+      return gate
+    })
+    const second = queue.run(AssetPriority.rest, () => {
+      started.push('second')
+      return gate
+    })
+    const enqueue = (id: string, priority: number) => queue.run(priority, async () => {
+      started.push(id)
+      if (id === 'view') throw new Error(id)
+    })
+    const rest = enqueue('rest', AssetPriority.rest)
+    const view = expect(enqueue('view', AssetPriority.view)).rejects.toThrow('view')
+    const shell = enqueue('shell', AssetPriority.shell)
+    await Promise.resolve()
+    expect(started).toEqual(['first', 'second'])
+    release()
+    await Promise.all([first, second, shell, view, rest])
+    expect(started).toEqual(['first', 'second', 'shell', 'view', 'rest'])
+  })
+
+  it('favors furnishings for the opening room or shared rooms behind exterior glazing', () => {
+    const plan = planById('cedar-ridge')!
+    const entry = modelsForEntry(plan, plan.views[0])
+    const suite = modelsForEntry(plan, plan.views.find(view => view.id === 'primary'))
+    expect(entry.has('sofa_beige')).toBe(true)
+    expect(entry.has('bed_dark_headboard')).toBe(false)
+    expect(suite.has('bed_dark_headboard')).toBe(true)
+    expect(suite.has('fridge_steel')).toBe(false)
+  })
+
+  it('shares a decoded image between scaled materials and skips unused linen albedo', async () => {
+    const request = vi.fn(async () => new Response(new Blob()))
+    const bitmap = { width: 32, height: 32 }
+    const decode = vi.fn(async () => bitmap)
+    vi.stubGlobal('fetch', request)
+    vi.stubGlobal('createImageBitmap', decode)
+    try {
+      const renderer = { capabilities: { getMaxAnisotropy: () => 4 } } as WebGLRenderer
+      const bank = new TextureBank(renderer, '512')
+      const first = bank.scaled('rough_linen')
+      const second = bank.scaled('rough_linen', 2)
+      await bank.ready()
+      expect(first.map).toBeNull()
+      expect(first.normalMap.source).toBe(second.normalMap.source)
+      expect(second.normalMap.image).toBe(bitmap)
+      expect(second.normalMap.repeat.x).toBe(first.normalMap.repeat.x / 2)
+      expect(request).toHaveBeenCalledTimes(2)
+      expect(decode).toHaveBeenCalledWith(expect.any(Blob), expect.objectContaining({ imageOrientation: 'flipY' }))
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 })

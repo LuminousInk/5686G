@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Landing } from './ui/Landing'
 import { designCode, isStudioRoute, type StudioLoad } from './ui/routes'
-import './ui/styles.css'
+import './ui/base.css'
 import './ui/landing.css'
 
 function Site() {
@@ -43,12 +43,16 @@ function Site() {
         setChunkError(true)
       })
     }
-    // Give the browser a paint for the static hero before evaluating the engine chunk.
-    let timer = 0
-    const frame = requestAnimationFrame(() => { timer = window.setTimeout(loadStudio, 0) })
+    if (isStudioRoute(location.hash, location.search) && isStudioRoute('', location.search)) {
+      loadStudio()
+      return
+    }
+    // Between these callbacks the landing can paint before the studio starts up.
+    let nextFrame = 0
+    const frame = requestAnimationFrame(() => { nextFrame = requestAnimationFrame(loadStudio) })
     return () => {
       cancelAnimationFrame(frame)
-      clearTimeout(timer)
+      cancelAnimationFrame(nextFrame)
     }
   }, [])
 
@@ -64,12 +68,15 @@ function Site() {
     setLoad({ target: route.target, progress: 0 })
     setAttempt(a => a + 1)
   }
+  const selectDesign = useCallback((hash: string) => {
+    if (hash !== location.hash) selection.current = { hash }
+  }, [])
 
   return (
     <>
       {!tools && (
         <div className="site-viewport" inert={entered}>
-          <Landing hash={route.hash} progress={progress} ready={ready} pending={requested && !ready} error={error} onRetry={retry} onDesign={hash => { if (hash !== location.hash) selection.current = { hash } }} />
+          <Landing hash={route.hash} progress={progress} ready={ready} pending={requested && !ready} error={error} onRetry={retry} onDesign={selectDesign} />
         </div>
       )}
       <div className="studio-viewport" ref={studioRoot} inert={!entered} role="region" aria-label="3D studio" tabIndex={-1}>

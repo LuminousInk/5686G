@@ -1,12 +1,39 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import type { CameraView, HomePlan, RoomType } from './house/types'
+import { AssetPriority, assets, loadImage, yieldToBrowser } from './materials/textures'
 
-// No meshopt decoder: it is WebAssembly, and a strict host (the claude.ai artifact CSP) refuses to compile it.
-const loader = new GLTFLoader()
 const cache = new Map<string, Promise<THREE.Group>>()
+const images = new Map<string, Promise<THREE.Texture>>()
 let folder = 'models'
+let entryModels: ReadonlySet<string> = new Set()
 /** Models that could not be loaded this session. They are skipped so the rest of the home still appears. */
 export const skippedModels: string[] = []
+
+const roomModels: Partial<Record<RoomType, readonly string[]>> = {
+  living: ['sectional_grey', 'sofa_beige', 'SheenChair', 'coffee_table_round_01', 'sideboard_midcentury', 'potted_plant_01', 'ceramic_vase_02'],
+  kitchen: ['fridge_steel', 'bar_stool_wood', 'ceramic_vase_02', 'wooden_bowl_01'],
+  dining: ['dining_chair_bentwood', 'wooden_bowl_01', 'sideboard_midcentury', 'ceramic_vase_02'],
+  primary: ['bed_dark_headboard', 'dresser_tall'],
+  bedroom: ['bed_dark_headboard', 'dresser_tall'],
+  bath: ['toilet_modern'],
+  powder: ['toilet_modern'],
+  office: ['desk_lamp_black', 'dining_chair_bentwood'],
+}
+
+/** Only rank requests the builders actually make. Exterior views favor shared spaces behind glazing. */
+export function modelsForEntry(plan: HomePlan, view?: CameraView): ReadonlySet<string> {
+  const room = view?.room && plan.rooms.find(room => room.id === view.room)
+  const rooms: RoomType[] = room ? [room.type] : ['living', 'dining', 'kitchen']
+  return new Set(rooms.flatMap(type => roomModels[type] ?? []))
+}
+
+export function prioritizeModels(plan: HomePlan, view?: CameraView) {
+  const previous = entryModels
+  const current = modelsForEntry(plan, view)
+  entryModels = current
+  return () => { if (entryModels === current) entryModels = previous }
+}
 
 /** Phones load the low-texture copies (256-512 px) to stay well inside mobile GPU memory. */
 export function setModelQuality(lo: boolean) {
@@ -16,6 +43,15 @@ export function setModelQuality(lo: boolean) {
 interface GltfJson {
   buffers?: { uri?: string; byteLength: number }[]
   [key: string]: unknown
+}
+
+function decodeBase64(base64: string): Uint8Array {
+  const native = (Uint8Array as Uint8ArrayConstructor & { fromBase64?: (value: string) => Uint8Array }).fromBase64
+  if (native) return native(base64)
+  const raw = atob(base64)
+  const bytes = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
+  return bytes
 }
 
 /**
@@ -29,9 +65,7 @@ export function gltfJsonToGlb(json: GltfJson): ArrayBuffer {
   const uri = buffers[0].uri ?? ''
   const comma = uri.indexOf(',')
   if (!uri.startsWith('data:') || comma < 0) throw new Error('the buffer is not inline base64')
-  const raw = atob(uri.slice(comma + 1))
-  const bin = new Uint8Array(raw.length)
-  for (let i = 0; i < raw.length; i++) bin[i] = raw.charCodeAt(i)
+  const bin = decodeBase64(uri.slice(comma + 1))
   // JSON.stringify drops the undefined uri, which tells GLTFLoader to use the binary chunk
   const head = new TextEncoder().encode(JSON.stringify({ ...json, buffers: [{ ...buffers[0], uri: undefined, byteLength: bin.length }] }))
   const jsonLen = Math.ceil(head.length / 4) * 4
@@ -53,20 +87,50 @@ export function gltfJsonToGlb(json: GltfJson): ArrayBuffer {
   return out.buffer
 }
 
+function modelLoader(priority: number) {
+  const manager = new THREE.LoadingManager()
+  manager.addHandler(/\.webp$/i, new class extends THREE.Loader<THREE.Texture> {
+    override load(url: string, onLoad: (texture: THREE.Texture) => void, _onProgress?: unknown, onError?: (error: unknown) => void) {
+      let pending = images.get(url)
+      if (!pending) {
+        pending = loadImage(url, false, priority).then(image => {
+          const texture = new THREE.Texture(image)
+          texture.flipY = false
+          texture.needsUpdate = true
+          return texture
+        }).catch(error => {
+          images.delete(url)
+          throw error
+        })
+        images.set(url, pending)
+      }
+      // glTF samplers and transforms belong to each texture. The decoded image is shared.
+      void pending.then(texture => onLoad(texture.clone()), error => onError?.(error))
+    }
+  }(manager))
+  // The packaged models use plain buffers and external WebP images.
+  return new GLTFLoader(manager)
+}
+
 /**
  * Load a Poly Haven model built by tools/build_assets.mjs (cached; returns the shared scene - clone to place).
  * A model that fails to load resolves to an empty group: one missing chair or rock must not stop the home loading.
  */
 export function loadModel(id: string): Promise<THREE.Group> {
-  let p = cache.get(id)
+  const base = `./assets/${folder}/`
+  const url = `${base}${id}.json`
+  let p = cache.get(url)
   if (!p) {
-    const base = `./assets/${folder}/`
-    p = fetch(`${base}${id}.json`)
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json() as Promise<GltfJson>
+    const priority = entryModels.has(id) ? AssetPriority.view : AssetPriority.rest
+    p = assets.run(priority, async () => {
+      const r = await fetch(url)
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.json() as Promise<GltfJson>
+    })
+      .then(async json => {
+        await yieldToBrowser()
+        return modelLoader(priority).parseAsync(gltfJsonToGlb(json), base)
       })
-      .then(json => loader.parseAsync(gltfJsonToGlb(json), base))
       .then(g => {
         g.scene.traverse(o => {
           const m = o as THREE.Mesh
@@ -82,10 +146,10 @@ export function loadModel(id: string): Promise<THREE.Group> {
       .catch(err => {
         console.warn(`model ${id} skipped:`, err)
         skippedModels.push(id)
-        cache.delete(id) // a later load (Try again, another plan) fetches it afresh
+        cache.delete(url) // allow a later plan or retry to fetch it afresh
         return new THREE.Group()
       })
-    cache.set(id, p)
+    cache.set(url, p)
   }
   return p
 }

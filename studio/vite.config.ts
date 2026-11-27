@@ -10,6 +10,16 @@ export default defineConfig({
     target: 'es2022',
     assetsInlineLimit: 8192,
     chunkSizeWarningLimit: 2500,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /node_modules\/(react|react-dom|scheduler)\// },
+            { name: 'studio-effects', test: /node_modules\/(n8ao|postprocessing)\//, includeDependenciesRecursively: false },
+          ],
+        },
+      },
+    },
   },
   test: { environment: 'node', include: ['src/**/*.test.ts'] },
 })

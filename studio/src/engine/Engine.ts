@@ -3,8 +3,9 @@ import { LightmapBinding } from './bake/lightmaps'
 import { buildHouse, type HouseModel } from './house/build'
 import { framePoint, inRect, levelFloor } from './house/levels'
 import { roofHeightAt } from './house/massing'
-import type { HomePlan } from './house/types'
+import type { CameraView, HomePlan } from './house/types'
 import { MaterialLibrary } from './materials/library'
+import { AssetPriority, yieldToBrowser } from './materials/textures'
 import { SkyEnvironment, TIME_PRESETS } from './env/environment'
 import { exposureFor } from './render/meter'
 import { anchoredExposure, interiorExposureWeight, roomExposureEV } from './render/exposureAnchors'
@@ -15,7 +16,7 @@ import { detectTier, TIERS, type QualitySettings } from './quality'
 import { Site } from './site/site'
 import { NightLights } from './env/lights'
 import { Interior } from './interior/interior'
-import { setModelQuality } from './models'
+import { prioritizeModels, setModelQuality } from './models'
 
 export interface EngineOptions {
   canvas: HTMLCanvasElement
@@ -83,6 +84,8 @@ export class Engine {
   constructor(private opts: EngineOptions) {
     this.quality = TIERS[detectTier()]
     setModelQuality(this.quality.tier === 'low')
+    // Shared site images use Three's built-in loaders. Keep those images across plan changes too.
+    THREE.Cache.enabled = true
     const renderer = new THREE.WebGLRenderer({
       canvas: opts.canvas,
       antialias: false,
@@ -132,17 +135,27 @@ export class Engine {
     return () => this.hooks.delete(h)
   }
 
-  async loadPlan(plan: HomePlan, finishes: Record<string, string>, timeId = 'golden') {
+  async loadPlan(
+    plan: HomePlan,
+    finishes: Record<string, string>,
+    timeId = 'golden',
+    view?: CameraView,
+    pauseForBrowsing = yieldToBrowser,
+  ) {
     this.loading = true
+    const resetPriority = prioritizeModels(plan, view)
     try {
-      await this.loadPlanInner(plan, finishes, timeId)
+      await this.loadPlanInner(plan, finishes, timeId, pauseForBrowsing)
     } finally {
+      resetPriority()
+      this.lib.bank.priority = AssetPriority.rest
       this.loading = false
     }
   }
 
-  private async loadPlanInner(plan: HomePlan, finishes: Record<string, string>, timeId: string) {
+  private async loadPlanInner(plan: HomePlan, finishes: Record<string, string>, timeId: string, pauseForBrowsing: () => Promise<void>) {
     const progress = this.opts.onProgress ?? (() => {})
+    this.lib.bank.priority = AssetPriority.shell
     progress(0.05, 'Building the house')
     this.lightmap.clear()
     this.probes.clear()
@@ -168,18 +181,29 @@ export class Engine {
     for (const z of plan.zones) if (z !== 'palette') this.lib.setFinish(z, finishes[z] ?? plan.finishes[z])
     this.house = buildHouse(plan, this.lib)
     this.scene.add(this.house.group)
-    progress(0.25, 'Landscaping')
-    this.site = new Site(this.lib, this.quality, this.renderer)
-    await this.site.build(plan, this.house)
-    this.scene.add(this.site.group)
-    progress(0.55, 'Furnishing')
-    this.interior = new Interior(this.lib, this.quality)
-    await this.interior.build(plan, this.house)
-    this.scene.add(this.interior.group)
+    this.lib.bank.priority = AssetPriority.rest
+    const preset = TIME_PRESETS.find(t => t.id === timeId) ?? TIME_PRESETS[0]
+    const house = this.house
+    const interior = this.interior = new Interior(this.lib, this.quality)
+    const site = this.site = new Site(this.lib, this.quality, this.renderer)
+    progress(0.25, 'Loading the rooms and gardens')
+    const furnish = pauseForBrowsing().then(() => interior.build(plan, house))
+    const landscape = pauseForBrowsing().then(async () => {
+      await yieldToBrowser()
+      await site.build(plan, house)
+    })
+    const build = await Promise.allSettled([
+      this.sky.prepare(preset),
+      furnish,
+      landscape,
+    ])
+    for (const result of build) if (result.status === 'rejected') throw result.reason
+    this.scene.add(site.group, interior.group)
     // re-apply finishes for materials created during build
     for (const [zone, opt] of Object.entries(finishes)) if (zone !== 'palette') this.lib.setFinish(zone, opt)
     this.lib.setPalette(finishes.palette ?? plan.finishes.palette ?? 'light')
     progress(0.75, 'Lighting')
+    await pauseForBrowsing()
     const box = this.house.bounds.clone().expandByScalar(9)
     this.sky.fitShadow(box)
     await this.setTime(timeId)
@@ -187,12 +211,11 @@ export class Engine {
     await this.lib.bank.ready()
     this.updateLightingRooms()
     await this.refreshLightmap()
+    await pauseForBrowsing()
     this.lights.setup(this.house, this.interior)
     this.lights.setLevel(this.sky.preset.lamps)
     this.lib.setLamps(this.sky.preset.lamps)
     this.probes.reset()
-    this.compile()
-    progress(1, 'Ready')
     this.invalidate()
   }
 
@@ -246,12 +269,16 @@ export class Engine {
     this.invalidate()
   }
 
-  /** Pre-compile shaders so the first interaction doesn't hitch. */
-  compile() {
+  /** Warm shaders for the same target the first frame uses. */
+  async prepareFrame() {
+    const previous = this.renderer.getRenderTarget()
     try {
-      this.renderer.compile(this.scene, this.camera)
+      this.renderer.setRenderTarget(this.pipeline.composer.inputBuffer)
+      const compiled = this.renderer.compileAsync(this.scene, this.camera)
+      this.renderer.setRenderTarget(previous)
+      await compiled
     } catch {
-      /* not fatal */
+      this.renderer.setRenderTarget(previous)
     }
   }
 

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import gallery from '../../public/gallery/gallery.json'
 import { Credits } from './Credits'
 import { Icon } from './icons'
@@ -13,6 +13,25 @@ const filters = [
   ...homes.map(plan => ({ id: plan.id, label: plan.name })),
 ]
 const imageSrc = (id: string) => `./gallery/${id}.webp`
+
+function BrowseImage({ src, alt }: { src: string; alt: string }) {
+  const ref = useRef<HTMLImageElement>(null)
+  const [near, setNear] = useState(false)
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') {
+      setNear(true)
+      return
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return
+      setNear(true)
+      observer.disconnect()
+    }, { rootMargin: '200px 0px' })
+    observer.observe(ref.current!)
+    return () => observer.disconnect()
+  }, [])
+  return <img ref={ref} src={near ? src : undefined} width="1600" height="900" alt={alt} decoding="async" />
+}
 
 function SiteDialog({ className, label, onClose, children }: {
   className: string
@@ -116,7 +135,7 @@ function Lightbox({ visible, index, onIndex, onClose, onDesign }: {
   )
 }
 
-function StyleGallery({ onDesign }: { onDesign: (event: MouseEvent<HTMLAnchorElement>) => void }) {
+const StyleGallery = memo(function StyleGallery({ onDesign }: { onDesign: (event: MouseEvent<HTMLAnchorElement>) => void }) {
   const [filter, setFilter] = useState('all')
   const [index, setIndex] = useState<number | null>(null)
   const visible = filter === 'all' ? images : images.filter(image => image.kind === filter || image.plan === filter)
@@ -125,10 +144,9 @@ function StyleGallery({ onDesign }: { onDesign: (event: MouseEvent<HTMLAnchorEle
     <section className="site-wrap site-section" id="gallery" aria-labelledby="gallery-title">
       <div className="site-section-head">
         <div>
-          <p className="site-kicker">Materials &amp; light</p>
           <h2 id="gallery-title">Style gallery</h2>
         </div>
-        <p>See how cedar, stone and painted finishes change from daylight to dusk.</p>
+        <p>Compare cedar, stone and paint in daylight and at dusk.</p>
       </div>
       <div className="site-filters" role="group" aria-label="Filter renders">
         {filters.map(option => (
@@ -141,7 +159,7 @@ function StyleGallery({ onDesign }: { onDesign: (event: MouseEvent<HTMLAnchorEle
         {visible.map((shot, i) => (
           <button className="site-gallery-item" type="button" key={shot.id} onClick={() => setIndex(i)}>
             <div className="site-gallery-media">
-              <img src={imageSrc(shot.id)} width="1600" height="900" alt="" loading="lazy" decoding="async" />
+              <BrowseImage src={imageSrc(shot.id)} alt="" />
               <span className="site-gallery-expand"><Icon.expand /></span>
             </div>
             <span className="site-gallery-title"><strong>{shot.space}</strong><span>{shot.light}</span></span>
@@ -152,7 +170,35 @@ function StyleGallery({ onDesign }: { onDesign: (event: MouseEvent<HTMLAnchorEle
       {index !== null && <Lightbox visible={visible} index={index} onIndex={setIndex} onClose={() => setIndex(null)} onDesign={onDesign} />}
     </section>
   )
-}
+})
+
+const Homes = memo(function Homes({ onDesign }: { onDesign: (event: MouseEvent<HTMLAnchorElement>) => void }) {
+  return (
+    <section className="site-wrap site-section" id="homes" aria-labelledby="homes-title">
+      <div className="site-section-head">
+        <h2 id="homes-title">The homes</h2>
+        <p>Cuby’s Woodland, Coastal and Desert Modern lines, alongside Cedar Ridge and Aspen Custom.</p>
+      </div>
+      <div className="site-homes">
+        {homes.map(plan => {
+          const exterior = images.find(image => image.id === `${plan.id}-golden`)
+          const walk = images.find(image => image.plan === plan.id && image.kind === 'interior')
+          return (
+            <article className="site-home-card" key={plan.id}>
+              <BrowseImage src={exterior ? imageSrc(exterior.id) : `./thumbs/${plan.id}.webp`} alt={`${plan.name} exterior`} />
+              <div className="site-home-copy">
+                <p className="site-home-style">{plan.style}</p>
+                <h3>{plan.name}</h3>
+                <p className="site-facts">{plan.area.toLocaleString('en-US')} sq ft <span>·</span> {plan.beds} beds <span>·</span> {plan.baths} baths</p>
+                <a className="site-text-link" href={walk?.share ?? '#studio'} onClick={onDesign} aria-label={`Walk through ${plan.name}`}>Walk through <Icon.arrow /></a>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+})
 
 function Wordmark() {
   return (
@@ -173,13 +219,13 @@ export function Landing({ hash, progress, ready, pending, error, onRetry, onDesi
 }) {
   const credits = hash === '#credits'
   const anchor = useRef<string | null>(null)
-  const openDesign = (event: MouseEvent<HTMLAnchorElement>) => {
+  const openDesign = useCallback((event: MouseEvent<HTMLAnchorElement>) => {
     if (!event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
       onDesign(event.currentTarget.hash)
     }
-  }
+  }, [onDesign])
   const closeCredits = () => { location.replace(anchor.current || '#home') }
-  const status = progress ? `Loading the 3D studio… ${progress}%` : 'Explore in 3D'
+  const status = progress ? `Preparing the studio · ${progress}%` : 'Explore in 3D'
   const hero = images.find(image => image.id === 'cedar-ridge-golden')
 
   useLayoutEffect(() => {
@@ -207,9 +253,9 @@ export function Landing({ hash, progress, ready, pending, error, onRetry, onDesi
           <img className="site-hero-img" src={hero ? imageSrc(hero.id) : './thumbs/cedar-ridge.webp'} alt="Cedar Ridge in golden-hour light, viewed across the garden" fetchPriority="high" />
           <div className="site-wrap site-hero-inner">
             <div>
-              <p className="site-kicker">Pacific Northwest homes</p>
+              <p className="site-kicker">Pacific Palisades</p>
               <h1 id="site-title">Cuby Studio</h1>
-              <p className="site-pitch">Photoreal, real-time walkthroughs of Cuby homes, on any phone.</p>
+              <p className="site-pitch">Five homes on coastal hillsides with ocean views.</p>
               {error ? (
                 <button type="button" className="site-cta" onClick={onRetry}>Retry studio load <Icon.diagonal /></button>
               ) : (
@@ -224,44 +270,8 @@ export function Landing({ hash, progress, ready, pending, error, onRetry, onDesi
           </div>
         </section>
 
-        <section className="site-wrap site-section" id="homes" aria-labelledby="homes-title">
-          <div className="site-section-head">
-            <div>
-              <h2 id="homes-title">Explore the homes</h2>
-            </div>
-            <p>Five plans with distinct materials, layouts and ways of living.</p>
-          </div>
-          <div className="site-homes">
-            {homes.map(plan => {
-              const exterior = images.find(image => image.id === `${plan.id}-golden`)
-              const walk = images.find(image => image.plan === plan.id && image.kind === 'interior')
-              return (
-                <article className="site-home-card" key={plan.id}>
-                  <img src={exterior ? imageSrc(exterior.id) : `./thumbs/${plan.id}.webp`} width="1600" height="900" alt={`${plan.name} exterior`} loading="lazy" decoding="async" />
-                  <div className="site-home-copy">
-                    <p className="site-home-style">{plan.style}</p>
-                    <h3>{plan.name}</h3>
-                    <p className="site-facts">{plan.area.toLocaleString('en-US')} sq ft <span>·</span> {plan.beds} beds <span>·</span> {plan.baths} baths</p>
-                    <a className="site-text-link" href={walk?.share ?? '#studio'} onClick={openDesign} aria-label={`Walk through ${plan.name}`}>Walk through <Icon.arrow /></a>
-                  </div>
-                </article>
-              )
-            })}
-          </div>
-        </section>
-
+        <Homes onDesign={openDesign} />
         <StyleGallery onDesign={openDesign} />
-
-        <section className="site-method" aria-labelledby="method-title">
-          <div className="site-wrap">
-            <h2 id="method-title">How it works</h2>
-            <div className="site-method-grid">
-              <div><Icon.sun /><h3>Baked path-traced lighting</h3><p>Light bounces through rooms and softens into shadows, baked in advance for smooth walkthroughs.</p></div>
-              <div><Icon.palette /><h3>Real materials</h3><p>Scanned textures at real-world scale show the grain of cedar, stone and timber.</p></div>
-              <div><Icon.plans /><h3>Any device</h3><p>Walk, look around and change finishes in your browser, on a phone, tablet or desktop.</p></div>
-            </div>
-          </div>
-        </section>
       </main>
 
       <footer className="site-wrap site-footer">
@@ -271,7 +281,7 @@ export function Landing({ hash, progress, ready, pending, error, onRetry, onDesi
       {pending && (
         <div className="site-opening">
           <div role="status">
-            <strong>{error ? 'The studio could not load' : 'Opening the 3D studio'}</strong>
+            <strong>{error ? 'The studio could not load' : 'Opening the studio'}</strong>
             {!error && <progress value={progress} max="100" aria-label="Studio loading progress" />}
           </div>
           {error && <button type="button" className="site-text-link" onClick={onRetry}>Retry</button>}

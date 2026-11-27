@@ -11,12 +11,11 @@ import { Icon } from './icons'
 import { Joystick } from './Joystick'
 import { CustomizePanel, HelpSheet, PlanFacts, PlanSheet, ShareSheet } from './Panels'
 import { decodeDesign, encodeDesign, getState, planFor, setState, toast, useStore, type UiMode } from './store'
-import { PhotoMode } from './PhotoMode'
-import { Editor } from './Editor'
 import { GALLERY_SHOTS, designView, galleryView, type GalleryCatalog, type GalleryImage } from './galleryShots'
 import { ZONES } from '../engine/materials/catalog'
 import { TIME_PRESETS } from '../engine/env/environment'
 import { isStudioRoute, type StudioLoad, type StudioTarget } from './routes'
+import './styles.css'
 
 function galleryCatalog(): GalleryCatalog {
   const images = GALLERY_SHOTS.map<GalleryImage>(shot => {
@@ -89,6 +88,8 @@ export function App({ target, visible, requested, onLoad }: {
   const walkHint = useStore(s => s.walkHint)
   const photo = useStore(s => s.photo)
   const editing = useStore(s => s.editing)
+  const [editorModule, setEditorModule] = useState<typeof import('./Editor')>()
+  const [photoModule, setPhotoModule] = useState<typeof import('./PhotoMode')>()
   const [you, setYou] = useState<{ x: number; z: number; yaw: number; level?: string } | null>(null)
   const [openedLevel, setOpenedLevel] = useState<string>()
   const [viewId, setViewId] = useState<string | null>('hero')
@@ -101,6 +102,29 @@ export function App({ target, visible, requested, onLoad }: {
   }, [])
   const custom = useStore(s => s.customPlans[s.planId])
   const plan = custom ?? planById(planId)!
+
+  useEffect(() => {
+    if (!editing || editorModule) return
+    let cancelled = false
+    import('./Editor').then(setEditorModule).catch(() => {
+      if (cancelled) return
+      setState({ editing: false })
+      toast('Could not open the plan editor')
+    })
+    return () => { cancelled = true }
+  }, [editing, editorModule])
+
+  const takingPhoto = !!photo
+  useEffect(() => {
+    if (!takingPhoto || photoModule) return
+    let cancelled = false
+    import('./PhotoMode').then(setPhotoModule).catch(() => {
+      if (cancelled) return
+      setState({ photo: null })
+      toast('Could not open photo mode')
+    })
+    return () => { cancelled = true }
+  }, [takingPhoto, photoModule])
 
   // ------------------------------------------------------------ engine boot (once)
   useEffect(() => {
@@ -224,11 +248,10 @@ export function App({ target, visible, requested, onLoad }: {
     window.__ready = false
     loadQueue.current = loadQueue.current.then(async () => {
       const waitForPage = async () => {
-        const until = performance.now() + 600
         do {
           await afterPaint()
         } while (!cancelled && !latest.current.visible && !latest.current.requested &&
-          performance.now() - lastScroll.current < 120 && performance.now() < until)
+          performance.now() - lastScroll.current < 120)
       }
       await waitForPage()
       const currentEngine = engine
@@ -236,7 +259,7 @@ export function App({ target, visible, requested, onLoad }: {
       if (cancelled || !currentEngine || !currentNav) return
       const s = getState()
       const p = planFor(planId)
-      const hero = p.views[0]
+      const start = designView(p, s.viewId) ?? p.views[0]
       currentEngine.paused = true
       currentEngine.stop()
       const progress = (p: number, label: string) => {
@@ -250,7 +273,8 @@ export function App({ target, visible, requested, onLoad }: {
         const finishes = s.finishes[p.id] ?? p.finishes
         const previous = loaded.current
         loaded.current = null
-        if (currentEngine.plan === p && previous) {
+        const reusePlan = currentEngine.plan === p && previous
+        if (reusePlan) {
           progress(0.75, 'Applying the design')
           // Use the same setters as the Style panel, then wait for all new assets.
           for (const [zone, option] of Object.entries(finishes)) {
@@ -259,18 +283,20 @@ export function App({ target, visible, requested, onLoad }: {
           if (previous.time !== s.time) await currentEngine.setTime(s.time)
           await currentEngine.lib.bank.ready()
         } else {
-          await currentEngine.loadPlan(p, finishes, s.time)
+          await currentEngine.loadPlan(p, finishes, s.time, start, waitForPage)
         }
         loaded.current = { time: s.time, finishes }
         if (cancelled) return
         fitToCanvas.current?.()
         currentNav.setBounds(currentEngine.house!.bounds)
         if (currentNav.mode === 'dollhouse') currentNav.setMode('orbit', false)
-        const start = designView(p, s.viewId) ?? hero
         currentNav.goToView(start, false)
         setViewId(start.id)
         setState({ mode: start.kind === 'walk' ? 'walk' : 'orbit' })
         await waitForPage()
+        if (cancelled) return
+        progress(1, 'Preparing the first view')
+        if (!reusePlan) await currentEngine.prepareFrame()
         if (cancelled) return
         // Warm the actual entry camera in the hidden canvas. Stop after one frame
         // so previewing the website doesn't also run the accumulation loop.
@@ -405,7 +431,7 @@ export function App({ target, visible, requested, onLoad }: {
   const chips = mode === 'walk' ? walkViews : exteriorViews
 
   return (
-    <div className={`app mode-${mode} ${sheet ? `has-${sheet}` : ''} ${editing ? 'is-editing' : ''}`}>
+    <div className={`app mode-${mode} ${sheet ? `has-${sheet}` : ''} ${editing && editorModule ? 'is-editing' : ''}`}>
       <canvas ref={canvasRef} className="stage" />
 
       {visible && <div className="hud">
@@ -538,8 +564,8 @@ export function App({ target, visible, requested, onLoad }: {
         {sheet === 'customize' && <CustomizePanel onFinish={onFinish} onTime={onTime} />}
         {sheet === 'share' && <ShareSheet />}
         {sheet === 'help' && <HelpSheet />}
-        {editing && engine && <Editor engine={engine} plan={plan} onClose={() => setState({ editing: false })} />}
-        {photo && engine && <PhotoMode engine={engine} />}
+        {editing && engine && editorModule && <editorModule.Editor engine={engine} plan={plan} onClose={() => setState({ editing: false })} />}
+        {photo && engine && photoModule && <photoModule.PhotoMode engine={engine} />}
 
         {loading && (
           <div className="loading" role="status" aria-live="polite">
