@@ -69,10 +69,11 @@ const cache = new Map<string, Promise<Analysed>>()
  * Skies ship as lossless WebP holding RGBE (top half: RGB mantissas, bottom half: exponent) because web hosts only
  * serve web formats. Decode to linear float RGBA, rows top-first like a Radiance file.
  */
-export async function loadRgbeWebp(url: string): Promise<{ data: Float32Array; W: number; H: number }> {
+export async function loadRgbeWebp(url: string, maxBytes = Infinity): Promise<{ data: Float32Array; W: number; H: number; bytes: number }> {
   const res = await fetch(url)
-  if (!res.ok) throw new Error(`sky ${url}: ${res.status}`)
+  if (!res.ok) throw new Error(`RGBE texture HTTP ${res.status}: ${url}`)
   const blob = await res.blob()
+  if (blob.size > maxBytes) throw new Error(`phone atlas exceeds ${maxBytes} bytes (${blob.size})`)
   const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })
   const W = bmp.width
   const H2 = bmp.height
@@ -96,7 +97,7 @@ export async function loadRgbeWebp(url: string): Promise<{ data: Float32Array; W
     }
     data[j + 3] = 1
   }
-  return { data, W, H }
+  return { data, W, H, bytes: blob.size }
 }
 
 /**
@@ -277,6 +278,7 @@ export class SkyEnvironment {
     this.shadowCenter.copy(c)
     this.shadowRadius = r
     this.placeSun(this.sunDir)
+    return true
   }
 
   private shadowCenter = new THREE.Vector3()
@@ -288,8 +290,10 @@ export class SkyEnvironment {
     this.sun.updateMatrixWorld()
   }
 
+  private presetRevision = 0
+
   async setPreset(preset: TimePreset, sunAzimuthDeg: number) {
-    this.preset = preset
+    const revision = ++this.presetRevision
     const res = this.quality.hdriRes === '2k' && preset.maxRes === '2k' ? '2k' : '1k'
     const url = `./assets/hdri/${preset.hdri}_${res}.webp`
     let p = cache.get(url)
@@ -299,6 +303,8 @@ export class SkyEnvironment {
       cache.set(url, p)
     }
     const a = await p
+    if (revision !== this.presetRevision) return false
+    this.preset = preset
     this.current = a
     // rotate the sky so its sun sits at the plan's chosen azimuth
     let rotY = 0
@@ -393,6 +399,7 @@ export class SkyEnvironment {
   }
 
   dispose() {
+    this.presetRevision++
     this.envRT?.dispose()
     this.pmrem.dispose()
   }

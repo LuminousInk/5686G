@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { applyLightmap, clearLightmap, roomIrradiance } from './bake/lightmaps'
+import { LightmapBinding } from './bake/lightmaps'
 import { buildHouse, type HouseModel } from './house/build'
 import { framePoint, inRect, levelFloor } from './house/levels'
 import { roofHeightAt } from './house/massing'
@@ -7,6 +7,9 @@ import type { HomePlan } from './house/types'
 import { MaterialLibrary } from './materials/library'
 import { SkyEnvironment, TIME_PRESETS } from './env/environment'
 import { exposureFor } from './render/meter'
+import { anchoredExposure, interiorExposureWeight, roomExposureEV } from './render/exposureAnchors'
+import { RoomProbes } from './env/roomProbes'
+import { roomVolumes, type RoomVolume } from './env/roomVolumes'
 import { RenderPipeline } from './render/pipeline'
 import { detectTier, TIERS, type QualitySettings } from './quality'
 import { Site } from './site/site'
@@ -70,6 +73,11 @@ export class Engine {
   private lastCamPos = new THREE.Vector3()
   /** absolute exposure the light meter asks for (0 until the first reading) */
   private metered = 0
+  private readonly probes: RoomProbes
+  private readonly lightmap = new LightmapBinding()
+  private exposureRooms: RoomVolume[] = []
+  private timeSeq = 0
+  private finishSeq = 0
   dollhouse = false
 
   constructor(private opts: EngineOptions) {
@@ -89,6 +97,7 @@ export class Engine {
     renderer.shadowMap.type = THREE.PCFShadowMap
     renderer.transmissionResolutionScale = this.quality.tier === 'low' ? 0.5 : 0.75
     this.renderer = renderer
+    this.probes = new RoomProbes(renderer, this.quality.tier === 'low')
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.08, 2000)
     this.camera.position.set(0, 1.6, 20)
     this.lib = new MaterialLibrary(renderer, this.quality)
@@ -135,6 +144,9 @@ export class Engine {
   private async loadPlanInner(plan: HomePlan, finishes: Record<string, string>, timeId: string) {
     const progress = this.opts.onProgress ?? (() => {})
     progress(0.05, 'Building the house')
+    this.lightmap.clear()
+    this.probes.clear()
+    this.exposureRooms = []
     if (this.house) {
       this.scene.remove(this.house.group)
       this.house.dispose()
@@ -173,46 +185,24 @@ export class Engine {
     await this.setTime(timeId)
     progress(0.9, 'Loading textures')
     await this.lib.bank.ready()
+    this.updateLightingRooms()
     await this.refreshLightmap()
     this.lights.setup(this.house, this.interior)
     this.lights.setLevel(this.sky.preset.lamps)
     this.lib.setLamps(this.sky.preset.lamps)
-    this.captureProbe()
+    this.probes.reset()
     this.compile()
     progress(1, 'Ready')
     this.invalidate()
   }
 
-  private probeRT: THREE.WebGLRenderTarget | null = null
-  private cubeRT: THREE.WebGLCubeRenderTarget | null = null
-  private pmrem: THREE.PMREMGenerator | null = null
+  get probeRooms() { return this.probes.readyRooms }
+  get probesPending() { return this.probes.pending }
 
-  /**
-   * Interior light probe: a 360 capture from inside the main room, after the sun and sky have lit it, becomes the
-   * environment light of every interior surface. Gives warm bounce light, real reflections on floors and dark,
-   * believable rooms behind glass. Two passes approximate a second bounce.
-   */
-  captureProbe() {
-    const plan = this.plan
-    if (!plan) return
-    const room = plan.rooms.find(r => r.type === 'living') ?? plan.rooms[0]
-    if (!room) return
-    const cx = (room.rect[0] + room.rect[2]) / 2
-    const cz = (room.rect[1] + room.rect[3]) / 2
-    if (!this.cubeRT) this.cubeRT = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType, generateMipmaps: false })
-    if (!this.pmrem) this.pmrem = new THREE.PMREMGenerator(this.renderer)
-    const cam = new THREE.CubeCamera(0.05, 400, this.cubeRT)
-    cam.position.set(cx, levelFloor(plan, room.level) + 1.45, cz)
-    const prevTarget = this.renderer.getRenderTarget()
-    // exterior surfaces must not be hidden; lawn rings follow the main camera so keep them as they are
-    this.lib.interiorEnv(0.3, null)
-    for (let pass = 0; pass < 2; pass++) {
-      cam.update(this.renderer, this.scene)
-      this.probeRT?.dispose()
-      this.probeRT = this.pmrem.fromCubemap(this.cubeRT.texture)
-      this.lib.interiorEnv(1.0, this.probeRT.texture)
-    }
-    this.renderer.setRenderTarget(prevTarget)
+  private updateLightingRooms() {
+    if (!this.house) return
+    this.exposureRooms = roomVolumes(this.house.plan)
+    this.probes.setHouse(this.house, this.interior?.group ?? null, this.lib)
   }
 
   private rebuildSeq = 0
@@ -230,6 +220,8 @@ export class Engine {
       interior.dispose()
       return
     }
+    this.lightmap.clear()
+    this.probes.clear()
     if (this.house) {
       this.scene.remove(this.house.group)
       this.house.dispose()
@@ -241,21 +233,18 @@ export class Engine {
     this.plan = plan
     this.house = house
     this.interior = interior
-    this.lightmapped = false
-    clearLightmap(this.lib)
     this.scene.add(house.group, interior.group)
     for (const z of plan.zones) if (z !== 'palette') this.lib.setFinish(z, this.lib.currentFinish(z) ?? plan.finishes[z])
     this.lights.setup(house, interior)
     this.lights.setLevel(this.sky.preset.lamps)
     this.site?.updateFootprint(plan, house)
-    clearTimeout(this.probeTimer)
-    this.probeTimer = window.setTimeout(() => {
-      this.captureProbe()
-      this.invalidate()
-    }, 400)
+    this.updateLightingRooms()
+    this.invalidate()
+    await this.refreshLightmap()
+    if (seq !== this.rebuildSeq || this.house !== house) return
+    this.probes.reset(180)
     this.invalidate()
   }
-  private probeTimer = 0
 
   /** Pre-compile shaders so the first interaction doesn't hitch. */
   compile() {
@@ -266,47 +255,36 @@ export class Engine {
     }
   }
 
-  /** True while the bound home has baked lighting for the current time of day. */
-  lightmapped = false
+  /** Diagnostics for the active plan and preset, available on window.__engine. */
+  get lightmapStatus() { return this.lightmap.status }
+  get lightmapped() { return this.lightmapStatus.state === 'bound' }
   private loading = false
 
-  /** Bind (or drop) the baked lightmap for the current plan and time of day. */
   async refreshLightmap() {
     if (!this.house || !this.plan) return
-    // an edited plan has other geometry: its signature will not match the bake and it keeps live lighting
-    this.lightmapped = await applyLightmap(this.lib, this.house, this.interior?.group ?? null, this.plan.id, this.sky.preset.id, this.quality.tier === 'low')
+    await this.lightmap.apply(this.house, this.interior?.group ?? null, this.site, this.sky.preset, this.quality.tier === 'low')
+    if (this.house) this.probes.prepareMaterials(this.house, this.interior?.group ?? null, this.lib)
   }
 
   async setTime(id: string) {
+    const seq = ++this.timeSeq
     const preset = TIME_PRESETS.find(t => t.id === id) ?? TIME_PRESETS[0]
-    await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35)
+    this.lightmap.clear('time of day changed')
+    if (!await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35) || seq !== this.timeSeq) return
     this.pipeline.exposure = this.sky.exposure
     this.pipeline.setLook(preset)
     this.lights.setLevel(preset.lamps)
     this.lib.setLamps(preset.lamps)
     this.site?.setTime(preset)
-    if (this.house && !this.loading) await this.refreshLightmap()
-    if (this.house) this.captureProbe()
     this.resetMeter()
+    if (this.house && !this.loading) {
+      this.probes.suspend()
+      this.invalidate()
+      await this.refreshLightmap()
+      if (seq !== this.timeSeq) return
+      this.probes.reset()
+    }
     this.invalidate()
-  }
-
-  /** Interior exposure boost by day; with baked light it follows the metered brightness of the current room. */
-  static readonly INSIDE_BOOST = 2.35
-  private insideExposure(): number {
-    if (this.sky.preset.lamps > 0.5) return 1.0
-    if (!this.lightmapped || !this.house || !this.plan) return Engine.INSIDE_BOOST
-    const light = roomIrradiance(this.house)
-    if (!light.size) return Engine.INSIDE_BOOST
-    const { x, z } = this.camera.position
-    const room = this.plan.rooms.find(r => x >= r.rect[0] && x <= r.rect[2] && z >= r.rect[1] && z <= r.rect[3])
-    const e = room ? light.get(room.id) : undefined
-    if (!e) return Engine.INSIDE_BOOST
-    // the plan's median room keeps the tuned boost; darker rooms (facing away from the sun) open up most of the way,
-    // like a camera's auto exposure, so they read as dimmer but never murky
-    const all = [...light.values()].sort((a, b) => a - b)
-    const median = all[all.length >> 1]
-    return THREE.MathUtils.clamp(Engine.INSIDE_BOOST * Math.pow(median / e, 0.85), 1, 8)
   }
 
   isInside(p: THREE.Vector3) {
@@ -328,7 +306,14 @@ export class Engine {
   setFinish(zone: string, option: string) {
     if (zone === 'palette') this.lib.setPalette(option)
     else this.lib.setFinish(zone, option)
-    if (zone === 'palette') this.captureProbe()
+    this.lightmap.syncMaterials()
+    const finish = ++this.finishSeq
+    const house = this.house
+    void this.lib.bank.ready().then(() => {
+      if (finish !== this.finishSeq || this.house !== house) return
+      this.probes.reset(180, true)
+      this.invalidate()
+    })
     this.invalidate()
   }
 
@@ -366,8 +351,13 @@ export class Engine {
       this.lastView.copy(this.camera.matrixWorld)
       this.lastProj.copy(this.camera.projectionMatrix)
     }
+    if (this.probes.pending && !this.dollhouse && !moved && !this.keepAlive?.() && !this.liveMotion) {
+      this.sky.placeSun(this.sky.sunDir)
+      if (this.probes.step(t, this.scene, this.camera)) this.dirty = true
+    }
     const active = moved || this.dirty || this.liveMotion
-    const inside = this.isInside(this.camera.position)
+    const interiorWeight = this.plan && !this.dollhouse ? interiorExposureWeight(this.plan, this.camera.position) : 0
+    const inside = interiorWeight > 0.045
     const jumped = this.camera.position.distanceToSquared(this.lastCamPos) > 1
     if (!inside || jumped || (this.dirty && !moved)) this.resetMeter()
     this.lastCamPos.copy(this.camera.position)
@@ -386,10 +376,12 @@ export class Engine {
         if (!active || !this.metered || Math.abs(Math.log(exposure / this.metered)) > 0.08) this.metered = exposure
       }
     }
-    let want = 1
-    if (inside) want = this.metered && meter.supported ? this.metered / this.sky.exposure : this.insideExposure()
+    const bias = this.plan ? roomExposureEV(this.plan.id, this.exposureRooms, this.camera.position) : 0
+    const base = this.sky.preset.lamps > 0.5 ? 1 : 2.35
+    const measured = meter.supported ? this.metered / this.sky.exposure : 0
+    const want = anchoredExposure(measured, base, bias, interiorWeight)
     const d = Math.log(want / this.adapt)
-    const next = active && !jumped && Math.abs(d) > 0.02 ? this.adapt * Math.exp(d * Math.min(1, dt * 3)) : want
+    const next = !jumped && Math.abs(d) > 0.015 ? this.adapt * Math.exp(d * Math.min(1, dt * 5)) : want
     if (this.adapt !== next) {
       this.adapt = next
       this.pipeline.reset()
@@ -403,7 +395,7 @@ export class Engine {
       this.pipeline.requestMeter()
     } else if (!active && this.pipeline.converged && !this.keepAlive?.()) {
       // Wait for a pending exposure read without drawing extra frames.
-      if (!inside || !meter.pending) this.stop()
+      if ((!inside || !meter.pending) && (!this.probes.pending || this.dollhouse || this.liveMotion)) this.stop()
       return
     }
     this.pipeline.exposure = this.sky.exposure * this.adapt
@@ -446,7 +438,11 @@ export class Engine {
   }
 
   dispose() {
+    this.timeSeq++
+    this.finishSeq++
     this.stop()
+    this.lightmap.clear()
+    this.probes.dispose()
     this.pipeline.dispose()
     this.sky.dispose()
     this.renderer.dispose()

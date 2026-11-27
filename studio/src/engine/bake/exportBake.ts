@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import type { Engine } from '../Engine'
-import { ensureLayout, lightmapTargets } from './lightmaps'
+import { bakeSignature, collectBakeMeshes } from './bakeScene'
+import { ensureLayout } from './lightmaps'
 
 /**
  * Packs the loaded home for the offline bake (tools/bake): one GLB with the lightmap targets (named LM_*, their atlas
@@ -83,64 +84,61 @@ function bakeMaterial(src: THREE.Material, cache: Map<THREE.Material, THREE.Mesh
   return m
 }
 
-function exportable(m: THREE.Mesh): THREE.Material | null {
-  if (!m.isMesh || (m as THREE.InstancedMesh).isInstancedMesh || (m as unknown as THREE.SkinnedMesh).isSkinnedMesh) return null
-  // lawn rings and grass tufts draw instanced geometry through plain meshes
-  if ((m.geometry as THREE.InstancedBufferGeometry).isInstancedBufferGeometry) return null
-  const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as THREE.MeshStandardMaterial
-  if (!mat || !mat.isMeshStandardMaterial) return null
-  if (mat.name === 'glass' || mat.transparent || mat.alphaTest > 0 || mat.opacity < 1) return null
-  return mat
-}
-
 export async function exportForBake(engine: Engine): Promise<BakePayload> {
   const house = engine.house
   if (!house || !engine.plan) throw new Error('no home loaded')
+  const { site, sky: s } = engine
   const interior = engine.interior?.group ?? null
-  const layout = ensureLayout(house, interior)
-  const targets = new Set(lightmapTargets(house, interior))
+  const meshes = collectBakeMeshes(house, interior, site)
+  const signature = bakeSignature(house, meshes, s.preset)
+  const { layout } = ensureLayout(house, meshes)
   const root = new THREE.Scene()
   const mats = new Map<THREE.Material, THREE.MeshStandardMaterial>()
-  engine.scene.updateMatrixWorld(true)
   let lm = 0
   let occ = 0
-  engine.scene.traverseVisible(o => {
-    const m = o as THREE.Mesh
-    const mat = exportable(m)
-    if (!mat) return
+  const add = (m: THREE.Mesh, mat: THREE.Material, isTarget: boolean) => {
     const src = m.geometry
     const g = new THREE.BufferGeometry()
     g.setAttribute('position', src.getAttribute('position').clone())
     if (src.getAttribute('normal')) g.setAttribute('normal', src.getAttribute('normal').clone())
-    const isTarget = targets.has(m)
-    // the lightmap UVs become the only UV set, so Blender bakes into them without any lookup by name
+    // Blender needs the atlas coordinates as the first UV set.
     if (isTarget) g.setAttribute('uv', src.getAttribute('uv1').clone())
     if (src.index) g.setIndex(src.index.clone())
     g.applyMatrix4(m.matrixWorld)
     const out = new THREE.Mesh(g, bakeMaterial(mat, mats))
     out.name = isTarget ? `LM_${lm++}_${m.name}` : `OCC_${occ++}`
     root.add(out)
-  })
-  if (lm !== targets.size) throw new Error(`exported ${lm} of ${targets.size} lightmap targets (hidden?)`)
-  const glb = (await new GLTFExporter().parseAsync(root, { binary: true, onlyVisible: false })) as ArrayBuffer
+  }
+  for (const { mesh, material, target } of meshes) add(mesh, material, target)
+
+  // The canyon mesh is tessellated differently on phones. Bake a fixed representation of the authored surface.
+  if (site?.terrain.hillside) {
+    const ground = site.group.getObjectByName('Coastal canyon') as THREE.Mesh | undefined
+    const retaining = site.group.getObjectByName('Board-formed terrace walls') as THREE.Mesh | undefined
+    if (ground && retaining) {
+      const terrain = site.terrain.hillside.buildSurface(ground.material as THREE.Material, retaining.material as THREE.Material, true)
+      for (const mesh of terrain.children as THREE.Mesh[]) {
+        add(mesh, mesh.material as THREE.Material, false)
+        mesh.geometry.dispose()
+      }
+    }
+  }
+
   const width = 1024
   const height = 512
-  const sky = engine.sky.worldSky(width, height)
+  const sky = s.worldSky(width, height)
   if (!sky) throw new Error('sky not loaded')
-  const s = engine.sky
   const e = s.sun.visible ? s.sunIntensity : 0
-  return {
-    glb,
-    sky,
-    meta: {
-      plan: engine.plan.id,
-      preset: s.preset.id,
-      signature: layout.signature,
-      size: layout.size,
-      density: layout.density,
-      charts: layout.charts,
-      sky: { width, height },
-      sun: { dir: [s.sunDir.x, s.sunDir.y, s.sunDir.z], rgb: [s.sunColor.r * e, s.sunColor.g * e, s.sunColor.b * e] },
-    },
+  const meta: BakeMetaOut = {
+    plan: house.plan.id,
+    preset: s.preset.id,
+    signature,
+    size: layout.size,
+    density: layout.density,
+    charts: layout.charts,
+    sky: { width, height },
+    sun: { dir: [s.sunDir.x, s.sunDir.y, s.sunDir.z], rgb: [s.sunColor.r * e, s.sunColor.g * e, s.sunColor.b * e] },
   }
+  const glb = (await new GLTFExporter().parseAsync(root, { binary: true, onlyVisible: false })) as ArrayBuffer
+  return { glb, sky, meta }
 }
