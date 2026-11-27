@@ -4,6 +4,7 @@ const studioFlags = ['plan', 'time', 'view', 'quality', 'frames', 'tm', 'ui', 's
 
 const homePrefix = '#home-'
 const tourPrefix = '#tour-'
+const photoPrefix = '#photo-'
 export const DESIGN_ROUTE = '#design'
 export const PRESENTATION_ROUTE = '#presentation-homes'
 export const DRAFT_CODE = 'd1-'
@@ -14,6 +15,7 @@ export const designerSource = (hash: string) => hash.startsWith(`${DESIGN_ROUTE}
 
 export const homeRoute = (id: string) => homePrefix + id
 export const tourRoute = (id: string) => tourPrefix + id
+export const photoRoute = (id: string) => photoPrefix + id
 
 export function homeFromRoute(hash: string) {
   return hash.startsWith(homePrefix) ? planById(hash.slice(homePrefix.length)) : undefined
@@ -22,6 +24,10 @@ export function homeFromRoute(hash: string) {
 export function tourFromRoute(hash: string) {
   const plan = hash.startsWith(tourPrefix) ? planById(hash.slice(tourPrefix.length)) : undefined
   return plan?.tour?.length ? plan : undefined
+}
+
+export function photoFromRoute(hash: string) {
+  return hash.startsWith(photoPrefix) ? planById(hash.slice(photoPrefix.length)) : undefined
 }
 
 export interface StudioTarget { hash: string }

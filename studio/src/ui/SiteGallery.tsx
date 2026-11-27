@@ -6,6 +6,7 @@ import { imageDimensions } from './site/galleryPresentation'
 import { revealOnScroll } from './site/siteMotion'
 
 const GalleryLightbox = lazy(() => import('./site/GalleryLightbox').then(module => ({ default: module.GalleryLightbox })))
+const GalleryPhotoTiles = lazy(() => import('./phototour/GalleryPhotoTiles'))
 
 export function BrowseImage({ src, alt, shot, onError }: {
   src: string
@@ -71,10 +72,12 @@ export const GalleryGrid = memo(function GalleryGrid({ visible, onDesign, showHo
   const [missing, setMissing] = useState<string[]>([])
   const shots = visible.filter(shot => !missing.includes(shot.id))
   const index = shots.findIndex(shot => shot.id === current)
+  const photoPlans = new Set(visible.filter(shot => shot.kind === 'interior').map(shot => shot.plan))
 
   return (
     <>
       <div className="site-gallery-grid">
+        {!!photoPlans.size && <Suspense><GalleryPhotoTiles plans={photoPlans} showHome={showHome} /></Suspense>}
         {shots.map(shot => (
           <button className="site-gallery-item" type="button" key={shot.id} ref={revealOnScroll} aria-haspopup="dialog" onClick={event => {
             event.currentTarget.focus({ preventScroll: true })

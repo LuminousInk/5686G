@@ -1,0 +1,115 @@
+.photo-tour {
+  --photo-background: #1d201c;
+  --photo-foreground: #f6efe4;
+  --photo-muted: #c6beb1;
+  --photo-border: #ffffff32;
+  --photo-accent: #ebc39e;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) max(32px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(32px, env(safe-area-inset-left));
+  background: var(--photo-background);
+  color: var(--photo-foreground);
+  color-scheme: dark;
+  font: 14px/1.45 system-ui, sans-serif;
+}
+.photo-tour *, .photo-tour *::before, .photo-tour *::after { box-sizing: border-box; }
+.photo-tour a { color: inherit; text-decoration: none; }
+.photo-tour :is(a, button):focus-visible { outline: 2px solid var(--photo-accent); outline-offset: 3px; }
+.photo-tour-header, .photo-tour-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.photo-tour-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  min-height: 72px;
+}
+.photo-tour-header h1, .photo-tour h2 {
+  font: 400 30px/1.1 Georgia, 'Times New Roman', serif;
+  letter-spacing: -.035em;
+}
+.photo-tour-header h1:focus { outline: none; }
+.photo-tour-back, .photo-tour-studio { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+.photo-tour-back { justify-self: start; margin-inline-start: -3px; }
+.photo-tour-back svg, .photo-tour-studio svg { width: 16px; flex: none; }
+.photo-tour a.photo-tour-studio {
+  justify-self: end;
+  padding: 0 14px;
+  border-radius: 3px;
+  background: var(--photo-foreground);
+  color: #242018;
+  font-weight: 650;
+}
+.photo-tour-frame { position: relative; flex: 1; min-height: 0; overflow: clip; background: #121511; }
+.photo-tour-stage { position: absolute; inset: 0; touch-action: none; }
+/* The plugin projects some arrows beyond the canvas. Focusing them must keep the image in place. */
+.photo-tour-stage .psv-container { width: 100%; height: 100%; overflow: clip; background: #121511; }
+.photo-tour-stage .psv-overlay { display: none; }
+.photo-tour-stage .psv-virtual-tour-link.photo-tour-arrow {
+  display: grid;
+  place-items: center;
+  border: 1px solid #fff9;
+  border-radius: 50%;
+  background: #242620e6;
+  color: #fff9ef;
+  font: 25px/1 system-ui, sans-serif;
+  box-shadow: 0 2px 12px #0005;
+}
+.photo-tour-stage .photo-tour-arrow:is(:hover, :focus-visible) { background: #f6efe4; color: #242018; }
+.photo-tour-loading {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 3px;
+  background: #1d201ce6;
+  color: var(--photo-foreground);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.photo-tour-zoom {
+  position: absolute;
+  right: 15px;
+  bottom: 15px;
+  display: flex;
+  border: 1px solid var(--photo-border);
+  border-radius: 3px;
+  background: #1d201ce6;
+}
+.photo-tour-zoom button { min-width: 44px; min-height: 44px; font-size: 23px; }
+.photo-tour-zoom button + button { border-left: 1px solid var(--photo-border); }
+.photo-tour-footer { min-height: 95px; padding-block: 12px; }
+.photo-tour-caption p { margin-top: 5px; color: var(--photo-muted); }
+.photo-tour-stops { display: flex; flex-wrap: wrap; gap: 6px; }
+.photo-tour-stops button, .photo-tour-state button {
+  min-height: 44px;
+  padding-inline: 13px;
+  border: 1px solid var(--photo-border);
+  border-radius: 3px;
+}
+.photo-tour-stops button[aria-pressed='true'], .photo-tour-stops button:not(:disabled):hover,
+.photo-tour-state button:hover, .photo-tour-zoom button:hover { background: #ffffff19; }
+.photo-tour-stops button[aria-pressed='true'] { border-color: var(--photo-accent); color: var(--photo-accent); }
+.photo-tour-state {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+}
+.photo-tour-frame .photo-tour-state { position: absolute; inset: 0; background: #171a16e6; }
+
+@media (max-width: 600px) {
+  .photo-tour { padding-inline: 0; }
+  .photo-tour-header, .photo-tour-footer { padding-inline: 13px; }
+  .photo-tour-header { min-height: 62px; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; }
+  .photo-tour-header h1 { font-size: clamp(19px, 5.5vw, 26px); text-align: center; }
+  .photo-tour a.photo-tour-studio { padding-inline: 8px; font-size: 12px; gap: 4px; }
+  .photo-tour-studio svg { width: 12px; }
+  .photo-tour-footer { display: grid; gap: 10px; min-height: auto; }
+  .photo-tour h2 { font-size: 24px; }
+  .photo-tour-caption p { font-size: 13px; }
+  .photo-tour-stops button { padding-inline: 9px; font-size: 13px; }
+}

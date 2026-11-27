@@ -6,7 +6,8 @@ import { feetInches, FloorPlan } from './FloorPlan'
 import { Icon } from './icons'
 import { GalleryGrid } from './SiteGallery'
 import { images, imageSrc } from './site/galleryCatalog'
-import { designerRoute, tourRoute } from './routes'
+import { designerRoute, photoRoute, tourRoute } from './routes'
+import { photoHome } from './phototour/manifest'
 import { imageDimensions } from './site/galleryPresentation'
 import { enterPage, revealOnScroll } from './site/siteMotion'
 
@@ -109,6 +110,7 @@ export function HomePage({ plan, walkThrough, onDesign }: {
 }) {
   const shots = useMemo(() => images.filter(image => image.plan === plan.id), [plan.id])
   const hero = shots.find(image => image.id === `${plan.id}-golden`)
+  const hasPhotos = photoHome(plan.id)?.stops.some(stop => stop.rendered)
   return (
     <>
       <section className="site-home-feature" aria-labelledby="site-title">
@@ -121,6 +123,9 @@ export function HomePage({ plan, walkThrough, onDesign }: {
             </div>
             <div className="site-home-ctas">
               {walkThrough}
+              {hasPhotos && <a className="site-cta site-tour-cta" href={photoRoute(plan.id)}>
+                <Icon.aperture /> 360° photo tour
+              </a>}
               <a className="site-cta site-tour-cta" href={designerRoute(plan.id)} onClick={onDesign}>
                 Design your own <Icon.diagonal />
               </a>
