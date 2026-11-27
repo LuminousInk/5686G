@@ -4,8 +4,11 @@ import type { HomePlan } from '../engine/house/types'
 import { ZONES } from '../engine/materials/catalog'
 import { feetInches, FloorPlan } from './FloorPlan'
 import { Icon } from './icons'
-import { GalleryGrid, images, imageSrc } from './SiteGallery'
+import { GalleryGrid } from './SiteGallery'
+import { images, imageSrc } from './site/galleryCatalog'
 import { designerRoute, tourRoute } from './routes'
+import { imageDimensions } from './site/galleryPresentation'
+import { enterPage, revealOnScroll } from './site/siteMotion'
 
 const descriptions: Record<string, string> = {
   'cedar-ridge': 'Natural cedar, charcoal steel and a solar roof frame a single-level home built around its garden. The great room opens to a terraced patio and rock garden, with the kitchen and dining room at one end and a quieter primary suite at the other.',
@@ -39,7 +42,7 @@ const HomeFloorPlan = memo(function HomeFloorPlan({ plan }: { plan: HomePlan }) 
 
   return (
     <section className="site-wrap site-section" aria-labelledby="home-plan-title">
-      <div className="site-section-head">
+      <div className="site-section-head" ref={revealOnScroll}>
         <h2 id="home-plan-title">Floor plan</h2>
         <p>Select a room to see its dimensions.</p>
       </div>
@@ -72,7 +75,7 @@ const HomeFloorPlan = memo(function HomeFloorPlan({ plan }: { plan: HomePlan }) 
 const FinishOptions = memo(function FinishOptions({ plan }: { plan: HomePlan }) {
   return (
     <section className="site-wrap site-section" aria-labelledby="finishes-title">
-      <div className="site-section-head">
+      <div className="site-section-head" ref={revealOnScroll}>
         <h2 id="finishes-title">Finish options</h2>
         <p>The marked swatches show the home’s standard finishes.</p>
       </div>
@@ -111,7 +114,7 @@ export function HomePage({ plan, walkThrough, onDesign }: {
       <section className="site-home-feature" aria-labelledby="site-title">
         <div className="site-wrap site-home-heading">
           <a className="site-breadcrumb" href="#homes"><Icon.left /> All homes</a>
-          <div className="site-home-title-row">
+          <div className="site-home-title-row" ref={enterPage}>
             <div>
               <p className="site-kicker">{plan.style}</p>
               <h1 id="site-title">{plan.name}</h1>
@@ -127,10 +130,9 @@ export function HomePage({ plan, walkThrough, onDesign }: {
             </div>
           </div>
         </div>
-        <figure className="site-home-render">
+        <figure className="site-wrap site-home-render">
           <img
-            width="1600"
-            height="900"
+            {...imageDimensions(hero)}
             src={hero ? imageSrc(hero.id) : `./thumbs/${plan.id}.webp`}
             alt={hero ? `${plan.name}, ${hero.space.toLowerCase()} in ${hero.light.toLowerCase()}` : `${plan.name} exterior`}
             fetchPriority="high"
@@ -144,7 +146,7 @@ export function HomePage({ plan, walkThrough, onDesign }: {
       </section>
       <HomeFloorPlan plan={plan} />
       <section className="site-wrap site-section" aria-labelledby="home-gallery-title">
-        <div className="site-section-head">
+        <div className="site-section-head" ref={revealOnScroll}>
           <h2 id="home-gallery-title">Gallery</h2>
         </div>
         <GalleryGrid visible={shots} onDesign={onDesign} showHome={false} />

@@ -1,31 +1,33 @@
 import { memo, useState, type CSSProperties } from 'react'
-import manifest from '../../public/gallery/gallery.json'
 import { availableComparisons } from './galleryShots'
 import { Icon } from './icons'
-import { BrowseImage, images, imageSrc } from './SiteGallery'
+import { BrowseImage } from './SiteGallery'
+import { comparisons, images, imageSrc } from './site/galleryCatalog'
+import { FilterChips } from './site/FilterChips'
+import { imageDimensions } from './site/galleryPresentation'
+import { revealOnScroll } from './site/siteMotion'
 
 export const StyleComparison = memo(function StyleComparison() {
   const [choice, setChoice] = useState('')
   const [missing, setMissing] = useState<Set<string>>(() => new Set())
-  const pairs = availableComparisons(manifest.comparisons, images, missing)
+  const pairs = availableComparisons(comparisons, images, missing)
   const pair = pairs.find(candidate => candidate.before.id === choice) ?? pairs[0]
   const unavailable = (id: string) => setMissing(previous => new Set(previous).add(id))
 
   return (
-    <section className="site-wrap site-section" id="compare" aria-labelledby="comparison-title">
-      <div className="site-section-head">
+    <section className="site-wrap site-section" id="compare" tabIndex={-1} aria-labelledby="comparison-title">
+      <div className="site-section-head" ref={revealOnScroll}>
         <h2 id="comparison-title">Compare styles</h2>
         {pair && <p>Drag the slider to see how finishes and light change the same view.</p>}
       </div>
       {pair ? (
         <>
-          <div className="site-filters" role="group" aria-label="Choose a home to compare">
-            {pairs.map(({ before }) => (
-              <button key={before.id} type="button" aria-pressed={before.id === pair.before.id} onClick={() => setChoice(before.id)}>
-                {before.home}
-              </button>
-            ))}
-          </div>
+          <FilterChips
+            label="Choose a home to compare"
+            options={pairs.map(({ before }) => ({ id: before.id, label: before.home }))}
+            selected={pair.before.id}
+            onSelect={setChoice}
+          />
           <ComparisonSlider key={pair.before.id} pair={pair} unavailable={unavailable} />
         </>
       ) : (
@@ -41,13 +43,14 @@ function ComparisonSlider({ pair, unavailable }: {
 }) {
   const [split, setSplit] = useState(50)
   const { before, after, beforeLabel, afterLabel } = pair
+  const { width, height } = imageDimensions(before)
 
   return (
     <figure className="site-comparison">
-      <div className="site-comparison-stage" style={{ '--split': `${split}%` } as CSSProperties}>
-        <BrowseImage src={imageSrc(after.id)} alt={`${after.home}, ${after.space}, ${afterLabel}`} onError={() => unavailable(after.id)} />
+      <div className="site-comparison-stage" style={{ '--split': `${split}%`, aspectRatio: `${width} / ${height}` } as CSSProperties}>
+        <BrowseImage src={imageSrc(after.id)} shot={after} alt={`${after.home}, ${after.space}, ${afterLabel}`} onError={() => unavailable(after.id)} />
         <div className="site-comparison-before">
-          <BrowseImage src={imageSrc(before.id)} alt={`${before.home}, ${before.space}, ${beforeLabel}`} onError={() => unavailable(before.id)} />
+          <BrowseImage src={imageSrc(before.id)} shot={before} alt={`${before.home}, ${before.space}, ${beforeLabel}`} onError={() => unavailable(before.id)} />
         </div>
         <div className="site-comparison-divider" aria-hidden="true">
           <span><Icon.left /><Icon.right /></span>

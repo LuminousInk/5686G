@@ -1,10 +1,17 @@
-import { memo, useCallback, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
-import { Credits } from './Credits'
-import { HomePage } from './HomePage'
+import { lazy, memo, Suspense, useCallback, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
 import { Icon } from './icons'
 import { designerRoute, homeFromRoute, homeRoute, PRESENTATION_ROUTE } from './routes'
-import { BrowseImage, GalleryGrid, homes, images, imageSrc, SiteDialog } from './SiteGallery'
+import { BrowseImage, GalleryGrid, SiteDialog } from './SiteGallery'
+import { homes, images, imageSrc } from './site/galleryCatalog'
 import { StyleComparison } from './StyleComparison'
+import { HeroRenders } from './site/HeroRenders'
+import { StudioProgress } from './site/StudioProgress'
+import { FilterChips } from './site/FilterChips'
+import { enterPage, revealOnScroll } from './site/siteMotion'
+
+const HomePage = lazy(() => import('./HomePage').then(module => ({ default: module.HomePage })))
+const Credits = lazy(() => import('./Credits').then(module => ({ default: module.Credits })))
+const heroShots = homes.flatMap(({ id }) => images.filter(image => image.id === `${id}-golden`))
 
 const filters = [
   { id: 'all', label: 'All' },
@@ -19,18 +26,12 @@ const StyleGallery = memo(function StyleGallery({ onDesign }: { onDesign: (event
   const visible = filter === 'all' ? images : images.filter(image => image.kind === filter || image.plan === filter)
 
   return (
-    <section className="site-wrap site-section" id="gallery" aria-labelledby="gallery-title">
-      <div className="site-section-head">
+    <section className="site-wrap site-section" id="gallery" tabIndex={-1} aria-labelledby="gallery-title">
+      <div className="site-section-head" ref={revealOnScroll}>
         <h2 id="gallery-title">Style gallery</h2>
         <p>Explore elevations, rooms and finishes across all five homes.</p>
       </div>
-      <div className="site-filters" role="group" aria-label="Filter renders">
-        {filters.map(option => (
-          <button type="button" key={option.id} aria-pressed={filter === option.id} onClick={() => setFilter(option.id)}>
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <FilterChips label="Filter renders" options={filters} selected={filter} onSelect={setFilter} />
       <GalleryGrid visible={visible} onDesign={onDesign} />
     </section>
   )
@@ -38,8 +39,8 @@ const StyleGallery = memo(function StyleGallery({ onDesign }: { onDesign: (event
 
 const Homes = memo(function Homes() {
   return (
-    <section className="site-wrap site-section" id="homes" aria-labelledby="homes-title">
-      <div className="site-section-head">
+    <section className="site-wrap site-section" id="homes" tabIndex={-1} aria-labelledby="homes-title">
+      <div className="site-section-head" ref={revealOnScroll}>
         <h2 id="homes-title">The homes</h2>
         <p>Explore floor plans, interiors and finish options for each home.</p>
       </div>
@@ -47,8 +48,8 @@ const Homes = memo(function Homes() {
         {homes.map(plan => {
           const exterior = images.find(image => image.id === `${plan.id}-golden`)
           return (
-            <article className="site-home-card" key={plan.id}>
-              <BrowseImage src={exterior ? imageSrc(exterior.id) : `./thumbs/${plan.id}.webp`} alt={`${plan.name} exterior`} />
+            <article className="site-home-card" key={plan.id} ref={revealOnScroll}>
+              <BrowseImage src={exterior ? imageSrc(exterior.id) : `./thumbs/${plan.id}.webp`} alt={`${plan.name} exterior`} shot={exterior} />
               <div className="site-home-copy">
                 <p className="site-home-style">{plan.style}</p>
                 <h3>{plan.name}</h3>
@@ -91,67 +92,81 @@ export function Landing({ hash, progress, ready, pending, error, onRetry, onDesi
     }
   }, [onDesign])
   const closeCredits = () => { location.replace(anchor.current || '#home') }
-  const status = progress ? `Preparing the studio · ${progress}%` : 'Explore in 3D'
-  const hero = images.find(image => image.id === 'cedar-ridge-golden')
   const walk = page && images.find(image => image.plan === page.id && image.kind === 'interior')
 
   useLayoutEffect(() => {
     if (browsing && anchor.current !== hash) {
+      const target = document.getElementById(home ? 'home' : hash.slice(1) || 'home')
+      const previous = anchor.current
       anchor.current = hash
-      document.getElementById(home ? 'home' : hash.slice(1) || 'home')?.scrollIntoView()
+      target?.scrollIntoView()
+      if (previous !== null) {
+        if (home) document.getElementById('site-content')?.focus({ preventScroll: true })
+        else if (target?.tabIndex === -1 && target.hasAttribute('tabindex')) target.focus({ preventScroll: true })
+      }
     }
   }, [browsing, hash, home])
 
   return (
     <div className="site" id="home">
+      <a className="site-skip" href="#site-content" onClick={event => {
+        event.preventDefault()
+        const main = document.getElementById('site-content')
+        main?.focus({ preventScroll: true })
+        main?.scrollIntoView()
+      }}>Skip to content</a>
       <header className="site-header">
         <div className="site-wrap site-header-inner">
           <Wordmark />
           <nav aria-label="Main navigation">
-            <a href="#homes">Homes</a>
-            <a href="#compare">Compare</a>
-            <a href="#gallery">Gallery</a>
+            <a href="#homes" aria-current={page || hash === '#homes' ? 'location' : undefined}>Homes</a>
+            <a href="#compare" aria-current={hash === '#compare' ? 'location' : undefined}>Compare</a>
+            <a href="#gallery" aria-current={hash === '#gallery' ? 'location' : undefined}>Gallery</a>
           </nav>
           <a href={PRESENTATION_ROUTE} className="site-header-cta" onClick={openDesign}>{ready ? 'Enter the studio' : 'Explore in 3D'} <Icon.diagonal /></a>
         </div>
       </header>
 
-      <main>
+      <main id="site-content" tabIndex={-1}>
         {page ? (
-          <HomePage
-            key={page.id}
-            plan={page}
-            onDesign={openDesign}
-            walkThrough={error ? (
-              <button type="button" className="site-cta site-walk-cta" onClick={onRetry}>Retry studio load <Icon.diagonal /></button>
-            ) : (
-              <a href={walk?.share ?? PRESENTATION_ROUTE} className="site-cta site-walk-cta" onClick={openDesign}>
-                <span>{ready ? 'Walk through' : `Loading the 3D studio… ${progress}%`}</span><Icon.diagonal />
-                {!ready && <span className="site-cta-progress" style={{ width: `${progress}%` }} aria-hidden="true" />}
-              </a>
-            )}
-          />
+          <Suspense fallback={<div className="site-wrap site-home-heading site-page-loading" aria-busy="true">
+            <h1>{page.name}</h1>
+          </div>}>
+            <HomePage
+              key={page.id}
+              plan={page}
+              onDesign={openDesign}
+              walkThrough={error ? (
+                <button type="button" className="site-cta site-walk-cta" onClick={onRetry}>Retry studio load <Icon.diagonal /></button>
+              ) : (
+                <a href={walk?.share ?? PRESENTATION_ROUTE} className="site-cta site-walk-cta" onClick={openDesign}>
+                  <span>{ready ? 'Walk through' : 'Explore in 3D'}</span><Icon.diagonal />
+                </a>
+              )}
+            />
+          </Suspense>
         ) : <>
           <section className="site-hero" aria-labelledby="site-title">
-            <img className="site-hero-img" src={hero ? imageSrc(hero.id) : './thumbs/cedar-ridge.webp'} alt="Cedar Ridge in golden-hour light, viewed across the garden" fetchPriority="high" />
+            <HeroRenders shots={heroShots} loading={!ready && !error} />
             <div className="site-wrap site-hero-inner">
-              <div>
+              <div className="site-hero-copy" ref={enterPage}>
                 <p className="site-kicker">Pacific Palisades</p>
                 <h1 id="site-title">Cuby Studio</h1>
                 <p className="site-pitch">Five homes on coastal hillsides with ocean views.</p>
-                {error ? (
-                  <button type="button" className="site-cta" onClick={onRetry}>Retry studio load <Icon.diagonal /></button>
-                ) : (
-                  <a href={PRESENTATION_ROUTE} onClick={openDesign} className={`site-cta site-hero-cta ${ready ? 'site-ready' : ''}`}>
-                    <span>{ready ? 'Enter the studio' : status}</span><Icon.diagonal />
-                    {!ready && <span className="site-cta-progress" style={{ width: `${progress}%` }} aria-hidden="true" />}
+                <div className="site-hero-ctas">
+                  {error ? (
+                    <button type="button" className="site-cta" onClick={onRetry}>Retry studio load <Icon.diagonal /></button>
+                  ) : (
+                    <a href={PRESENTATION_ROUTE} onClick={openDesign} className="site-cta site-hero-cta">
+                      {ready ? 'Enter the studio' : 'Explore in 3D'} <Icon.diagonal />
+                    </a>
+                  )}
+                  <a href={designerRoute()} className="site-cta site-tour-cta" onClick={openDesign}>
+                    Design your own <Icon.diagonal />
                   </a>
-                )}
-                <a href={designerRoute()} className="site-cta site-tour-cta" onClick={openDesign}>
-                  Design your own <Icon.diagonal />
-                </a>
+                </div>
+                {error ? <p className="site-progress-error">The 3D studio could not load.</p> : <StudioProgress value={progress} ready={ready} />}
               </div>
-              <p className="site-hero-caption">Cedar Ridge <span>·</span> Golden hour</p>
             </div>
           </section>
 
@@ -183,7 +198,7 @@ export function Landing({ hash, progress, ready, pending, error, onRetry, onDesi
               <h2>Credits</h2>
               <button type="button" className="site-square" aria-label="Close credits" onClick={closeCredits}><Icon.close /></button>
             </div>
-            <Credits />
+            <Suspense fallback={<p role="status">Loading credits…</p>}><Credits /></Suspense>
           </div>
         </SiteDialog>
       )}
