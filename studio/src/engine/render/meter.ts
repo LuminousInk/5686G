@@ -16,7 +16,8 @@ const SPAN = 32
 export interface Metering {
   /** trimmed, center-weighted geometric mean luminance */
   mean: number
-  /** luminance of the bright end of the frame (windows and sun patches excluded) */
+  /** luminance of the bright end of the frame: the 75th percentile, so a window or sun patch in view (they may clip,
+   *  as in interior photography) does not darken the room, while walls that fill the frame stay under white */
   high: number
 }
 
@@ -121,7 +122,7 @@ export class Meter {
       w += this.weights[i]
     }
     const mean = Math.pow(2, w > 0 ? sum / w : at(0.5))
-    return { mean, high: Math.pow(2, at(0.88)) }
+    return { mean, high: Math.pow(2, at(0.75)) }
   }
 
   dispose() {
@@ -134,6 +135,6 @@ export class Meter {
  * Exposure for a reading: the average goes to `key` (a bit above middle grey: interiors are photographed bright), but
  * never so far that the bright end passes `white`.
  */
-export function exposureFor(m: Metering, key: number, white = 0.92) {
+export function exposureFor(m: Metering, key: number, white = 1.6) {
   return Math.min(key / m.mean, white / m.high)
 }

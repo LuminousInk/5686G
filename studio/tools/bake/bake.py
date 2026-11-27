@@ -49,14 +49,16 @@ def setup(meta: dict, prefix: str, samples: int):
     cy.device = 'CPU'
     cy.samples = samples
     cy.use_denoising = False
-    cy.max_bounces = 6
-    cy.diffuse_bounces = 4
+    cy.max_bounces = 8
+    # halls and corners are lit almost only by bounces: too few bounces leaves them black and noisy
+    cy.diffuse_bounces = 6
     cy.glossy_bounces = 1
     cy.transmission_bounces = 0
     cy.transparent_max_bounces = 0
     cy.caustics_reflective = False
     cy.caustics_refractive = False
-    cy.sample_clamp_indirect = 20.0
+    # clamp indirect fireflies (they showed as bright specks on dark floors)
+    cy.sample_clamp_indirect = 6.0
     sc.render.threads_mode = 'AUTO'
     bk = sc.render.bake
     # no margin: coverage must mark exactly the chart texels; denoise() grows the charts into their gutters itself

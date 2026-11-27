@@ -109,12 +109,13 @@ export class MaterialLibrary {
     m.roughness = p.roughness
     m.metalness = p.metalness ?? 0
     const hadMap = !!m.map
+    const hadRough = !!m.roughnessMap
     if (p.map === 'limewash') {
       m.map = this.limewash
       m.normalMap = null
       m.aoMap = null
-      // fine grain over the soft blotches so close-ups still read as plaster
-      m.roughnessMap = this.fineNoise
+      // evenly matte: a noise roughness map made glossy patches that mirrored the sky in camouflage blotches
+      m.roughnessMap = null
       m.userData.tex = null
     } else if (p.tex) {
       const scale = p.texScale ?? (zone === 'deck' ? 1.2 : 1)
@@ -127,13 +128,14 @@ export class MaterialLibrary {
       m.map = null
       m.normalMap = null
       m.aoMap = null
-      // painted metal: subtle roughness breakup so large panels don't look CG-flat
-      m.roughnessMap = this.noise
+      // painted metal outside: subtle roughness breakup so large panels don't look CG-flat. Interior paint stays evenly
+      // matte: the breakup made glossy patches that mirrored the windows as smudges
+      m.roughnessMap = zone === 'walls' ? null : this.noise
       m.userData.tex = null
     }
     const v = m.userData.variation as { value: number } | undefined
     if (v) v.value = p.variation ?? 0
-    if (hadMap !== !!m.map) m.needsUpdate = true
+    if (hadMap !== !!m.map || hadRough !== !!m.roughnessMap) m.needsUpdate = true
   }
 
   // ---------------------------------------------------------------- fixed exterior materials

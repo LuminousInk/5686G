@@ -357,6 +357,8 @@ export class Engine {
       this.lastView.copy(this.camera.matrixWorld)
       this.lastProj.copy(this.camera.projectionMatrix)
     }
+    // a finish or time change re-meters the view like a camera move does
+    if (this.dirty) this.meteredStill = false
     if (moved || this.dirty || this.liveMotion) {
       this.pipeline.reset()
       this.dirty = false
@@ -395,7 +397,7 @@ export class Engine {
     }
     const inside = this.isInside(this.camera.position)
     let want = 1
-    if (inside) want = this.metered > 0 && meter.supported ? THREE.MathUtils.clamp(this.metered / this.sky.exposure, 0.35, 40) : this.insideExposure()
+    if (inside) want = this.metered > 0 && meter.supported ? THREE.MathUtils.clamp(this.metered / this.sky.exposure, 0.35, 120) : this.insideExposure()
     if (this.snapPending) {
       this.snapPending = false
       this.adapt = want

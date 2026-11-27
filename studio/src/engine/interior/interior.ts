@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
-import { GeoBuilder, MeshBatch, V3 } from '../geo'
+import { MeshBatch, V3 } from '../geo'
 import type { HouseModel } from '../house/build'
 import { blockAt, ceilingAt, sideIntervals, WALL_T } from '../house/massing'
 import type { HomePlan, Opening, Rect, RoomDef, Side } from '../house/types'
@@ -9,6 +9,7 @@ import { rng } from '../materials/textures'
 import { placeModel } from '../models'
 import type { QualitySettings } from '../quality'
 import type { Segment2 } from '../house/walls'
+import { baseCabinets, COUNTER_TOP, inductionHob, ISLAND_TOP, kitchenIsland, openShelf, ovenTower, rangeHood, TALL_D, TALL_W } from './kitchenParts'
 import {
   FURNITURE_FOOTPRINTS, areaRug, floorLamp, mediaConsole, nightstand, tv, wardrobe,
 } from './modern'
@@ -728,12 +729,8 @@ export class Interior {
     const lib = this.lib
     const run = an[0]
     const jobs: Promise<unknown>[] = []
-    const cab = new GeoBuilder()
-    const ctr = new GeoBuilder()
-    const dark = new GeoBuilder()
-    const steel = new GeoBuilder()
     if (run) {
-      // base run along the anchor wall
+      // base run along the anchor wall: fridge, (oven tower), cabinets with hob, hood and open shelves
       const len = Math.min(run.len - 0.1, 5.2)
       const px = -run.inZ
       const pz = run.inX
@@ -742,55 +739,52 @@ export class Interior {
       const ax = run.x - px * (len / 2)
       const az = run.z - pz * (len / 2)
       const P = (u: number, d: number) => [ax + px * u + run.inX * d, az + pz * u + run.inZ * d] as const
-      const boxAlong = (g: GeoBuilder, u0: number, u1: number, d0: number, d1: number, y0: number, y1: number) => {
-        const [ax0, az0] = P(u0, d0)
-        const [ax1, az1] = P(u1, d1)
-        g.box(Math.min(ax0, ax1), y0, Math.min(az0, az1), Math.max(ax0, ax1), y1, Math.max(az0, az1))
-      }
       const fy = this.fy
+      // parts are built facing +z with their origin at the floor (mounted parts: their underside)
+      const place = (g: THREE.Group, u: number, d: number, y = 0) => {
+        const [x, z] = P(u, d)
+        g.position.set(x, fy + y, z)
+        g.rotation.y = runYaw
+        this.group.add(g)
+        return g
+      }
       // A steel fridge fills the 0.92 m slot; its doors project beyond the base cabinets.
       const fridgeW = 2.72 * (1.8 / 5.84)
       const fridgeD = 2.85 * (1.8 / 5.84)
       const [fridgeX, fridgeZ] = P(0.46, fridgeD / 2 + 0.03)
       this.occupy(r, { x: fridgeX, z: fridgeZ, w: fridgeW, d: fridgeD, yaw: runYaw }, true)
       jobs.push(this.model('fridge_steel', fridgeX, fridgeZ, runYaw, { height: 1.8 }))
-      // base cabinets with toe kick
-      boxAlong(dark, 0.92, len, 0.05, D - 0.08, fy, fy + 0.1)
-      for (let u = 0.92; u < len - 0.05; u += 0.6) boxAlong(cab, u + 0.003, Math.min(u + 0.6, len) - 0.003, 0, D, fy + 0.1, fy + 0.88)
-      boxAlong(ctr, 0.92, len, 0, D + 0.02, fy + 0.88, fy + 0.92)
-      // backsplash + open shelves + hood
-      boxAlong(ctr, 0.92, len, 0, 0.015, fy + 0.92, fy + 1.5)
-      const mid = (0.92 + len) / 2
-      boxAlong(steel, mid - 0.45, mid + 0.45, 0.02, 0.5, fy + 1.62, fy + 1.72)
-      boxAlong(steel, mid - 0.18, mid + 0.18, 0.02, 0.3, fy + 1.72, fy + 2.4)
-      boxAlong(dark, mid - 0.38, mid + 0.38, 0.06, 0.56, fy + 0.92, fy + 0.926)
-      for (const u0 of [1.0, len - 1.25]) boxAlong(cab, u0, u0 + 1.15, 0, 0.28, fy + 1.62, fy + 1.66)
-      // island in the room middle, parallel to the run
+      let u0 = 0.92
+      if (len >= 3.6) {
+        place(ovenTower(lib), u0 + TALL_W / 2, TALL_D / 2)
+        u0 += TALL_W
+      }
+      const bw = len - u0
+      place(baseCabinets(lib, bw, D), u0 + bw / 2, D / 2)
+      const mid = u0 + bw / 2
+      place(inductionHob(), mid, D / 2 + 0.02, COUNTER_TOP)
+      const rb = blockAt(this.plan.blocks, ...P(mid, 0.3))
+      const ceil = rb ? ceilingAt(rb, ...P(mid, 0.3)) : 2.7
+      place(rangeHood(lib, 0.9, Math.max(0.3, ceil - 1.62), 0.54), mid, 0.27, 1.62)
+      // open shelves either side of the hood, where they fit
+      for (const [s0, s1] of [[u0 + 0.05, mid - 0.55], [mid + 0.55, len - 0.05]]) {
+        const w = Math.min(1.2, s1 - s0)
+        if (w < 0.6) continue
+        place(openShelf(lib, w), s0 < mid ? s1 - w / 2 : s0 + w / 2, 0.14, 1.62)
+      }
+      // island in the room middle, parallel to the run, its drawers facing the run and stools on the far side
       const [icx, icz] = P(len / 2 + 0.35, D + 1.25)
       const iw = Math.min(2.6, len - 0.6)
       const idp = 1.0
-      const yaw = this.yaw(run.inX, run.inZ)
-      const isl = new THREE.Group()
-      const ib = new GeoBuilder()
-      ib.box(-iw / 2 + 0.03, fy, -idp / 2 + 0.03, iw / 2 - 0.03, fy + 0.9, idp / 2 - 0.03)
-      const it = new GeoBuilder()
-      it.box(-iw / 2, fy + 0.9, -idp / 2, iw / 2, fy + 0.94, idp / 2)
-      // waterfall ends
-      it.box(-iw / 2, fy, -idp / 2, -iw / 2 + 0.04, fy + 0.9, idp / 2)
-      it.box(iw / 2 - 0.04, fy, -idp / 2, iw / 2, fy + 0.9, idp / 2)
-      const cabMesh = new THREE.Mesh(ib.build(), lib.cabinet)
-      const topMesh = new THREE.Mesh(it.build(), lib.counter)
-      for (const m of [cabMesh, topMesh]) {
-        m.castShadow = m.receiveShadow = true
-        isl.add(m)
-      }
+      const yaw = runYaw
+      const isl = kitchenIsland(lib, iw, idp)
       // undermount sink + faucet on the island
       const basin = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.02, 0.4), new THREE.MeshStandardMaterial({ color: '#2a2a2b', roughness: 0.3, metalness: 0.4 }))
-      basin.position.set(-0.4, fy + 0.931, -0.05)
+      basin.position.set(-0.4, ISLAND_TOP - 0.009, -0.05)
       isl.add(basin)
       const [faucetX, faucetZ] = this.localPoint(icx, icz, yaw, -0.4, -0.33)
-      jobs.push(this.model('kitchen_faucet', faucetX, faucetZ, yaw, { height: 0.38, y: 0.94 }))
-      isl.position.set(icx, 0, icz)
+      jobs.push(this.model('kitchen_faucet', faucetX, faucetZ, yaw, { height: 0.38, y: ISLAND_TOP }))
+      isl.position.set(icx, fy, icz)
       isl.rotation.y = yaw
       this.group.add(isl)
       this.occupy(r, { x: icx, z: icz, w: iw, d: idp, yaw }, true)
@@ -807,12 +801,8 @@ export class Interior {
       const b = blockAt(this.plan.blocks, icx, icz)
       const h = b ? ceilingAt(b, icx, icz) : 2.7
       for (const k of [-0.7, 0, 0.7]) this.pendant(icx + px * k, fy + h, icz + pz * k, 0.12, h - 1.75)
-      jobs.push(this.model('wooden_bowl_01', icx + px * 0.5, icz + pz * 0.5, 0, { size: 0.32, y: 0.94 }))
+      jobs.push(this.model('wooden_bowl_01', icx + px * 0.5, icz + pz * 0.5, 0, { size: 0.32, y: ISLAND_TOP }))
     }
-    this.batch.add(lib.cabinet, cab.build())
-    this.batch.add(lib.counter, ctr.build())
-    this.batch.add(new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.25, name: 'black-glass' }), dark.build())
-    this.batch.add(lib.appliance, steel.build())
     void [x0, z0, x1, z1]
     await Promise.all(jobs)
   }
