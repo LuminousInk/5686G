@@ -9,7 +9,7 @@ import { FloorPlan } from './FloorPlan'
 import { framePoint, levelFloor } from '../engine/house/levels'
 import { Icon } from './icons'
 import { Joystick } from './Joystick'
-import { CustomizePanel, HelpSheet, PlanFacts, PlanSheet, ShareSheet } from './Panels'
+import { CustomizePanel, DollhouseControls, FrameFinishSurface, HelpSheet, PlanFacts, PlanSheet, ShareSheet } from './Panels'
 import { decodeDesign, encodeDesign, getState, planFor, setState, toast, useStore, type UiMode } from './store'
 import { GALLERY_SHOTS, designView, galleryView, type GalleryCatalog, type GalleryImage } from './galleryShots'
 import { ZONES } from '../engine/materials/catalog'
@@ -97,6 +97,8 @@ export function App({ target, visible, requested, onLoad }: {
   const [you, setYou] = useState<{ x: number; z: number; yaw: number; level?: string } | null>(null)
   const lastYou = useRef<typeof you>(null)
   const [openedLevel, setOpenedLevel] = useState<string>()
+  const [dollhouseLevel, setDollhouseLevel] = useState<string>()
+  const [cutaway, setCutaway] = useState(true)
   const [viewId, setViewId] = useState<string | null>('hero')
   const [shareUrl, setShareUrl] = useState('')
   const [customizeZone, setCustomizeZone] = useState<string>()
@@ -188,6 +190,7 @@ export function App({ target, visible, requested, onLoad }: {
     window.__nav = nav
     engine.keepAlive = cameraMoving
     nav.onModeChange = (m: NavMode) => {
+      if (m === 'dollhouse') setDollhouseLevel(nav?.dollhouseLevel)
       if (getState().mode !== 'plan' || m !== 'orbit') setState({ mode: m })
     }
     let hintTimer = 0
@@ -374,8 +377,12 @@ export function App({ target, visible, requested, onLoad }: {
   }, [visible, booted])
 
   useEffect(() => {
-    if (nav) nav.enabled = visible && mode !== 'plan'
-  }, [visible, booted, mode])
+    if (nav) {
+      nav.enabled = visible && mode !== 'plan' && !takingPhoto
+      // The path tracer consumes the canonical shell directly.
+      nav.suspendCutaway(mode === 'plan' || takingPhoto)
+    }
+  }, [visible, booted, mode, takingPhoto])
 
   useEffect(() => {
     if (!visible) {
@@ -391,7 +398,6 @@ export function App({ target, visible, requested, onLoad }: {
 
   const startTour = () => {
     if (!nav || !plan.tour?.length || loading) return
-    if (nav.mode === 'dollhouse') nav.setMode('orbit', false)
     setState({ sheet: null, mode: 'orbit', editing: false, photo: null, walkHint: false })
     tour.start(plan, nav, setViewId)
   }
@@ -413,10 +419,11 @@ export function App({ target, visible, requested, onLoad }: {
 
   const setMode = (m: UiMode, level?: string) => {
     if (!nav || !engine) return
+    tour.stop()
     setState({ viewId: null })
     if (m === 'plan') {
       nav.interruptTween()
-      setOpenedLevel(level)
+      setOpenedLevel(level ?? (nav.mode === 'dollhouse' ? nav.dollhouseLevel : undefined))
       setYou(lastYou.current = readWalkPosition())
       setState({ mode: 'plan', sheet: null })
       return
@@ -429,18 +436,14 @@ export function App({ target, visible, requested, onLoad }: {
       setState({ mode: 'walk', walkHint: getState().walkHint })
       return
     }
-    if (m === 'orbit' && (nav.mode === 'walk' || nav.mode === 'dollhouse')) {
-      nav.setMode('orbit')
-      nav.goToView(plan.views[0])
-    } else nav.setMode(m as NavMode)
+    nav.setMode(m)
     setState({ mode: m })
   }
 
   const goView = (id: string) => {
     const v = plan.views.find(x => x.id === id)
     if (!v || !nav) return
-    if (nav.mode === 'dollhouse') nav.setMode('orbit', false)
-    nav.goToView(v)
+    nav.goToView(v, true, v.kind)
     setViewId(id)
     setState({ mode: v.kind === 'walk' ? 'walk' : 'orbit', viewId: v.id })
   }
@@ -573,10 +576,12 @@ export function App({ target, visible, requested, onLoad }: {
         </nav>
 
         {engine && hotspots && !loading && !sheet && !editing && !takingPhoto && mode !== 'plan' && !touring &&
-          <FinishHotspots key={mode} engine={engine} isMoving={cameraMoving} onFinish={onFinish} onCustomize={zone => {
-            setCustomizeZone(zone)
-            setState({ sheet: 'customize' })
-          }} />}
+          <FrameFinishSurface.Provider value={mode === 'walk' ? null : (x, y) => nav?.frameSurface(x, y)}>
+            <FinishHotspots key={mode} engine={engine} isMoving={cameraMoving} onFinish={onFinish} onCustomize={zone => {
+              setCustomizeZone(zone)
+              setState({ sheet: 'customize' })
+            }} />
+          </FrameFinishSurface.Provider>}
 
         {mode === 'walk' && (plan.levels && plan.levels.length > 1 ? (
           <FloorPlan key={you?.level} className="minimap" plan={plan} you={you} compact onOpen={level => setMode('plan', level)} />
@@ -588,6 +593,11 @@ export function App({ target, visible, requested, onLoad }: {
 
         <div className="bottom">
           {tour.state && plan.tour && <TourControls stops={plan.tour} {...tour.state} jump={tour.jump} togglePause={tour.togglePause} end={tour.stop} />}
+          {mode === 'dollhouse' && !editing && !takingPhoto && !loading && (
+            <DollhouseControls cutaway={cutaway} level={dollhouseLevel} levels={plan.levels}
+              onCutaway={cut => { setCutaway(cut); nav?.setCutaway(cut) }}
+              onLevel={level => nav?.setDollhouseLevel(level)} />
+          )}
           {!touring && mode !== 'plan' && chips.length > 0 && (
             <div className="chips" role="list">
               {chips.map(v => (

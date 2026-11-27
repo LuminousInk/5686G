@@ -16,12 +16,17 @@ export interface OutdoorOutput {
   walkables: { rect: Rect; height: (x: number, z: number) => number; between?: Stair['between']; frame?: Block }[]
 }
 
-export function buildOutdoor(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch, roofBatch: MeshBatch): OutdoorOutput {
+export function buildOutdoor(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch, roofBatch: MeshBatch, setFloor?: (floor?: number) => void): OutdoorOutput {
   const out: OutdoorOutput = { colliders: [], downlights: [], walkables: [] }
   const rand = rng(77)
-  for (const d of plan.decks) deck(d, lib, batch, rand, out, !!plan.levels)
+  for (const d of plan.decks) {
+    if (plan.levels) setFloor?.(d.height)
+    deck(d, lib, batch, rand, out, !!plan.levels)
+  }
+  setFloor?.()
   for (const p of plan.porches) {
     const frame = plan.blocks.find(b => b.id === p.frame)
+    if (plan.levels) setFloor?.(plan.floorY)
     const start = out.downlights.length
     porch(plan, p, lib, sectionBatch(batch, frame), sectionBatch(roofBatch, frame), out)
     for (const light of out.downlights.slice(start)) {
@@ -29,9 +34,11 @@ export function buildOutdoor(plan: HomePlan, lib: MaterialLibrary, batch: MeshBa
       light.set(x, light.y, z)
     }
   }
+  setFloor?.()
   for (const s of plan.stairs) stair(s, s.between ? levelFloor(plan, s.between.lower) : 0, lib, batch, rand, out)
   for (const t of plan.terraces) {
     const frame = plan.blocks.find(b => b.id === t.frame)
+    if (plan.levels) setFloor?.(t.height)
     terrace(t, lib, sectionBatch(batch, frame), rand)
     out.walkables.push({ rect: t.rect, height: () => t.height ?? 0.045, frame })
   }

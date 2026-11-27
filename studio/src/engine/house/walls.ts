@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { applyMatrixKeepWinding, GeoBuilder, MeshBatch, V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
+import type { WallCutaway } from './cutaway'
 import { rng } from '../materials/textures'
 import { buildInteriorDoor } from './interiorDoor'
 import {
@@ -69,7 +70,7 @@ export interface WallOutput {
 }
 
 /** Builds exterior walls, cladding, openings for all blocks into `batch`. */
-export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch, stacked = false): WallOutput {
+export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch, stacked = false, cutaway?: WallCutaway): WallOutput {
   const out: WallOutput = { colliders: [], sconces: [], lightsAt: [], doors: [] }
   const fy = plan.floorY
   const rand = rng(1234)
@@ -78,6 +79,11 @@ export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: 
     for (const s of SIDES) {
       const { frame: f, intervals } = sideIntervals(b, s, plan.blocks)
       const clad = b.cladding[s] ?? b.cladding.default
+      const wall = (u0: number, u1: number, interior: boolean, build: () => void) => {
+        const [x, z] = sidePoint(f, (u0 + u1) / 2)
+        if (cutaway) cutaway.wall(x, z, f.ox, f.oz, interior, build, u1 - u0)
+        else build()
+      }
       const breaks = roofBreaks(b, f)
       const top = (u: number) => {
         const [x, z] = sidePoint(f, u)
@@ -92,7 +98,8 @@ export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: 
           return isPassage(op) && (op.sill ?? 0) < 0.1 && u0 >= iv.u0 - 1e-3 && u1 <= iv.u1 + 1e-3
         })
         if (iv.neighbour && sharedOpenings.length) {
-          buildSharedWall(plan, b, iv.neighbour, f, iv.u0, iv.u1, sharedOpenings, lib, batch, out)
+          const neighbour = iv.neighbour
+          wall(iv.u0, iv.u1, true, () => buildSharedWall(plan, b, neighbour, f, iv.u0, iv.u1, sharedOpenings, lib, batch, out, cutaway))
         }
         let piece: Piece
         if (!iv.neighbour) {
@@ -138,11 +145,11 @@ export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: 
           const y0 = fy + (op.sill ?? 0)
           piece.holes.push({ u0, u1, y0, y1: y0 + op.height, op, openingIndex: plan.openings.indexOf(op) })
         }
-        buildPiece(piece, lib, batch, rand, out, stacked)
+        wall(piece.u0, piece.u1, !piece.ground, () => buildPiece(piece, lib, batch, rand, out, stacked, cutaway))
       }
     }
     // corner trims on convex exterior corners
-    cornerTrims(plan, b, lib, batch)
+    cornerTrims(plan, b, lib, batch, cutaway)
   }
   return out
 }
@@ -266,12 +273,13 @@ function vprism(gb: GeoBuilder, a: number, b: number, w0: number, w1: number, ya
   gb.hexa(bot, top, skipBack ? ['s0'] : [])
 }
 
-function buildPiece(p: Piece, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: WallOutput, stacked: boolean) {
+function buildPiece(p: Piece, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: WallOutput, stacked: boolean, cutaway?: WallCutaway) {
   const m = sideMatrix(p.f)
   const zoneMat = lib.zone(p.clad.zone)
   // structure (interior paint on both faces; the outer face is hidden by cladding)
   const structure = extrude(shapeWithHoles(outline(p, p.u0, p.u1, p.bottom), p.holes), 0, WALL_T, m)
   batch.add(lib.wall, structure)
+  if (p.ground) cutaway?.cap(m, p.u0 - p.ext0, p.u1 + p.ext1, -claddingDepth(p.clad), WALL_T, p.holes)
   if (p.ground) {
     // collision segment along the exterior face, interrupted by doors
     const doorHoles = p.holes.filter(h => h.op.kind === 'slider' || h.op.kind === 'entry' || h.op.kind === 'door' || h.op.kind === 'garage')
@@ -423,6 +431,7 @@ function buildSharedWall(
   lib: MaterialLibrary,
   batch: MeshBatch,
   out: WallOutput,
+  cutaway?: WallCutaway,
 ) {
   const fy = plan.floorY
   const m = sideMatrix(f)
@@ -440,6 +449,7 @@ function buildSharedWall(
   })).sort((a, c) => a.u0 - c.u0)
   const shape = partitionShape(u0, u1, fy, top, holes)
   batch.add(lib.wall, extrude(shape, -INT_WALL_T / 2, INT_WALL_T / 2, m))
+  cutaway?.cap(m, u0, u1, -INT_WALL_T / 2, INT_WALL_T / 2, holes)
 
   let u = u0
   for (const h of holes) {
@@ -640,7 +650,7 @@ function buildOpening(p: Piece, h: Hole, lib: MaterialLibrary, batch: MeshBatch,
 }
 
 /** Vertical corner trims where two exterior faces meet (hides the cladding seam). */
-function cornerTrims(plan: HomePlan, b: Block, lib: MaterialLibrary, batch: MeshBatch) {
+function cornerTrims(plan: HomePlan, b: Block, lib: MaterialLibrary, batch: MeshBatch, cutaway?: WallCutaway) {
   const [x0, z0, x1, z1] = b.rect
   const corners: { x: number; z: number; sx: number; sz: number; a: Side; c: Side }[] = [
     { x: x0, z: z1, sx: -1, sz: 1, a: 'w', c: 's' },
@@ -666,7 +676,15 @@ function cornerTrims(plan: HomePlan, b: Block, lib: MaterialLibrary, batch: Mesh
     const xb = Math.max(k.x - k.sx * 0.03, k.x + k.sx * t)
     const za = Math.min(k.z - k.sz * 0.03, k.z + k.sz * t)
     const zb = Math.max(k.z - k.sz * 0.03, k.z + k.sz * t)
-    gb.box(xa, yBot, za, xb, yTop, zb)
+    if (!cutaway) gb.box(xa, yBot, za, xb, yTop, zb)
+    else {
+      const n = Math.SQRT1_2
+      cutaway.wall(k.x, k.z, k.sx * n, k.sz * n, false, () => {
+        const corner = new GeoBuilder()
+        corner.box(xa, yBot, za, xb, yTop, zb)
+        batch.addBuilder(lib.zone('trim'), corner)
+      })
+    }
   }
   if (gb.vertexCount) batch.add(lib.zone('trim'), gb.build())
 }

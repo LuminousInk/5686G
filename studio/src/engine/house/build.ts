@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { MeshBatch } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
+import { Cutaway } from './cutaway'
 import { buildInteriorShell } from './interiorShell'
 import { buildingSections, framePoint, inRect, levelFloor, sectionBatch, sectionColliders, stairFlight } from './levels'
 import { blockAt } from './massing'
@@ -18,6 +19,7 @@ export interface HouseModel {
   shell: THREE.Group
   outdoor: THREE.Group
   interior: THREE.Group
+  cutaway: Cutaway
   colliders: Segment2[]
   /** height of walkable floor at x,z, or null when on open ground */
   floorAt(x: number, z: number, nearY?: number): number | null
@@ -29,11 +31,12 @@ export interface HouseModel {
 }
 
 export function buildHouse(plan: HomePlan, lib: MaterialLibrary): HouseModel {
-  const shellBatch = new MeshBatch()
+  const cutaway = new Cutaway()
+  const shellBatch = cutaway.batch()
   const roofBatch = new MeshBatch()
   const ceilBatch = new MeshBatch()
-  const outBatch = new MeshBatch()
-  const intBatch = new MeshBatch()
+  const outBatch = cutaway.batch()
+  const intBatch = cutaway.batch()
 
   const colliders: Segment2[] = []
   const sconces: THREE.Vector3[] = []
@@ -44,9 +47,9 @@ export function buildHouse(plan: HomePlan, lib: MaterialLibrary): HouseModel {
     const local = section.plan
     const floorCuts = section.frame ? [] : stairs.filter(s => s.between?.upper === section.level).map(s => stairFlight(s).rect)
     const roofCuts = section.frame ? [] : stairs.filter(s => s.between?.lower === section.level).map(s => stairFlight(s).rect)
-    const walls = buildExteriorWalls(local, lib, sectionBatch(shellBatch, section.frame), !!plan.levels)
+    const walls = buildExteriorWalls(local, lib, sectionBatch(shellBatch, section.frame), !!plan.levels, cutaway.section(shellBatch, local.floorY, section.frame))
     const roofs = buildRoofs(local, lib, sectionBatch(roofBatch, section.frame), sectionBatch(ceilBatch, section.frame), roofCuts)
-    const interior = buildInteriorShell(local, lib, sectionBatch(intBatch, section.frame), floorCuts)
+    const interior = buildInteriorShell(local, lib, sectionBatch(intBatch, section.frame), floorCuts, cutaway.section(intBatch, local.floorY, section.frame))
     colliders.push(...sectionColliders([...walls.colliders, ...interior.colliders], section, !!plan.levels))
     doors.push(...[...walls.doors, ...interior.doors].map(d => ({ ...d, openingIndex: plan.openings.indexOf(local.openings[d.openingIndex]) })))
     for (const [from, to] of [[walls.sconces, sconces], [roofs.downlights, downlights]])
@@ -55,7 +58,9 @@ export function buildHouse(plan: HomePlan, lib: MaterialLibrary): HouseModel {
         to.push(p.set(x, p.y, z))
       }
   }
-  const outdoor = buildOutdoor(plan, lib, outBatch, roofBatch)
+  const outdoor = buildOutdoor(plan, lib, outBatch, roofBatch, height => {
+    outBatch.section = height === undefined ? undefined : cutaway.floor(height)
+  })
 
   const group = new THREE.Group()
   group.name = `house:${plan.id}`
@@ -103,6 +108,9 @@ export function buildHouse(plan: HomePlan, lib: MaterialLibrary): HouseModel {
   }
 
   const bounds = new THREE.Box3().setFromObject(group)
+  for (const [batch, meshGroup] of [[shellBatch, shell], [intBatch, inner], [outBatch, out]] as const) batch.tag(meshGroup)
+  cutaway.attach(shell, inner, out)
+  group.add(cutaway.group)
   return {
     plan,
     group,
@@ -111,6 +119,7 @@ export function buildHouse(plan: HomePlan, lib: MaterialLibrary): HouseModel {
     shell,
     outdoor: out,
     interior: inner,
+    cutaway,
     colliders: [...colliders, ...outdoor.colliders],
     doors,
     floorAt,
@@ -118,7 +127,8 @@ export function buildHouse(plan: HomePlan, lib: MaterialLibrary): HouseModel {
     downlights: [...downlights, ...outdoor.downlights],
     bounds,
     dispose() {
-      group.traverse(o => {
+      cutaway.dispose()
+      for (const root of [shell, roof, ceilings, out, inner]) root.traverse(o => {
         const m = o as THREE.Mesh
         if (m.isMesh) m.geometry.dispose()
       })

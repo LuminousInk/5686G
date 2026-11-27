@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { applyMatrixKeepWinding, GeoBuilder, MeshBatch, V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
+import type { WallCutaway } from './cutaway'
 import { buildInteriorDoor } from './interiorDoor'
 import { subtractRect } from './levels'
 import { blockAt, ceilingAt, INT_WALL_T, sideIntervals, sidePoint, SIDES, WALL_T } from './massing'
@@ -13,7 +14,7 @@ export interface InteriorShellOutput {
 }
 
 /** Partition walls (with door openings), floors, tile floors and baseboards. */
-export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch, floorCuts: Rect[] = []): InteriorShellOutput {
+export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch, floorCuts: Rect[] = [], cutaway?: WallCutaway): InteriorShellOutput {
   const out: InteriorShellOutput = { colliders: [], doors: [] }
   const fy = plan.floorY
   const ceil = (x: number, z: number) => {
@@ -35,25 +36,30 @@ export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: 
       .filter(o => o.wall === w.id)
       .map(o => ({ u0: o.at - o.width / 2, u1: o.at + o.width / 2, y0: fy, y1: fy + o.height, o, openingIndex: plan.openings.indexOf(o) }))
       .sort((a, b) => a.u0 - b.u0)
-    const shape = partitionShape(0, len, fy, u => ceil(ax + dx * u, az + dz * u) - 0.002, doors)
-    const g = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false })
-    g.translate(0, 0, -t / 2)
-    batch.add(lib.wall, applyMatrixKeepWinding(g, m))
-    // casings, door leaves, collisions
-    const trim = new GeoBuilder()
-    const leaf = new GeoBuilder()
-    const hardware = new GeoBuilder()
-    let u = 0
-    for (const d of doors) {
-      if (d.u0 - u > 0.02) out.colliders.push(seg(ax, az, dx, dz, u, d.u0))
-      u = d.u1
-      out.colliders.push(buildInteriorDoor(plan, { op: d.o, u0: d.u0, u1: d.u1, y1: d.y1 }, m, t, trim, leaf, hardware))
-      out.doors.push({ openingIndex: d.openingIndex, kind: d.o.kind, leaf: true, glass: false, casing: true })
+    const build = () => {
+      const shape = partitionShape(0, len, fy, u => ceil(ax + dx * u, az + dz * u) - 0.002, doors)
+      const g = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false })
+      g.translate(0, 0, -t / 2)
+      batch.add(lib.wall, applyMatrixKeepWinding(g, m))
+      // casings, door leaves, collisions
+      const trim = new GeoBuilder()
+      const leaf = new GeoBuilder()
+      const hardware = new GeoBuilder()
+      let u = 0
+      for (const d of doors) {
+        if (d.u0 - u > 0.02) out.colliders.push(seg(ax, az, dx, dz, u, d.u0))
+        u = d.u1
+        out.colliders.push(buildInteriorDoor(plan, { op: d.o, u0: d.u0, u1: d.u1, y1: d.y1 }, m, t, trim, leaf, hardware))
+        out.doors.push({ openingIndex: d.openingIndex, kind: d.o.kind, leaf: true, glass: false, casing: true })
+      }
+      if (len - u > 0.02) out.colliders.push(seg(ax, az, dx, dz, u, len))
+      if (trim.vertexCount) batch.add(lib.ceiling, applyMatrixKeepWinding(trim.build(), m))
+      if (leaf.vertexCount) batch.add(lib.cabinet, applyMatrixKeepWinding(leaf.build(), m))
+      if (hardware.vertexCount) batch.add(lib.blackMetal, applyMatrixKeepWinding(hardware.build(), m))
+      cutaway?.cap(m, 0, len, -t / 2, t / 2, doors)
     }
-    if (len - u > 0.02) out.colliders.push(seg(ax, az, dx, dz, u, len))
-    if (trim.vertexCount) batch.add(lib.ceiling, applyMatrixKeepWinding(trim.build(), m))
-    if (leaf.vertexCount) batch.add(lib.cabinet, applyMatrixKeepWinding(leaf.build(), m))
-    if (hardware.vertexCount) batch.add(lib.blackMetal, applyMatrixKeepWinding(hardware.build(), m))
+    if (cutaway) cutaway.wall((ax + bx) / 2, (az + bz) / 2, -dz, dx, true, build)
+    else build()
   }
 
   // floors

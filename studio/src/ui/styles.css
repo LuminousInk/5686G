@@ -51,6 +51,11 @@
 /* ------------------------------------------------ bottom dock */
 .bottom { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 10px; pointer-events: none; }
 .bottom > * { pointer-events: auto; }
+.dollhouse-controls { display: flex; gap: 7px; align-items: center; }
+.dollhouse-walls { display: flex; border-radius: 11px; padding: 3px; gap: 2px; }
+.dollhouse-walls button, .dollhouse-level { min-height: 34px; padding: 0 10px; font-size: 13px; border-radius: 8px; }
+.dollhouse-walls button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.dollhouse-level { color: var(--ink); background: var(--glass-2); border-radius: 11px; }
 .chips { display: flex; gap: 6px; max-width: 100%; overflow-x: auto; scrollbar-width: none; padding: 2px; }
 .chips::-webkit-scrollbar { display: none; }
 .chip-btn { height: 34px; padding: 0 14px; border-radius: 999px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
