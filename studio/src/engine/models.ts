@@ -121,6 +121,7 @@ export async function modelPieces(id: string): Promise<THREE.Mesh[]> {
  */
 export const MODEL_YAW: Record<string, number> = {
   bed_dark_headboard: Math.PI / 2,
+  bed_upholstered_white: -Math.PI / 2,
   dresser_tall: -Math.PI / 2,
   vanity_floating: Math.PI / 2,
   toilet_modern: -Math.PI / 2,
