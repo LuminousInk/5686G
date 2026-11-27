@@ -30,6 +30,8 @@ async function withBrowser(run) {
 
 export async function readCatalog(browser, address = base()) {
   const page = await browser.newPage()
+  // Chakra Petch comes from Google Fonts; answer locally so headless runs never wait on it.
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.fulfill({ status: 200, contentType: 'text/css', body: '' }))
   try {
     const url = new URL(address)
     url.searchParams.set('gallery', 'catalog')
@@ -83,6 +85,8 @@ async function savePageBuffer(page, key, file, length) {
 async function exportScene(browser, { shot, plan, view, pose, time, finishes, quality = 'high', prefix, base: address = base() }) {
   const start = performance.now()
   const page = await browser.newPage({ viewport: { width: 960, height: 540 } })
+  // Chakra Petch comes from Google Fonts; answer locally so headless runs never wait on it.
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.fulfill({ status: 200, contentType: 'text/css', body: '' }))
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
   page.setDefaultTimeout(timeout)

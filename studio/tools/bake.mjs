@@ -33,6 +33,8 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 for (const id of ids) {
   for (const t of times) {
     const page = await browser.newPage({ viewport: { width: 640, height: 400 } })
+    // Chakra Petch comes from Google Fonts; answer locally so headless runs never wait on it.
+    await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.fulfill({ status: 200, contentType: 'text/css', body: '' }))
     const errors = []
     page.on('pageerror', e => errors.push(e.message))
     const t0 = Date.now()

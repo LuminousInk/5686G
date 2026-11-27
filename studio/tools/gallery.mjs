@@ -25,6 +25,8 @@ async function withPage(run) {
   const browser = await chromium.launch({ args })
   try {
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 })
+    // Chakra Petch comes from Google Fonts; answer locally so headless runs never wait on it.
+    await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.fulfill({ status: 200, contentType: 'text/css', body: '' }))
     const errors = []
     page.on('pageerror', error => {
       errors.push(error.message)

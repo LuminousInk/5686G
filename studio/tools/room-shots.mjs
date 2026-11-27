@@ -13,6 +13,8 @@ mkdirSync(dirname(out), { recursive: true })
 const [id, ...only] = process.argv.slice(2)
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] })
 const page = await browser.newPage({ viewport: { width: +(process.env.W ?? 900), height: +(process.env.H ?? 560) } })
+// Chakra Petch comes from Google Fonts; answer locally so headless runs never wait on it.
+await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.fulfill({ status: 200, contentType: 'text/css', body: '' }))
 const errs = []
 page.on('pageerror', e => errs.push(e.message))
 await page.goto(`${base}?plan=${id}&time=${process.env.TIME ?? 'golden'}&quality=${process.env.Q ?? 'low'}&frames=4&sheet=none&ui=0`)
