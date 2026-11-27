@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import type { MaterialLibrary } from '../materials/library'
 import { shower, showerOpening, vanity } from './bathParts'
-import { ovalTub } from './catalogFixtures'
+import { ovalTub, suspendedDome } from './catalogFixtures'
 import { interiorStyle, INTERIOR_STYLES } from './catalogStyle'
 import { openWardrobe, WARDROBE_DEPTH } from './closetParts'
 
@@ -57,6 +57,19 @@ describe('catalog interiors', () => {
         expect(openSide).toBeCloseTo(opening, 3)
         expect(new THREE.Box3().setFromObject(unit).max.y).toBeLessThanOrEqual(2.2)
       }
+    }
+  })
+
+  it('keeps the model shade at the chosen height under shallow and vaulted ceilings', () => {
+    for (const drop of [0.48, 1.61]) {
+      const shade = new THREE.Group()
+      shade.add(new THREE.Mesh(new THREE.BoxGeometry(0.39, 0.16, 0.39).translate(0, 0.08, 0)))
+      const fixture = suspendedDome(lib, drop, shade, 0.16)
+      const bounds = new THREE.Box3().setFromObject(fixture, true)
+      expect(bounds.min.y).toBeCloseTo(-drop)
+      expect(bounds.max.y).toBeCloseTo(0)
+      expect(bounds.max.x - bounds.min.x).toBeCloseTo(0.39)
+      expect(new THREE.Box3().setFromObject(shade, true).max.y).toBeCloseTo(-drop + 0.16)
     }
   })
 })

@@ -3,11 +3,13 @@ import path from 'node:path'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { describe, expect, it } from 'vitest'
-import { gltfJsonToGlb } from './models'
+import { fitModel, gltfJsonToGlb, modelTextureSize } from './models'
+import modelCredits from '../../tools/model-credits.json'
+import objaverse from '../../tools/objaverse.json'
 
 // The artifact host refuses WebAssembly and fetch() of data: URLs (see README "Runs on a locked-down host").
 // These checks keep the built models loadable there.
-const roots = ['public/assets/models', 'public/assets/models-lo']
+const roots = ['public/assets/models']
 
 describe('built models load on a locked-down host', () => {
   for (const root of roots) {
@@ -37,6 +39,45 @@ describe('built models load on a locked-down host', () => {
       }
     })
   }
+
+  it('credits each shipped model exactly once under a permissive licence', () => {
+    const entries = [...Object.entries(modelCredits), ...Object.entries(objaverse)]
+    const files = fs.readdirSync(roots[0]).filter(f => f.endsWith('.json')).map(f => f.slice(0, -5))
+    expect(entries.map(([id]) => id).sort()).toEqual(files.sort())
+    expect(entries.every(([, credit]) => ['CC0', 'CC BY 4.0'].includes(credit.license))).toBe(true)
+  })
+})
+
+describe('model fitting', () => {
+  it.each([0, Math.PI / 2, Math.PI / 3])('grounds and fits a transformed source at yaw %s', yaw => {
+    const source = new THREE.Group()
+    source.position.set(0.5, 1.2, -0.4)
+    source.rotation.y = -0.16
+    source.scale.set(1.4, 1.2, 0.9)
+    const cabinet = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 0.42))
+    cabinet.rotation.y = 0.11
+    cabinet.position.set(-0.2, 0.4, 0.3)
+    source.add(cabinet)
+    const opts = { width: 1.75, depth: 0.43, height: 0.55 }
+    const result = fitModel(source, yaw, opts, 'cabinet')
+    const box = new THREE.Box3().setFromObject(result, true)
+    const size = box.getSize(new THREE.Vector3())
+    expect(size.x).toBeCloseTo(opts.width)
+    expect(size.y).toBeCloseTo(opts.height)
+    expect(size.z).toBeCloseTo(opts.depth)
+    expect(box.min.y).toBeCloseTo(0)
+    expect(box.min.x).toBeCloseTo(-opts.width / 2)
+    expect(box.min.z).toBeCloseTo(-opts.depth / 2)
+    expect(source.rotation.y).toBe(-0.16)
+    expect(cabinet.parent).toBe(source)
+  })
+
+  it('shrinks only textures that exceed the device limit and preserves their aspect ratio', () => {
+    expect(modelTextureSize(1024, 512, 256)).toEqual([256, 128])
+    expect(modelTextureSize(128, 512, 256)).toEqual([64, 256])
+    expect(modelTextureSize(104, 73, 256)).toEqual([104, 73])
+    expect(modelTextureSize(1024, 1, 256)).toEqual([256, 1])
+  })
 })
 
 describe('gltfJsonToGlb', () => {

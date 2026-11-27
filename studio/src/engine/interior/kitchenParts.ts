@@ -48,6 +48,7 @@ const FREEZER_H = 0.574
 const OVEN_DRAWER_H = 0.474
 export const OVEN_Y0 = FRONT_Y0 + OVEN_DRAWER_H + REVEAL
 export const OVEN_H = 0.596
+export const OVEN_MODEL_DEPTH = 0.58
 
 export interface Pull {
   x: number
@@ -225,11 +226,22 @@ export function fridgeColumn(lib: MaterialLibrary, handleEdge: 1 | -1 = -1): THR
 }
 
 /** Oven tower: drawer, built-in oven (black fascia, dark glass window, stainless handle and controls), push door. */
-export function ovenTower(lib: MaterialLibrary): THREE.Group {
+export function ovenTower(lib: MaterialLibrary, appliance?: THREE.Group): THREE.Group {
   const b = new MeshBatch()
   const frontZ = TALL_D / 2
-  tallCarcass(b, lib)
   addFronts(b, lib, ovenTowerFronts(), frontZ, 1)
+  if (appliance) {
+    // Leave a real cavity for the textured oven body and door.
+    carcass(b, lib, TALL_W - 0.006, OVEN_Y0, -frontZ, frontZ, 1)
+    const upper = OVEN_Y0 + OVEN_H
+    box(b, lib.cabinet, 0, TALL_W - 0.006, upper, TALL_H - upper, -frontZ, frontZ - FRONT_T)
+    box(b, lib.cabinet, 0, TALL_W - 0.006, OVEN_Y0, OVEN_H, -frontZ, -frontZ + 0.04)
+    appliance.position.set(0, OVEN_Y0, frontZ - OVEN_MODEL_DEPTH / 2 + 0.012)
+    const g = b.toGroup('kitchen-oven')
+    g.add(appliance)
+    return g
+  }
+  tallCarcass(b, lib)
   // the oven stands 4 mm proud of the fronts
   const ow = TALL_W - REVEAL
   const oz = frontZ + 0.004
@@ -287,7 +299,7 @@ export function rangeHood(lib: MaterialLibrary, w = 0.9, h = 0.78, d = 0.54): TH
  * Island `w` x `d` with a waterfall counter. Its cabinet faces the run (-z) with drawer stacks; the stool side (+z)
  * keeps a knee-space overhang under the counter.
  */
-export function kitchenIsland(lib: MaterialLibrary, w: number, d = 1, withSink = false, finish = lib.cabinet): THREE.Group {
+export function kitchenIsland(lib: MaterialLibrary, w: number, d = 1, withSink = false, finish = lib.cabinet, tap?: THREE.Group): THREE.Group {
   const b = new MeshBatch()
   const top = ISLAND_TOP - COUNTER_T
   const cw = w - 2 * WATERFALL_T
@@ -297,16 +309,21 @@ export function kitchenIsland(lib: MaterialLibrary, w: number, d = 1, withSink =
   if (withSink) {
     // Cap the opening above the recessed carcass at the seating side.
     box(b, finish, 0, cw, top - 0.125, 0.125, d / 2 - KNEE - 0.019, d / 2 - KNEE)
-    islandSink(b, lib, w, d, top)
+    islandSink(b, lib, w, d, top, !!tap)
   } else {
     box(b, lib.counter, 0, w, top, COUNTER_T, -d / 2, d / 2, 0.004, 2)
   }
   for (const s of [-1, 1]) box(b, lib.counter, s * (w / 2 - WATERFALL_T / 2), WATERFALL_T, 0, top, -d / 2, d / 2, 0.003)
-  return b.toGroup('kitchen-island')
+  const g = b.toGroup('kitchen-island')
+  if (withSink && tap) {
+    tap.position.set(-w * 0.2, ISLAND_TOP, -0.245)
+    g.add(tap)
+  }
+  return g
 }
 
 /** Counter slabs surround an opening with an inset stainless basin and deck-mounted tap. */
-function islandSink(b: MeshBatch, lib: MaterialLibrary, w: number, d: number, top: number) {
+function islandSink(b: MeshBatch, lib: MaterialLibrary, w: number, d: number, top: number, hasTap: boolean) {
   const x = -w * 0.2
   const left = x - 0.25
   const right = x + 0.25
@@ -326,6 +343,7 @@ function islandSink(b: MeshBatch, lib: MaterialLibrary, w: number, d: number, to
   const drain = new THREE.CylinderGeometry(0.028, 0.028, 0.004, 16)
   drain.translate(x, bottom + 0.013, -0.04)
   b.add(darkGlass, drain)
+  if (hasTap) return
   const faucetZ = back - 0.078
   const base = new THREE.CylinderGeometry(0.027, 0.028, 0.032, 16)
   base.translate(x, ISLAND_TOP + 0.016, faucetZ)

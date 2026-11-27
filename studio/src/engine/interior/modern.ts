@@ -159,7 +159,7 @@ export function linenBench(lib: MaterialLibrary, width: number) {
   return p.build('linen-bench')
 }
 
-export function nightstand(lib: MaterialLibrary, w = 0.48, withLamp = true): THREE.Group {
+export function nightstand(lib: MaterialLibrary, w = 0.48, withLamp: boolean | null = true): THREE.Group {
   const p = new Piece()
   const d = 0.4
   const h = 0.46
@@ -172,6 +172,7 @@ export function nightstand(lib: MaterialLibrary, w = 0.48, withLamp = true): THR
   p.slab(lib.blackMetal, w - 0.06, 0.003, 0.003, 0, legH + h - 0.05, faceZ)
   p.slab(lib.blackMetal, 0.12, 0.008, 0.008, 0, legH + h / 2 - 0.1, faceZ + 0.002)
   const g = p.build('nightstand')
+  if (withLamp === null) return g
   const accessory = withLamp ? tableLamp(lib) : bookStack(lib)
   accessory.position.y = legH + h
   g.add(accessory)
@@ -237,13 +238,13 @@ export function barStool(lib: MaterialLibrary): THREE.Group {
   return p.build('barStool')
 }
 
-export function bookStack(lib: MaterialLibrary): THREE.Group {
+export function bookStack(lib: MaterialLibrary, cloth = bookCloth, paper = bookPaper): THREE.Group {
   const p = new Piece()
   for (const [i, w, d, x] of [[0, 0.22, 0.155, 0], [1, 0.185, 0.13, 0.018]]) {
     const y = i * 0.028
-    const cover = i === 0 ? lib.darkWood : bookCloth
+    const cover = i === 0 ? lib.darkWood : cloth
     p.box(cover, w, 0.003, d, x, y + 0.0015, 0, 0.001)
-    p.slab(bookPaper, w - 0.006, 0.022, d - 0.004, x, y + 0.014, 0)
+    p.slab(paper, w - 0.006, 0.022, d - 0.004, x, y + 0.014, 0)
     p.slab(cover, 0.004, 0.022, d, x - w / 2 + 0.002, y + 0.014, 0)
     p.box(cover, w, 0.003, d, x, y + 0.0265, 0, 0.001)
   }

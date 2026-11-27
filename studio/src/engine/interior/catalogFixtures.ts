@@ -8,19 +8,39 @@ function tube(points: THREE.Vector3[], radius: number, segments = 20) {
   return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), segments, radius, 8, false)
 }
 
-export function kitchenPendant(lib: MaterialLibrary, style: InteriorStyle, drop: number) {
+export function domeShade(lib: MaterialLibrary, style: InteriorStyle) {
   const p = new Piece()
   const metal = style.pendant === 'ivory' ? lib.ivoryShade : lib[style.metal]
   const r = 0.205
-  const y = -drop
   const profile = [[r - 0.015, 0.024], [r - 0.009, 0], [r, 0], [r, 0.014], [0.193, 0.083], [0.158, 0.153], [0.11, 0.201], [0.056, 0.229], [0.013, 0.235]]
   const shade = new THREE.LatheGeometry(profile.map(([x, h]) => new THREE.Vector2(x, h)), 32)
-  shade.translate(0, y, 0)
   p.add(metal, shade)
-  p.cylinder(lib.diffuser, r * 0.91, r * 0.91, 0.01, 0, y + 0.013, 0, false, 24)
+  p.cylinder(lib.diffuser, r * 0.91, r * 0.91, 0.01, 0, 0.013, 0, false, 24)
+  return p.build('dome-shade')
+}
+
+export function kitchenPendant(lib: MaterialLibrary, style: InteriorStyle, drop: number) {
+  const p = new Piece()
+  const metal = style.pendant === 'ivory' ? lib.ivoryShade : lib[style.metal]
   p.cylinder(lib.blackMetal, 0.003, 0.003, drop - 0.21, 0, -(drop - 0.21) / 2, 0, false, 8)
   p.cylinder(metal, 0.075, 0.075, 0.025, 0, -0.0125, 0)
-  return decor(p.build('dome-pendant'))
+  const g = p.build('dome-pendant')
+  const shade = domeShade(lib, style)
+  shade.position.y = -drop
+  g.add(shade)
+  return decor(g)
+}
+
+/** Hang the sculpted shade at its designed size under ceilings of different heights. */
+export function suspendedDome(lib: MaterialLibrary, drop: number, shade: THREE.Group, shadeHeight: number) {
+  const p = new Piece()
+  const cord = drop - shadeHeight
+  p.cylinder(lib.blackMetal, 0.003, 0.003, cord, 0, -cord / 2, 0, false, 8)
+  p.cylinder(lib.bronze, 0.065, 0.065, 0.025, 0, -0.0125, 0, false, 20)
+  const g = p.build('dome-pendant')
+  shade.position.y = -drop
+  g.add(shade)
+  return decor(g)
 }
 
 export function diningLight(lib: MaterialLibrary, style: InteriorStyle, width: number, drop: number, low = false) {

@@ -1,15 +1,25 @@
 import objaverse from '../../tools/objaverse.json'
+import models from '../../tools/model-credits.json'
 import art from '../../public/assets/art/manifest.json'
 
-/** Asset credits, shared by the studio help sheet and the website footer. Objaverse entries come from the manifest. */
-const objaverseCredits = Object.entries(objaverse as Record<string, { title: string; author: string; source: string }>)
+const modelCredits = Object.entries(models)
+const polyHaven = modelCredits.filter(([, model]) => model.provider === 'Poly Haven')
+const khronos = modelCredits.filter(([, model]) => model.provider === 'Khronos')
+
+function modelLinks(credits: ReadonlyArray<[string, { title: string; author: string; source: string }]>) {
+  return credits.map(([id, { title, author, source }], i) => (
+    <span key={id}>
+      {i ? ', ' : ''}
+      <a href={source} target="_blank" rel="noreferrer">{title}</a> by {author}
+    </span>
+  ))
+}
 
 export function Credits() {
   return (
     <>
       <p>
-        Skies, textures, plants and some furniture by Poly Haven (CC0). GlamVelvetSofa and SheenChair by Wayfair via
-        the Khronos glTF Sample Assets (CC BY 4.0). Trees by ez-tree (MIT).
+        Skies and textures by Poly Haven (CC0). Trees by ez-tree (MIT).
       </p>
       <p>
         Finish maps (CC0){' '}
@@ -19,14 +29,12 @@ export function Credits() {
         <a href="https://ambientcg.com/view?id=Plaster001" target="_blank" rel="noreferrer">Plaster 001</a> by ambientCG.
       </p>
       <p>
-        Furniture and fixtures from Sketchfab creators via Objaverse, CC BY 4.0:{' '}
-        {objaverseCredits.map(([id, { title, author, source }], i) => (
-          <span key={id}>
-            {i ? ', ' : ''}
-            <a href={source} target="_blank" rel="noreferrer">{title}</a> by {author}
-          </span>
-        ))}
-        .
+        Models from Poly Haven and Khronos glTF Sample Assets (CC0). {modelLinks(polyHaven)}. {modelLinks(khronos)}.
+      </p>
+      <p>
+        Models from Sketchfab via Objaverse (
+        <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>).
+        {' '}{modelLinks(Object.entries(objaverse))}. Adapted for the studio with mesh and texture optimization, material edits and placement.
       </p>
       <p>
         Open-access artwork from the Art Institute of Chicago (CC0 1.0).{' '}
