@@ -48,48 +48,104 @@ vec3 horizonSky(vec2 heading) {
 const worldVertex = /* glsl */`
 varying vec3 vCoastalWorld;
 `
-const setWorld = /* glsl */`
-vCoastalWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
-`
+export interface CoastalMaps {
+  grass: THREE.Texture | null
+  bark: THREE.Texture | null
+}
 
-export function canyonMaterial(lib: MaterialLibrary, hill: Hillside, sky: CoastalSky) {
-  const scan = lib.soil
-  const material = new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.96, normalMap: scan.normalMap, normalScale: new THREE.Vector2(0.62, 0.62),
-  })
-  material.onBeforeCompile = shader => {
-    Object.assign(shader.uniforms, sky.uniforms, {
-      coastSoil: { value: scan.map },
-      coastSeaLevel: { value: hill.oceanDistance === undefined ? -1e5 : hill.seaLevel },
-    })
+export async function loadCoastalMaps(): Promise<CoastalMaps> {
+  const loader = new THREE.TextureLoader()
+  const load = async (id: string) => {
+    const map = await loader.loadAsync(`./assets/tex/${id}_512_d.webp`).catch(() => null)
+    if (map) {
+      map.wrapS = map.wrapT = THREE.RepeatWrapping
+      map.colorSpace = THREE.SRGBColorSpace
+      map.anisotropy = 4
+    }
+    return map
+  }
+  const [grass, bark] = await Promise.all([load('withered_grass'), load('wood_chip_path')])
+  return { grass, bark }
+}
+
+export function coastalHaze(material: THREE.MeshStandardMaterial, sky: CoastalSky, key: string) {
+  const configure = material.onBeforeCompile.bind(material)
+  material.onBeforeCompile = (shader, renderer) => {
+    configure(shader, renderer)
+    Object.assign(shader.uniforms, sky.uniforms)
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>' + worldVertex)
-      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>' + setWorld)
+      .replace('#include <worldpos_vertex>', /* glsl */`
+        #include <worldpos_vertex>
+        vec4 coastPosition = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          coastPosition = instanceMatrix * coastPosition;
+        #endif
+        vCoastalWorld = (modelMatrix * coastPosition).xyz;
+      `)
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>' + worldVertex + skyGLSL + /* glsl */`
-        uniform sampler2D coastSoil;
+      .replace('#include <common>', '#include <common>' + worldVertex + skyGLSL)
+      .replace('#include <opaque_fragment>', /* glsl */`
+        vec2 hazeRay = vCoastalWorld.xz - cameraPosition.xz;
+        float hazy = 1.0 - exp(-max(0.0, length(hazeRay) - 31.0) * 0.0016);
+        vec3 air = horizonSky(hazeRay);
+        air /= 1.0 + max(air.r, max(air.g, air.b));
+        vec3 coastalAir = air * vec3(0.30, 0.43, 0.62);
+        outgoingLight = mix(outgoingLight, coastalAir, hazy * 0.82);
+        #include <opaque_fragment>
+      `)
+  }
+  material.customProgramCacheKey = () => key
+  return material
+}
+
+export function canyonMaterial(lib: MaterialLibrary, hill: Hillside, sky: CoastalSky, maps: CoastalMaps) {
+  const scan = lib.soil
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.96,
+    normalMap: scan.normalMap, normalScale: new THREE.Vector2(0.38, 0.38),
+  })
+  // Vertex colors carry the medium-scale plant stands and transitions into beds and beach.
+  // The scans add detail down to the twigs and grass blades at walking distance.
+  material.onBeforeCompile = shader => {
+    shader.uniforms.coastGrass = { value: maps.grass ?? scan.map }
+    shader.uniforms.coastBark = { value: maps.bark ?? scan.map }
+    shader.uniforms.coastSeaLevel = { value: hill.oceanDistance === undefined ? -1e5 : hill.seaLevel }
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 groundCover; varying vec2 vGroundCover;')
+      .replace('#include <color_vertex>', '#include <color_vertex>\nvGroundCover = groundCover;')
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', /* glsl */`
+        #include <common>
+        varying vec2 vGroundCover;
+        uniform sampler2D coastGrass;
+        uniform sampler2D coastBark;
         uniform float coastSeaLevel;
+        float groundHash(vec2 p) {
+          return fract(sin(dot(p, vec2(37.1, 17.7))) * 43758.5453);
+        }
+        float groundNoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(groundHash(i), groundHash(i + vec2(1, 0)), f.x),
+            mix(groundHash(i + vec2(0, 1)), groundHash(i + vec2(1)), f.x), f.y);
+        }
       `)
       .replace('#include <color_fragment>', /* glsl */`
         #include <color_fragment>
         if (vCoastalWorld.y < coastSeaLevel - 0.025) discard;
         vec2 ground = vCoastalWorld.xz;
-        float proximity = 1.0 - smoothstep(32.0, 105.0, distance(ground, cameraPosition.xz));
-        vec3 grains = texture2D(coastSoil, ground * 0.92).rgb;
-        float textureTone = dot(grains, vec3(0.3, 0.55, 0.15));
-        float mottle = sin(ground.x * 1.23 + sin(ground.y * 1.13)) * cos(ground.y * 0.88 - ground.x * 0.64);
-        diffuseColor.rgb *= (0.96 + 0.15 * mottle) * mix(1.0, 0.65 + textureTone * 1.3, proximity);
-      `)
-      .replace('#include <opaque_fragment>', /* glsl */`
-        vec2 hazeRay = vCoastalWorld.xz - cameraPosition.xz;
-        float hazy = 1.0 - exp(-length(hazeRay) * 0.00155);
-        vec3 air = horizonSky(hazeRay);
-        outgoingLight = mix(outgoingLight, air * vec3(0.78, 0.84, 0.91), hazy * 0.89);
-        #include <opaque_fragment>
+        float distanceToEye = distance(ground, cameraPosition.xz);
+        float fine = 1.0 - smoothstep(46.0, 140.0, distanceToEye);
+        float grass = dot(texture2D(coastGrass, ground * 0.54).rgb, vec3(0.27, 0.62, 0.11));
+        float bark = dot(texture2D(coastBark, ground * 0.86).rgb, vec3(0.45, 0.44, 0.11));
+        float grain = mix(0.58 + grass * 1.8, 0.53 + bark * 2.35, vGroundCover.x);
+        float edge = groundNoise(ground * 0.58) * 0.64 + groundNoise(ground * 1.87) * 0.36;
+        float mottle = mix(0.57, 1.23, smoothstep(0.14, 0.85, edge));
+        diffuseColor.rgb = vColor.rgb * mix(mottle * mix(1.0, grain, fine), 0.98, vGroundCover.y);
       `)
   }
-  material.customProgramCacheKey = () => 'coastal-canyon'
-  return material
+  return coastalHaze(material, sky, 'coastal-canyon')
 }
 
 export function retainingMaterial(lib: MaterialLibrary) {
@@ -183,17 +239,19 @@ export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: numbe
         vec3 reflection = min(skyAt(reflected), vec3(1.55));
         float fresnel = 0.035 + 0.965 * pow(1.0 - max(dot(normal, eye), 0.0), 5.0);
         float shallows = 1.0 - smoothstep(0.0, 50.0, offshore);
-        vec3 deep = mix(vec3(0.016, 0.086, 0.192), vec3(0.038, 0.166, 0.218), shallows);
+        vec3 deep = mix(vec3(0.007, 0.047, 0.149), vec3(0.013, 0.138, 0.217), shallows);
         deep *= (0.91 + swell.y * 1.6) * pow(coastBrightness, 0.8);
-        vec3 water = mix(deep, reflection * vec3(0.45, 0.63, 0.79), 0.36 * fresnel);
+        vec3 water = mix(deep, reflection * vec3(0.45, 0.63, 0.79), 0.16 * fresnel);
         float glint = max(dot(normal, normalize(eye + coastSunDirection)), 0.0);
-        water += coastSunColor * (0.26 * pow(glint, 46.0) + 0.6 * pow(glint, 255.0));
+        water += coastSunColor * (0.10 * pow(glint, 52.0) + 0.26 * pow(glint, 255.0));
+        float stripe = offshore - 4.1 - 0.7 * sin(u * 0.13 + t);
+        float breakers = 0.70 * bell(stripe / 0.65) + 0.23 * bell((stripe - 5.5) / 1.1);
         float foam = pow(0.5 + 0.5 * wave(offshore * 1.63 - t * 2.1 + sin(u * 0.62) * 0.65), 9.0);
         foam *= smoothstep(-0.2, 0.9, offshore) * (1.0 - smoothstep(4.0, 17.0, offshore));
-        water = mix(water, vec3(0.48, 0.59, 0.61) * coastBrightness, foam * (0.28 + sin(u * 2.8) * 0.12));
-        float haze = 1.0 - exp(-distanceToEye * 0.00062);
+        water = mix(water, vec3(0.48, 0.59, 0.61) * coastBrightness, (foam * 0.31 + breakers) * (0.70 + sin(u * 0.43) * 0.24));
+        float haze = 1.0 - exp(-max(0.0, distanceToEye - 145.0) * 0.00043);
         vec3 air = horizonSky(-toEye.xz);
-        water = mix(water, air * mix(vec3(0.49, 0.68, 0.85), vec3(0.96, 0.98, 1.0), haze), haze);
+        water = mix(water, air * mix(vec3(0.35, 0.61, 0.88), vec3(0.96, 0.98, 1.0), haze), haze);
         gl_FragColor = vec4(water, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>

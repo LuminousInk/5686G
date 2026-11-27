@@ -233,6 +233,11 @@ const drawingPlan: HomePlan = {
   ],
   landscape: {
     site: { downhill: 180, grade: 0.135, walkout: { side: 'n', drop }, oceanDistance: 236 },
+    berms: [
+      { x: -8.7, z: -10.2, rx: 2.7, rz: 1.4, h: 0 },
+      { x: 8.0, z: -11.4, rx: 3.1, rz: 1.55, h: 0 },
+      { x: -18.4, z: 0.1, rx: 2.4, rz: 2.8, h: 0 },
+    ],
     trees: [
       { x: -26, z: 13, s: 1.2, kind: 'pine' }, { x: 25, z: 8, s: 1.3, kind: 'pine' },
       { x: 32, z: -3, s: 1.1, kind: 'aspen' }, { x: -30, z: -8, s: 1.3, kind: 'pine' },
@@ -243,10 +248,12 @@ const drawingPlan: HomePlan = {
     clear: [deck, lowerWest, lowerEast],
   },
   views: [
-    { id: 'hero', label: 'Walkout · east', kind: 'orbit', pos: [17, 3.5, -42], target: [-1, 0.6, -2], fov: 42 },
+    { id: 'hero', label: 'Golden hour', kind: 'orbit', pos: [34, 11, 38], target: [-0.75, 2, -6], fov: 50 },
     { id: 'front', label: 'Arrival', kind: 'orbit', pos: [-11, 4.8, 39], target: [-0.5, 1.8, 5.4], fov: 48 },
     { id: 'deck', label: 'Walkout · west', kind: 'orbit', pos: [-25, 5.4, -40], target: [-2, 0.6, -2.3], fov: 43 },
-    { id: 'aerial', label: 'Aerial', kind: 'orbit', pos: [11, 33, -38], target: [-1, 1, 0], fov: 47 },
+    { id: 'corner', label: 'Corner', kind: 'orbit', pos: [-42, 12, 20], target: [-1, 2, -10], fov: 50 },
+    { id: 'aerial', label: 'Aerial', kind: 'orbit', pos: [21, 28, 30], target: [0, 1, -20], fov: 51 },
+    { id: 'ocean', label: 'Ocean outlook', kind: 'orbit', pos: [11, 11, 13], target: [0, -4, -53], fov: 55 },
     { id: 'entry', label: 'Foyer', kind: 'walk', pos: [x(841), floorY + 1.62, z(232)], target: [x(844), floorY + 1.35, z(488)], room: 'entry' },
     { id: 'great', label: 'Great room', kind: 'walk', pos: [x(862), floorY + 1.62, z(367)], target: [x(808), floorY + 1.24, z(580)], fov: 67, room: 'great' },
     { id: 'deckwalk', label: 'On the deck', kind: 'walk', pos: [x(826), floorY + 1.62, z(783)], target: [x(814), floorY + 1.4, z(507)], fov: 62 },
@@ -287,6 +294,7 @@ export const aspenCustom: HomePlan = {
   terraces: drawingPlan.terraces.map(t => ({ ...t, rect: worldRect(t.rect) })),
   landscape: {
     ...drawingPlan.landscape,
+    berms: drawingPlan.landscape.berms?.map(b => ({ ...b, x: -b.x })),
     trees: drawingPlan.landscape.trees?.map(t => ({ ...t, x: -t.x })),
     lounge: drawingPlan.landscape.lounge?.map(p => ({ ...p, x: -p.x, rot: -p.rot })),
     dining: drawingPlan.landscape.dining?.map(p => ({ ...p, x: -p.x, rot: -p.rot })),

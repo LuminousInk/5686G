@@ -3,10 +3,12 @@ import type { HomePlan } from '../house/types'
 import type { QualitySettings } from '../quality'
 import { rng } from '../materials/textures'
 import { modelPieces } from '../models'
-import { Hillside, siteFootprints } from './hillside'
-import { makeVariant, treeInstances, type TreePlacement } from './trees'
+import { coastalPlantLayout, type Neighbor, type PlantSpot } from './coastalLayout'
+import { canyonMoisture, type Hillside } from './hillside'
+import { coastalHaze, type CoastalSky } from './ocean'
+import { coastalTreeVariant, impostorForest, leafMaterial, leavesReady, treeInstances, type CoastalTree, type TreePlacement } from './trees'
 
-type Plant = { x: number; y: number; z: number; size: number; yaw: number }
+type Plant = PlantSpot
 type Grass = [number, number, number, number]
 const up = new THREE.Vector3(0, 1, 0)
 
@@ -89,25 +91,25 @@ function rosette(aloe: boolean, low: boolean) {
   return g.geometry()
 }
 
-function scrub(lavender: boolean, low: boolean, distant = false) {
+function scrub(lavender: boolean, low: boolean) {
   const g = new PlantGeometry()
   const rand = rng(lavender ? 64 : 15)
   const colors = (lavender ? ['#7c8872', '#a5a993', '#69755a'] : ['#657347', '#9ba16c', '#4d6044']).map(c => new THREE.Color(c))
   const stem = new THREE.Color('#81714d')
   const flower = new THREE.Color('#9180a8')
-  const sprigs = distant ? (low ? 8 : 11) : lavender ? (low ? 19 : 29) : (low ? 23 : 35)
+  const sprigs = lavender ? (low ? 19 : 29) : (low ? 23 : 35)
   for (let i = 0; i < sprigs; i++) {
     const angle = i * 2.39996
-    const r = Math.sqrt((i + 0.5) / sprigs) * (distant ? 0.59 : 0.52)
+    const r = Math.sqrt((i + 0.5) / sprigs) * 0.52
     const dx = Math.cos(angle)
     const dz = Math.sin(angle)
     const height = 0.59 - r * 0.52 + rand() * 0.17
     g.leaf(dx * r * 0.22, 0, dz * r * 0.22, angle, r * 0.78, height, 0.04, 0.01, stem, 2)
-    const leaves = distant ? 3 : low ? 5 : 7
+    const leaves = low ? 5 : 7
     for (let j = 0; j < leaves; j++) {
       const t = (j + 2) / (leaves + 2)
       g.leaf(dx * r * t, height * t, dz * r * t, angle + (j % 2 ? 1.4 : -1.4),
-        0.19 + rand() * 0.10, 0.065 + rand() * 0.10, 0.04, lavender ? 0.031 : 0.062, colors[(i + j) % 3], distant ? 1 : 2)
+        0.19 + rand() * 0.10, 0.065 + rand() * 0.10, 0.04, lavender ? 0.031 : 0.062, colors[(i + j) % 3], 2)
     }
     if (lavender) {
       for (let j = 0; j < 3; j++) {
@@ -118,21 +120,91 @@ function scrub(lavender: boolean, low: boolean, distant = false) {
   return g.geometry()
 }
 
-function dryGroundcover() {
+const scrubColors = ['#91a183', '#aab6ad', '#758a65', '#8b9d7c', '#7e9389']
+const hedgeColors = ['#62775a', '#566f4a', '#70805b']
+
+function dryGrassClump() {
   const g = new PlantGeometry()
-  const tones = ['#837b50', '#887447', '#8e8c5f', '#b09a65', '#696c43'].map(c => new THREE.Color(c))
-  for (let i = 0; i < 11; i++) {
+  const rand = rng(712)
+  const tones = ['#937a4e', '#b39661', '#81724c', '#ad986b'].map(c => new THREE.Color(c))
+  for (let i = 0; i < 12; i++) {
     const a = i * 2.39996
-    const together = Math.cos(i * 43.7) * 0.5 + 0.5
-    const radius = 0.48 * Math.sqrt(i / 11)
-    g.leaf(Math.cos(a) * radius, 0.006, Math.sin(a) * radius,
-      a + 0.7, 0.13 + together * 0.2, 0.045 + together * 0.14, 0.07, 0.031, tones[i % 5], 2)
+    const r = Math.sqrt(rand()) * 0.36
+    g.leaf(Math.cos(a) * r, 0.025, Math.sin(a) * r, a + rand(),
+      0.12 + rand() * 0.13, 0.11 + rand() * 0.26, 0.04, 0.016, tones[i % tones.length], 1)
   }
   return g.geometry()
 }
 
-function palms(low: boolean) {
-  const trunk = new THREE.CylinderGeometry(0.022, 0.04, 0.80, 8, 12)
+/** Assemble twig cards into irregular, leafy silhouettes with a low-cost version for the farther slopes. */
+function woodyFoliage(seed: number, detail: number, hedge = false) {
+  const rand = rng(seed)
+  const colors = (hedge ? hedgeColors : scrubColors).map(c => new THREE.Color(c))
+  const positions: number[] = [], tones: number[] = [], uvs: number[] = [], indices: number[] = []
+  const horizontal = new THREE.Vector3()
+  const vertical = new THREE.Vector3()
+  const center = new THREE.Vector3()
+  const point = new THREE.Vector3()
+  const count = hedge ? 72 : detail === 0 ? 14 : detail === 1 ? 33 : 49
+  for (let i = 0; i < count; i++) {
+    const radial = Math.sqrt(rand())
+    const angle = i * 2.39996
+    const spread = hedge ? 0.55 : 0.72
+    const height = hedge ? 1.60 : 0.72
+    const ring = (0.81 - 0.27 * Math.cos(angle * 3 + seed)) * radial * spread
+    const y = (0.11 + 0.79 * rand()) * height * (1 - radial * (hedge ? 0.25 : 0.51))
+    center.set(Math.cos(angle) * ring, y, Math.sin(angle) * ring)
+    const yaw = rand() * 6.283
+    const pitch = (rand() - 0.5) * 2.15
+    const width = (0.33 + rand() * 0.23) * (detail === 0 ? 1.42 : 1)
+    const length = width * (hedge ? 1.23 : 0.95 + rand() * 0.35)
+    horizontal.set(Math.cos(yaw), 0, Math.sin(yaw)).multiplyScalar(width)
+    vertical.set(-Math.sin(yaw) * Math.sin(pitch), Math.cos(pitch), Math.cos(yaw) * Math.sin(pitch)).multiplyScalar(length)
+    const tint = colors[(i + seed) % colors.length].clone().multiplyScalar(0.52 + y / height * 0.65 + rand() * 0.24)
+    const base = positions.length / 3
+    for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
+      point.copy(center).addScaledVector(horizontal, u - 0.5).addScaledVector(vertical, v - 0.42)
+      positions.push(point.x, point.y, point.z)
+      tones.push(tint.r, tint.g, tint.b)
+      uvs.push(u, v)
+    }
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(tones, 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+function floweringPlant(wall: boolean, low: boolean) {
+  const g = new PlantGeometry()
+  const rand = rng(wall ? 62 : 98)
+  const leaves = ['#4b603d', '#667247', '#566943'].map(c => new THREE.Color(c))
+  const flowers = (wall ? ['#b73f65', '#974362', '#d06a86'] : ['#9d3f32', '#c6683d', '#9b623b']).map(c => new THREE.Color(c))
+  const count = low ? 18 : 28
+  for (let i = 0; i < count; i++) {
+    const a = i * 2.39996
+    const r = 0.18 + rand() * (wall ? 0.49 : 0.26)
+    const h = 0.29 + rand() * (wall ? 0.60 : 0.53)
+    const x = r * Math.cos(a), z = r * Math.sin(a)
+    const leaf = leaves[i % leaves.length]
+    g.leaf(0, 0.02, 0, a, r, h, 0.09, 0.018, leaf, 3)
+    for (let j = 1; j < 4; j++) {
+      const t = j / 4
+      g.leaf(x * t, h * t, z * t, a + j * 1.6, wall ? 0.20 : 0.24, 0.10, 0.06, wall ? 0.07 : 0.025, leaf, 2)
+    }
+    for (let j = 0; j < 3; j++) {
+      g.leaf(x, h - j * 0.033, z, a + j * 2.1, wall ? 0.12 : 0.068, 0.045, 0.028, 0.029, flowers[(i + j) % 3], 2)
+    }
+  }
+  return g.geometry()
+}
+
+function palms(low: boolean, queen: boolean) {
+  const trunk = new THREE.CylinderGeometry(queen ? 0.013 : 0.018, queen ? 0.026 : 0.033, 0.80, 8, 12)
   trunk.translate(0, 0.4, 0)
   const p = trunk.getAttribute('position')
   const barkColors = []
@@ -152,7 +224,6 @@ function palms(low: boolean) {
   for (let i = 0; i < (low ? 12 : 17); i++) {
     const a = 2.39996 * i
     const r = 0.08 + 0.085 * rand()
-    const x = Math.cos(a) * r + 0.05
     const z = Math.sin(a) * r
     const y = 0.77 + 0.17 * (i / 17) + rand() * 0.045
     const leaf = new THREE.Color(i < 4 ? '#82794b' : i % 3 === 0 ? '#87964b' : '#546a38')
@@ -160,164 +231,172 @@ function palms(low: boolean) {
     const count = low ? 9 : 12
     for (let j = 0; j < count; j++) {
       const fan = (j / (count - 1) - 0.5) * 2
-      crown.leaf(x, y, z, a + fan * 1.45, 0.13 - 0.047 * Math.abs(fan),
-        (i / 17 - 0.68) * 0.16, 0.036, 0.016, leaf, 3)
+      const spread = queen ? 0.065 : 0.13
+      const reach = queen ? r * (0.15 + 0.75 * j / count) : r
+      crown.leaf(0.05 + Math.cos(a) * reach, y - (queen ? 0.025 * Math.abs(fan) : 0), queen ? Math.sin(a) * reach : z,
+        a + (queen ? (j % 2 ? 1 : -1) * 0.84 : fan * 1.45), spread - 0.027 * Math.abs(fan),
+        (i / 17 - 0.68) * 0.16 - (queen ? 0.075 : 0), 0.036, queen ? 0.009 : 0.014, leaf, 3)
+    }
+  }
+  if (!queen) {
+    const straw = new THREE.Color('#8e7650')
+    for (let i = 0; i < (low ? 12 : 18); i++) {
+      const a = i * 2.39996
+      crown.leaf(0.047, 0.803, 0, a, 0.05 + rand() * 0.052,
+        -0.045 - rand() * 0.095, 0.041, 0.009, straw, 3)
     }
   }
   return [trunk, crown.geometry()]
 }
 
-function pathDistance(x: number, z: number, ax: number, az: number, bx: number, bz: number) {
-  const dx = bx - ax
-  const dz = bz - az
-  const t = THREE.MathUtils.clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1), 0, 1)
-  return Math.hypot(x - ax - t * dx, z - az - t * dz)
+const treeKinds: Record<NonNullable<NonNullable<HomePlan['landscape']['trees']>[number]['kind']>, CoastalTree> = {
+  pine: 'stone-pine', 'pine-small': 'canary-pine', aspen: 'sycamore', bush: 'olive',
+}
+const heights: Record<CoastalTree, number> = {
+  'live-oak': 10.4, sycamore: 13.5, 'stone-pine': 11.5, 'canary-pine': 15, olive: 3.4,
 }
 
-export async function plantHillside(plan: HomePlan, hill: Hillside, quality: QualitySettings) {
+export async function plantHillside(plan: HomePlan, hill: Hillside, quality: QualitySettings,
+  neighbors: Neighbor[], sky: CoastalSky, renderer: THREE.WebGLRenderer) {
   const rand = rng(116 + plan.id.length * 34)
   const low = quality.tier === 'low'
   const material = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.88 })
+  const scrubMaterial = coastalHaze(new THREE.MeshStandardMaterial({
+    map: leafMaterial('oak').map, alphaTest: 0.36,
+    side: THREE.DoubleSide, vertexColors: true, roughness: 0.94,
+  }), sky, 'coastal-scrub')
   const meshes: THREE.InstancedMesh[] = []
+  const impostors: THREE.Mesh[] = []
   const grasses: Grass[] = []
-  const footprint = siteFootprints(plan)
-  const lowCameras = plan.views.filter(view => view.kind === 'orbit' && view.pos[1] < 5)
-  const paths = (plan.landscape.paths ?? []).flatMap(({ pts, width }) =>
-    pts.slice(1).map(([bx, bz], i) => ({ width, ax: pts[i][0], az: pts[i][1], bx, bz })))
-  const occupied: { x: number; z: number; r: number }[] = []
-  const protectedPoint = (x: number, z: number, pad: number) =>
-    footprint.some(([x0, z0, x1, z1]) => x >= x0 - pad && x <= x1 + pad && z >= z0 - pad && z <= z1 + pad) ||
-    (plan.landscape.clear ?? []).some(([x0, z0, x1, z1]) => x > x0 && x < x1 && z > z0 && z < z1) ||
-    lowCameras.some(({ pos: [cx, , cz] }) => Math.hypot(x - cx, z - cz) < 1.36 + pad) ||
-    paths.some(({ ax, az, bx, bz, width }) => pathDistance(x, z, ax, az, bx, bz) < width / 2 + pad)
-  const beds = plan.landscape.berms ?? []
-  const forms: Plant[][] = [[], [], [], [], []]
-  const groundcover: Plant[] = []
+  const { near, far, hedges, dryGrass, garden: forms, open, spot } = coastalPlantLayout(plan, hill, quality.tier, neighbors)
   const [u0, v0, u1, v1] = hill.pad
-  const add = (form: number, x: number, z: number, size: number, distant = false) => {
-    const r = size * (form < 2 ? 0.57 : 0.30)
-    const [, v] = hill.local(x, z)
-    const edge = v - v1
-    if ((edge > -0.35 && edge < 0.6) || (edge > 5.4 && edge < 6.1) ||
-      protectedPoint(x, z, r + 0.18) ||
-      occupied.some(p => Math.hypot(p.x - x, p.z - z) < (p.r + r) * 0.88)) return
-    occupied.push({ x, z, r })
-    const y = hill.heightAt(x, z) - 0.035
-    if (form === 5) {
-      if (grasses.length < quality.ornamentalClumps) grasses.push([x, y, z, size])
-    } else {
-      forms[distant ? 4 : form].push({ x, y, z, size, yaw: rand() * Math.PI * 2 })
-    }
-  }
 
-  for (const b of beds) {
-    for (let i = 0; i < (low ? 70 : 102); i++) {
-      const a = rand() * Math.PI * 2
-      const radius = Math.sqrt(rand())
-      const x = b.x + Math.cos(a) * b.rx * radius
-      const z = b.z + Math.sin(a) * b.rz * radius
-      const form = [0, 1, 2, 2, 3, 3, 5, 5][Math.floor(rand() * 8)]
-      add(form, x, z, (0.40 + rand() * 0.92) * (form === 3 ? 0.87 : 1))
-    }
+  for (let variant = 0; variant < 3; variant++) {
+    const close = near.filter((_, i) => i % 3 === variant)
+    const distant = far.filter((_, i) => i % 3 === variant)
+    meshes.push(instances(woodyFoliage(variant + 2, low ? 1 : 2), scrubMaterial, close, false, 'Chaparral and sage scrub'),
+      instances(woodyFoliage(variant + 3, 0), scrubMaterial, distant, false, 'Distant coastal scrub'))
   }
-  // Irregular chaparral groups follow the retaining terraces and spill down the canyon.
-  for (let i = 0; i < (low ? 240 : 340); i++) {
-    const u = u0 - 5 + rand() * (u1 - u0 + 10)
-    const near = i % 4
-    const v = near === 0 ? v0 - rand() * 12 : v1 + (near === 1 ? -2.5 : near === 2 ? 1.1 : 6.8) + rand() * 2.9
-    const [x, z] = hill.world(u, v)
-    const form = [0, 1, 2, 3, 3, 5, 5, 5][Math.floor(rand() * 8)]
-    add(form, x, z, 0.50 + rand() * 0.8)
+  if (hedges.length) {
+    meshes.push(instances(woodyFoliage(3, 2, true), scrubMaterial, hedges, true, 'Lot line hedges'))
   }
-  for (let c = 0; c < (low ? 99 : 165); c++) {
-    const u = (rand() - 0.5) * 155
-    const v = c % 4 === 0
-      ? v0 - 6 - rand() ** 2 * 93
-      : v1 + 9 + rand() ** 1.85 * Math.min(112, (hill.oceanDistance ?? 150) - v1 - 20)
-    for (let i = 0; i < 4; i++) {
-      const [x, z] = hill.world(u + (rand() - 0.5) * 7, v + rand() * 5)
-      add(2, x, z, 0.9 + rand() * 2.35, true)
-    }
-  }
+  if (dryGrass.length) meshes.push(instances(dryGrassClump(), material, dryGrass, false, 'Summer grass drifts'))
 
-  for (let i = 0; i < (low ? 570 : 1150); i++) {
-    const b = i % 2 ? beds[i % beds.length] : undefined
-    const a = rand() * Math.PI * 2
-    const radius = Math.sqrt(rand())
-    const u = u0 - 17 + rand() * (u1 - u0 + 34)
-    const v = i % 3 === 0 ? v0 - rand() * 45 : v1 + (rand() - 0.07) * 66
-    const [x, z] = b ? [b.x + Math.cos(a) * b.rx * radius, b.z + Math.sin(a) * b.rz * radius] : hill.world(u, v)
-    const [, down] = hill.local(x, z)
-    const run = down - v1
-    if ((run > -0.26 && run < 0.5) || (run > 5.2 && run < 6.2) || protectedPoint(x, z, 0.23)) continue
-    groundcover.push({ x, z, y: hill.heightAt(x, z) - 0.013, size: 0.42 + rand() * 0.94, yaw: a })
-  }
-  if (groundcover.length) meshes.push(instances(dryGroundcover(), material, groundcover, false, 'Dry hillside groundcover'))
+  grasses.push(...forms[8].slice(0, quality.ornamentalClumps).map(({ x, y, z, size }): Grass => [x, y, z, size]))
 
   for (const [index, geometry, name] of [
     [0, rosette(false, low), 'Blue agave'],
     [1, rosette(true, low), 'Coastal aloe'],
     [2, scrub(false, low), 'Rosemary and sage'],
     [3, scrub(true, low), 'Lavender'],
-    [4, scrub(false, true, true), 'Canyon chaparral'],
+    [4, floweringPlant(false, low), 'Kangaroo paw'],
+    [5, floweringPlant(true, low), 'Bougainvillea on retaining walls'],
   ] as const) {
-    if (forms[index].length) meshes.push(instances(geometry, material, forms[index], index !== 4, name))
+    if (forms[index].length) meshes.push(instances(geometry, material, forms[index], true, name))
     else geometry.dispose()
   }
 
-  const trees = new Map<string, TreePlacement[]>()
-  const palmPlants: Plant[] = []
+  const palmsNear: Plant[] = [], queenNear: Plant[] = []
+  const trees = new Map<CoastalTree, TreePlacement[]>()
+  const orbitCameras = plan.views.filter(v => v.kind === 'orbit' && v.pos[1] > 3 && v.pos[1] < 17)
+  const cameraClear = (x: number, z: number, radius: number, height: number) => {
+    const y = hill.heightAt(x, z)
+    return !orbitCameras.some(({ id, pos: [cx, cy, cz], target: [tx, ty, tz] }) => {
+      if (cy < y + height + 0.65 && Math.hypot(x - cx, z - cz) < radius + 1.9) return true
+      if (id !== 'hero' && id !== 'corner') return false
+      const dx = tx - cx, dz = tz - cz
+      const t = ((x - cx) * dx + (z - cz) * dz) / (dx * dx + dz * dz || 1)
+      const lineHeight = THREE.MathUtils.lerp(cy, ty, t)
+      return t > 0 && t < 0.72 && lineHeight > y + height * 0.47 && lineHeight < y + height &&
+        Math.hypot(x - (cx + dx * t), z - (cz + dz * t)) < radius * 0.68
+    })
+  }
+  const addTree = (kind: CoastalTree, x: number, z: number, height: number) => {
+    // The base of the trunk and roots need to clear hardscape; crowns can overhang it.
+    if (!open(x, z, 0.78, true) || !cameraClear(x, z, height * 0.51, height)) return
+    const items = trees.get(kind) ?? []
+    if (items.some(p => Math.hypot(p.x - x, p.z - z) < 3.5)) return
+    items.push({ x, z, y: hill.heightAt(x, z), height, yaw: rand() * 6.283 })
+    trees.set(kind, items)
+  }
+  const addPalm = (list: Plant[], x: number, z: number, height: number) => {
+    if (open(x, z, 0.65, true) && cameraClear(x, z, height * 0.24, height)) list.push(spot(x, z, height, 0.65, rand() * 6.283))
+  }
   for (const tr of plan.landscape.trees ?? []) {
-    if (protectedPoint(tr.x, tr.z, 0.65)) continue
-    const size = tr.s ?? 1
-    const y = hill.heightAt(tr.x, tr.z)
-    const yaw = rand() * Math.PI * 2
-    // An unqualified accent tree is a fan palm on coastal lots.
+    const scale = tr.s ?? 1
     if (!tr.kind) {
-      palmPlants.push({ ...tr, y, size: size * 6.5, yaw })
-      continue
+      addPalm(palmsNear, tr.x, tr.z, scale * 11.4)
+    } else {
+      const kind = treeKinds[tr.kind]
+      addTree(kind, tr.x, tr.z, scale * heights[kind])
     }
-    const height = ({ pine: 8.7, 'pine-small': 4.8, aspen: 7.5, bush: 3.3 })[tr.kind] * size
-    const items = trees.get(tr.kind) ?? []
-    items.push({ ...tr, y, height, yaw })
-    trees.set(tr.kind, items)
+  }
+  for (const [u, v, kind, height] of [
+    [u0 - 6.8, v0 - 3.5, 'live-oak', 11.2],
+    [u1 + 7.4, v0 - 7.2, 'stone-pine', 13.3],
+    [u1 + 4.2, v1 - 1.5, 'sycamore', 11.8],
+    [u0 - 7.7, v1 + 6.2, 'live-oak', 9.1],
+    [u1 + 12, v1 + 16.4, 'canary-pine', 13.7],
+    [u0 - 15, v0 - 18.5, 'canary-pine', 16.2],
+    [u1 + 20, v0 - 14.5, 'live-oak', 10.9],
+    [u0 - 18, v1 + 19.4, 'sycamore', 10.2],
+  ] as const) addTree(kind, ...hill.world(u, v), height)
+  for (const [u, v, height] of [[u0 - 6.3, v1 + 1.2, 11.4], [u1 + 4.8, v1 + 6.3, 12.7]]) {
+    addPalm(queenNear, ...hill.world(u, v), height)
   }
   for (const [kind, items] of trees) {
-    const pine = kind.startsWith('pine')
-    const tree = makeVariant(pine ? 'Pine Medium' : 'Oak Medium', kind === 'bush' ? 811 : 74, quality.treeDetail, pine ? 'pine' : 'oak')
-    for (const geo of [tree.branches, tree.leaves]) {
-      if (pine) geo.scale(1.35, 0.82, 1.35)
-      if (kind === 'bush') geo.scale(0.86, 0.86, 0.86)
-      geo.computeVertexNormals()
-    }
-    for (const mesh of treeInstances(tree, items, true).children) {
-      mesh.name = pine ? 'Stone pine' : kind === 'bush' ? 'Olive' : 'Coastal live oak'
-      meshes.push(mesh as THREE.InstancedMesh)
+    const variant = coastalTreeVariant(kind, 74 + kind.length, quality.treeDetail)
+    for (const child of treeInstances(variant, items, true).children) {
+      child.name = kind
+      meshes.push(child as THREE.InstancedMesh)
     }
   }
-  if (palmPlants.length) {
-    const [trunk, crown] = palms(low)
-    meshes.push(instances(trunk, material, palmPlants, true, 'Fan palm trunks'), instances(crown, material, palmPlants, true, 'Fan palm crowns'))
+  for (const [list, queen] of [[palmsNear, false], [queenNear, true]] as const) {
+    if (!list.length) continue
+    const [trunk, crown] = palms(low, queen)
+    meshes.push(instances(trunk, material, list, true, 'Palm trunks'),
+      instances(crown, material, list, true, queen ? 'Queen palm crowns' : 'Mexican fan palm crowns'))
   }
 
-  const rockPieces = (await Promise.all(['rock_09', 'rock_07'].map(id => modelPieces(id).catch(() => [])))).flat()
-  const rockSpots: Plant[] = []
-  for (let i = 0; i < (low ? 33 : 68); i++) {
-    const b = beds[i % beds.length]
-    const a = rand() * Math.PI * 2
-    const [x, z] = b && i % 3 !== 0
-      ? [b.x + Math.cos(a) * b.rx * 0.86, b.z + Math.sin(a) * b.rz * 0.83]
-      : hill.world(u0 - 5 + rand() * (u1 - u0 + 10), v1 + 2 + rand() * 9.4)
-    if (protectedPoint(x, z, 0.45)) continue
-    rockSpots.push({ x, z, y: hill.heightAt(x, z) - 0.11, size: 0.41 + rand() ** 1.48 * 1.72, yaw: a })
+  const sketched: TreePlacement[][] = [[], []]
+  const budget = Math.round(quality.forestTrees * 2.2)
+  for (let i = 0; i < budget * 8 && sketched[0].length + sketched[1].length < budget; i++) {
+    const u = (rand() - 0.5) * 460
+    const v = v0 - 180 + rand() * (v1 - v0 + 350)
+    const distance = Math.hypot(Math.max(u0 - u, u - u1, 0), Math.max(v0 - v, v - v1, 0))
+    if (distance < 30 || (v > v1 && Math.abs(u) < 24) || rand() > 0.16 + 0.79 * canyonMoisture(u, v)) continue
+    const [x, z] = hill.world(u, v)
+    if (!open(x, z, 2.8)) continue
+    sketched[i % 2].push({ x, z, y: hill.heightAt(x, z), height: 6.5 + rand() * 7.8, yaw: 0 })
   }
-  rockPieces.forEach(({ geometry, material: rockMat }, i) => {
-    const bb = geometry.boundingBox!
-    const width = Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z)
-    geometry.scale(1 / width, 0.83 / width, 1 / width)
-    const spots = rockSpots.filter((_, j) => j % rockPieces.length === i)
-    if (spots.length) meshes.push(instances(geometry, rockMat, spots, true, 'Sandstone outcrops'))
-    else geometry.dispose()
+
+  const loads = Promise.all(['shrub_03', 'grass_medium_01'].map(id => modelPieces(id).catch(() => [])))
+  for (let i = 0; i < sketched.length; i++) {
+    if (!sketched[i].length) continue
+    const variant = coastalTreeVariant(i === 0 ? 'live-oak' : 'canary-pine', 36 + i * 18, 0.45)
+    await leavesReady(variant.leafKind)
+    const mesh = impostorForest(renderer, variant, sketched[i], i + 9)
+    coastalHaze(mesh.material as THREE.MeshStandardMaterial, sky, `coastal-tree-impostor-${i}`)
+    variant.branches.dispose()
+    variant.leaves.dispose()
+    impostors.push(mesh)
+  }
+
+  await Promise.all([...trees.keys()].map(kind => leavesReady(kind === 'live-oak' ? 'oak' : kind === 'sycamore' || kind === 'olive' ? kind : 'pine')))
+  const models = await loads
+  models.forEach((pieces, i) => {
+    const locations = forms[i + 6]
+    pieces.forEach(({ geometry, material: plantMaterial }, j) => {
+      const places = locations.filter((_, k) => k % pieces.length === j)
+      if (!places.length) {
+        geometry.dispose()
+        return
+      }
+      const bb = geometry.boundingBox!
+      const width = Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z)
+      geometry.scale(1 / width, 1 / width, 1 / width)
+      meshes.push(instances(geometry, plantMaterial, places, true, i === 0 ? 'Scanned garden shrubs' : 'Scanned ornamental grasses'))
+    })
   })
-  return { meshes, grasses, material }
+  return { meshes, grasses, impostors, materials: [material, scrubMaterial] }
 }

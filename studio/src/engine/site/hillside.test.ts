@@ -87,4 +87,15 @@ describe('hillside lots', () => {
     for (let i = 0; i < wall.count; i++) stations.add(Math.round(hill.local(wall.getX(i), wall.getZ(i))[1] * 100))
     expect(stations.size).toBe(4)
   })
+
+  it('samples the rendered terrain surface for thin landscape overlays', () => {
+    const hill = new Hillside(cedarRidge, cedarRidge.landscape.site!)
+    const mat = new THREE.MeshStandardMaterial()
+    const [terrain] = hill.buildSurface(mat, mat, true).children
+    for (const [u, v] of [[-87.2, 70.2], [105.4, 106.8], [55.8, -35.8]]) {
+      const [x, z] = hill.world(u, v)
+      const ray = new THREE.Raycaster(new THREE.Vector3(x, 100, z), new THREE.Vector3(0, -1, 0))
+      expect(ray.intersectObject(terrain)[0].point.y).toBeCloseTo(hill.surfaceHeight(u, v), 4)
+    }
+  })
 })
