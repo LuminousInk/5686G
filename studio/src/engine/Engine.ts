@@ -194,6 +194,7 @@ export class Engine {
     })
     const build = await Promise.allSettled([
       this.sky.prepare(preset),
+      this.pipeline.atmosphere.prepare(preset),
       furnish,
       landscape,
     ])
@@ -300,7 +301,16 @@ export class Engine {
     const seq = ++this.timeSeq
     const preset = TIME_PRESETS.find(t => t.id === id) ?? TIME_PRESETS[0]
     this.lightmap.clear('time of day changed')
-    if (!await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35) || seq !== this.timeSeq) return
+    const [changed] = await Promise.all([
+      this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35),
+      this.pipeline.atmosphere.prepare(preset),
+    ])
+    if (changed === false || seq !== this.timeSeq) return
+    if (!changed) {
+      // The legacy HDRI update can complete with a void result. Refresh its visible sky too.
+      this.invalidate()
+      return
+    }
     this.pipeline.exposure = this.sky.exposure
     this.pipeline.setLook(preset)
     this.pipeline.resetMotion()
@@ -451,7 +461,10 @@ export class Engine {
       this.sky.placeSun(this.sunTmp)
     }
     try {
-      this.pipeline.render(dt)
+      const hill = this.site?.terrain.hillside
+      this.pipeline.atmosphere.configure(this.sky.preset, this.sky.sunDir,
+        hill?.oceanDistance === undefined ? undefined : hill.seaLevel)
+      this.pipeline.render(dt, inside || this.isInside(this.camera.position))
     } finally {
       if (cacheShadows) this.sky.endMotionShadows()
       this.camera.clearViewOffset()

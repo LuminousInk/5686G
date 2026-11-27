@@ -21,6 +21,8 @@ export interface QualitySettings {
   transmissionGlass: boolean
   accumulateFrames: number
   bloom: boolean
+  /** Protect the frame budget by skipping more nearby pixels during low-tier navigation. */
+  reducedMotionHaze: boolean
   treeDetail: number
 }
 
@@ -41,6 +43,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
     transmissionGlass: false,
     accumulateFrames: 24,
     bloom: true,
+    reducedMotionHaze: true,
     treeDetail: 0.5,
   },
   medium: {
@@ -59,6 +62,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
     transmissionGlass: true,
     accumulateFrames: 48,
     bloom: true,
+    reducedMotionHaze: false,
     treeDetail: 0.8,
   },
   high: {
@@ -77,6 +81,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
     transmissionGlass: true,
     accumulateFrames: 96,
     bloom: true,
+    reducedMotionHaze: false,
     treeDetail: 1,
   },
 }

@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { MaterialLibrary } from '../materials/library'
 import type { Hillside } from './hillside'
 
-// Sample the same world-oriented HDRI as the backdrop, without a reflection render target.
+// Sample the world-oriented lighting HDRI without a reflection render target.
 export class CoastalSky {
   private rotation = new THREE.Matrix3()
   private matrix = new THREE.Matrix4()
@@ -10,12 +10,14 @@ export class CoastalSky {
     coastSky: { value: null as THREE.Texture | null },
     coastRotation: { value: this.rotation },
     coastBrightness: { value: 1 },
+    coastAtmosphere: { value: false },
     coastSunDirection: { value: new THREE.Vector3(0, 1, 0) },
     coastSunColor: { value: new THREE.Color(0) },
   }
 
   bind(mesh: THREE.Mesh) {
     mesh.onBeforeRender = (_renderer, scene) => {
+      this.uniforms.coastAtmosphere.value = scene.userData.coastalAtmosphere === true
       const background = scene.background
       if (!(background instanceof THREE.Texture) || background.mapping !== THREE.EquirectangularReflectionMapping) return
       const u = this.uniforms
@@ -36,6 +38,7 @@ const skyGLSL = /* glsl */`
 uniform sampler2D coastSky;
 uniform mat3 coastRotation;
 uniform float coastBrightness;
+uniform bool coastAtmosphere;
 vec3 skyAt(vec3 direction) {
   return texture2D(coastSky, equirectUv(normalize(coastRotation * direction))).rgb * coastBrightness;
 }
@@ -86,12 +89,14 @@ export function coastalHaze(material: THREE.MeshStandardMaterial, sky: CoastalSk
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>' + worldVertex + skyGLSL)
       .replace('#include <opaque_fragment>', /* glsl */`
-        vec2 hazeRay = vCoastalWorld.xz - cameraPosition.xz;
-        float hazy = 1.0 - exp(-max(0.0, length(hazeRay) - 31.0) * 0.0016);
-        vec3 air = horizonSky(hazeRay);
-        air /= 1.0 + max(air.r, max(air.g, air.b));
-        vec3 coastalAir = air * vec3(0.30, 0.43, 0.62);
-        outgoingLight = mix(outgoingLight, coastalAir, hazy * 0.82);
+        if (!coastAtmosphere) {
+          vec2 hazeRay = vCoastalWorld.xz - cameraPosition.xz;
+          float hazy = 1.0 - exp(-max(0.0, length(hazeRay) - 31.0) * 0.0016);
+          vec3 air = horizonSky(hazeRay);
+          air /= 1.0 + max(air.r, max(air.g, air.b));
+          vec3 coastalAir = air * vec3(0.30, 0.43, 0.62);
+          outgoingLight = mix(outgoingLight, coastalAir, hazy * 0.82);
+        }
         #include <opaque_fragment>
       `)
   }
@@ -182,11 +187,23 @@ export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: numbe
       oceanOrigin: { value: new THREE.Vector2(hill.cx, hill.cz) },
       oceanBearing: { value: new THREE.Vector2(hill.dx, hill.dz) },
       oceanDistance: { value: hill.oceanDistance },
+      oceanSeaLevel: { value: hill.seaLevel },
     },
     defines: { COAST_LOW: low ? 1 : 0 },
     vertexShader: /* glsl */`
       varying vec3 vSurface;
+      varying vec3 vOceanRay;
+      uniform bool coastAtmosphere;
       void main() {
+        if (coastAtmosphere) {
+          // Screen-space sea plane with constant depth. Clipping the huge world-space quad can
+          // perturb its reserved depth near the horizon, even when the vertex depths agree.
+          vec2 xy = vec2(position.x, -position.z) / 22000.0;
+          vec4 viewRay = inverse(projectionMatrix) * vec4(xy, 1.0, 1.0);
+          vOceanRay = transpose(mat3(viewMatrix)) * viewRay.xyz;
+          gl_Position = vec4(xy, 0.99999976, 1.0);
+          return;
+        }
         vec4 world = modelMatrix * vec4(position, 1.0);
         vSurface = world.xyz;
         vec4 clip = projectionMatrix * viewMatrix * world;
@@ -200,21 +217,29 @@ export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: numbe
       ${skyGLSL}
       uniform float oceanTime;
       uniform float oceanDistance;
+      uniform float oceanSeaLevel;
       uniform vec2 oceanOrigin;
       uniform vec2 oceanBearing;
       uniform vec3 coastSunDirection;
       uniform vec3 coastSunColor;
       varying vec3 vSurface;
+      varying vec3 vOceanRay;
       float bell(float x) { return exp(-x * x); }
       float wave(float phase) {
         // A ripple fades once its period is smaller than the pixel footprint.
         return cos(phase) * (1.0 - smoothstep(0.55, 2.3, fwidth(phase)));
       }
       void main() {
-        vec3 toEye = cameraPosition - vSurface;
+        vec3 surface = vSurface;
+        if (coastAtmosphere) {
+          if (vOceanRay.y >= 0.0 || cameraPosition.y <= oceanSeaLevel) discard;
+          surface = cameraPosition + vOceanRay * ((oceanSeaLevel - cameraPosition.y) / vOceanRay.y);
+          if (any(greaterThan(abs(surface.xz - oceanOrigin), vec2(22000.0)))) discard;
+        }
+        vec3 toEye = cameraPosition - surface;
         float distanceToEye = length(toEye);
         vec3 eye = toEye / distanceToEye;
-        vec2 p = vSurface.xz - oceanOrigin;
+        vec2 p = surface.xz - oceanOrigin;
         float u = dot(p, vec2(oceanBearing.y, -oceanBearing.x));
         float v = dot(p, oceanBearing);
         float beach = oceanDistance + 9.0 * sin(u * 0.025) + 8.0 * sin(u * 0.009)
@@ -240,6 +265,7 @@ export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: numbe
         float fresnel = 0.035 + 0.965 * pow(1.0 - max(dot(normal, eye), 0.0), 5.0);
         float shallows = 1.0 - smoothstep(0.0, 50.0, offshore);
         vec3 deep = mix(vec3(0.007, 0.047, 0.149), vec3(0.013, 0.138, 0.217), shallows);
+        if (coastAtmosphere) deep *= vec3(1.22, 1.06, 0.76);
         deep *= (0.91 + swell.y * 1.6) * pow(coastBrightness, 0.8);
         vec3 water = mix(deep, reflection * vec3(0.45, 0.63, 0.79), 0.16 * fresnel);
         float glint = max(dot(normal, normalize(eye + coastSunDirection)), 0.0);
@@ -249,9 +275,11 @@ export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: numbe
         float foam = pow(0.5 + 0.5 * wave(offshore * 1.63 - t * 2.1 + sin(u * 0.62) * 0.65), 9.0);
         foam *= smoothstep(-0.2, 0.9, offshore) * (1.0 - smoothstep(4.0, 17.0, offshore));
         water = mix(water, vec3(0.48, 0.59, 0.61) * coastBrightness, (foam * 0.31 + breakers) * (0.70 + sin(u * 0.43) * 0.24));
-        float haze = 1.0 - exp(-max(0.0, distanceToEye - 145.0) * 0.00043);
-        vec3 air = horizonSky(-toEye.xz);
-        water = mix(water, air * mix(vec3(0.35, 0.61, 0.88), vec3(0.96, 0.98, 1.0), haze), haze);
+        if (!coastAtmosphere) {
+          float haze = 1.0 - exp(-max(0.0, distanceToEye - 145.0) * 0.00043);
+          vec3 air = horizonSky(-toEye.xz);
+          water = mix(water, air * mix(vec3(0.35, 0.61, 0.88), vec3(0.96, 0.98, 1.0), haze), haze);
+        }
         gl_FragColor = vec4(water, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
