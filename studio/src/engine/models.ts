@@ -129,7 +129,8 @@ export const MODEL_YAW: Record<string, number> = {
 
 /**
  * Clone a model, turn it to face +z, and scale it uniformly: `size` = largest horizontal dimension, `width` = x
- * extent, `depth` = z extent, `height` = y extent (meters; the last one given wins). Rests on y = 0, centred on x and z.
+ * extent, `depth` = z extent, `height` = y extent (meters; the last one given wins). `width` and `depth` together fit
+ * the footprint exactly (non-uniform). Rests on y = 0, centred on x and z.
  */
 export async function placeModel(id: string, opts: { size?: number; width?: number; depth?: number; height?: number } = {}): Promise<THREE.Group> {
   const src = await loadModel(id)
@@ -147,10 +148,16 @@ export async function placeModel(id: string, opts: { size?: number; width?: numb
   if (opts.width) k = opts.width / s.x
   if (opts.depth) k = opts.depth / s.z
   if (opts.height) k = opts.height / s.y
-  g.scale.setScalar(k)
+  // width and depth together fit a footprint exactly (a little stretch reads fine on beds and rugs)
+  const kx = opts.width && opts.depth ? opts.width / s.x : k
+  const kz = opts.width && opts.depth ? opts.depth / s.z : k
+  const ky = opts.width && opts.depth && !opts.height ? Math.sqrt(kx * kz) : k
+  // the scale applies before the facing turn: a quarter turn swaps x and z
+  const quarter = Math.abs(Math.sin(g.rotation.y)) > 0.5
+  g.scale.set(quarter ? kz : kx, ky, quarter ? kx : kz)
   // rest on y=0, centred
   const c = box.getCenter(new THREE.Vector3())
-  g.position.set(-c.x * k, -box.min.y * k, -c.z * k)
+  g.position.set(-c.x * kx, -box.min.y * ky, -c.z * kz)
   wrap.add(g)
   return wrap
 }

@@ -867,7 +867,7 @@ export class Interior {
       bed.x,
       bed.z,
       yaw,
-      primary ? { width: bw + 0.15 } : { depth: bl + 0.1 },
+      primary ? { width: bw + 0.15 } : { width: bw + 0.15, depth: bl + 0.2 },
     ))
 
     const ns = FURNITURE_FOOTPRINTS.nightstand

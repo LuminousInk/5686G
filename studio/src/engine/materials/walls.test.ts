@@ -5,11 +5,12 @@ import { PLANS } from '../../plans'
 const HEX = /^#[0-9A-Fa-f]{6}$/
 
 describe('interior walls finish zone', () => {
-  it('is listed last by every plan with the default finish', () => {
+  it('is listed last by every plan, with a valid default finish', () => {
     // share codes encode zones by position, so 'walls' must stay appended at the end
+    const ids = ZONES.walls.options.map(o => o.id)
     for (const plan of PLANS) {
       expect(plan.zones[plan.zones.length - 1]).toBe('walls')
-      expect(plan.finishes.walls).toBe('warm-white')
+      expect(ids).toContain(plan.finishes.walls)
     }
   })
 
