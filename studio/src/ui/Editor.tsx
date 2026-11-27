@@ -40,7 +40,7 @@ function viewBoxFor(p: HomePlan) {
 
 function roofHeights(r: Roof): [number, number] {
   if (r.type === 'shed') return [r.low, r.high]
-  if (r.type === 'gable') return [r.eave, r.ridge]
+  if (r.type === 'gable' || r.type === 'hip') return [r.eave, r.ridge]
   return [r.height, r.height]
 }
 
@@ -524,7 +524,7 @@ export function Editor({ engine, plan, onClose }: { engine: Engine; plan: HomePl
                 <option value="flat">Flat</option>
               </select>
             </label>
-            {selBlock.roof.type !== 'flat' && (
+            {(selBlock.roof.type === 'shed' || selBlock.roof.type === 'gable') && (
               <label className="insp-field">
                 <span>{selBlock.roof.type === 'shed' ? 'Slopes up toward' : 'Ridge runs'}</span>
                 <select
@@ -561,7 +561,7 @@ export function Editor({ engine, plan, onClose }: { engine: Engine; plan: HomePl
               onChange={v =>
                 updateBlock(selBlock.id, b => {
                   if (b.roof.type === 'shed') b.roof.low = Math.min(v, b.roof.high - 0.1)
-                  else if (b.roof.type === 'gable') b.roof.eave = Math.min(v, b.roof.ridge - 0.3)
+                  else if (b.roof.type !== 'flat') b.roof.eave = Math.min(v, b.roof.ridge - 0.3)
                   else b.roof.height = v
                 })
               }
@@ -575,7 +575,7 @@ export function Editor({ engine, plan, onClose }: { engine: Engine; plan: HomePl
                 onChange={v =>
                   updateBlock(selBlock.id, b => {
                     if (b.roof.type === 'shed') b.roof.high = Math.max(v, b.roof.low + 0.1)
-                    else if (b.roof.type === 'gable') b.roof.ridge = Math.max(v, b.roof.eave + 0.3)
+                    else if (b.roof.type !== 'flat') b.roof.ridge = Math.max(v, b.roof.eave + 0.3)
                   })
                 }
               />

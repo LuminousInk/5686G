@@ -69,6 +69,10 @@ export function roofHeightAt(b: Block, x: number, z: number): number {
     }
     return r.low + (r.high - r.low) * t
   }
+  if (r.type === 'hip') {
+    const distance = Math.min(x - x0, x1 - x, z - z0, z1 - z)
+    return r.eave + (r.ridge - r.eave) * distance / (Math.min(x1 - x0, z1 - z0) / 2)
+  }
   // gable
   if (r.ridgeAxis === 'x') {
     const zc = (z0 + z1) / 2
@@ -78,6 +82,20 @@ export function roofHeightAt(b: Block, x: number, z: number): number {
   const xc = (x0 + x1) / 2
   const d = Math.abs(x - xc) / ((x1 - x0) / 2)
   return r.ridge - (r.ridge - r.eave) * d
+}
+
+/** The four inward-sloping planes of a rectangular equal-pitch hip. */
+export function hipPlanes(b: Block) {
+  const [x0, z0, x1, z1] = b.rect
+  const roof = b.roof
+  if (roof.type !== 'hip') return []
+  const pitch = (roof.ridge - roof.eave) / (Math.min(x1 - x0, z1 - z0) / 2)
+  return [
+    (_x: number, z: number) => roof.eave + (z - z0) * pitch,
+    (x: number, _z: number) => roof.eave + (x1 - x) * pitch,
+    (_x: number, z: number) => roof.eave + (z1 - z) * pitch,
+    (x: number, _z: number) => roof.eave + (x - x0) * pitch,
+  ]
 }
 
 /** Interior ceiling height (flat ceilings cap the vault). */

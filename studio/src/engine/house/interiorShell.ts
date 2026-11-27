@@ -73,10 +73,10 @@ export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: 
   }
   for (const r of plan.rooms) {
     if (r.floor !== 'tile') continue
-    const [x0, z0, x1, z1] = r.rect
     const gb = new GeoBuilder()
     const y = fy + 0.004
-    gb.quad(V3(x0, y, z1), V3(x1, y, z1), V3(x1, y, z0), V3(x0, y, z0))
+    for (const [x0, z0, x1, z1] of floorCuts.reduce((pieces, cut) => pieces.flatMap(rect => subtractRect(rect, cut)), [r.rect]))
+      gb.quad(V3(x0, y, z1), V3(x1, y, z1), V3(x1, y, z0), V3(x0, y, z0))
     batch.add(lib.tileFloor, gb.build())
   }
 

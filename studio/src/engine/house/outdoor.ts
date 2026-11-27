@@ -7,6 +7,7 @@ import type { Block, Deck, HomePlan, Porch, Rect, Side, Stair, Terrace } from '.
 import type { Segment2 } from './walls'
 
 const DARK = new THREE.MeshStandardMaterial({ color: '#1a1815', roughness: 1, name: 'underdeck' })
+const GRAVEL = new THREE.MeshStandardMaterial({ name: 'terrace-gravel', color: '#a6a195', roughness: 1, vertexColors: true })
 const SPA_WATER = new THREE.MeshPhysicalMaterial({ color: '#32676a', metalness: 0.24, roughness: 0.17, clearcoat: 1, name: 'spa-water' })
 
 export interface OutdoorOutput {
@@ -35,11 +36,11 @@ export function buildOutdoor(plan: HomePlan, lib: MaterialLibrary, batch: MeshBa
     }
   }
   setFloor?.()
-  for (const s of plan.stairs) stair(s, s.between ? levelFloor(plan, s.between.lower) : 0, lib, batch, rand, out)
+  for (const s of plan.stairs) stair(s, s.between ? levelFloor(plan, s.between.lower) : 0, lib, batch, rand, out, !!plan.liveLighting)
   for (const t of plan.terraces) {
     const frame = plan.blocks.find(b => b.id === t.frame)
     if (plan.levels) setFloor?.(t.height)
-    terrace(t, lib, sectionBatch(batch, frame), rand)
+    terrace(t, lib, sectionBatch(batch, frame), rand, !!plan.liveLighting)
     out.walkables.push({ rect: t.rect, height: () => t.height ?? 0.045, frame })
   }
   return out
@@ -198,7 +199,7 @@ function porch(plan: HomePlan, p: Porch, lib: MaterialLibrary, batch: MeshBatch,
     }
 }
 
-function stair(s: Stair, base: number, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: OutdoorOutput) {
+function stair(s: Stair, base: number, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: OutdoorOutput, designer: boolean) {
   const n = s.steps
   const rh = s.rise / (n + 1)
   const { dx, dz, going: run, rect } = stairFlight(s)
@@ -249,7 +250,7 @@ function stair(s: Stair, base: number, lib: MaterialLibrary, batch: MeshBatch, r
     const b = pt(totalRun, c, 0)
     out.colliders.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z, bottom: s.between ? base - 0.2 : undefined, top: s.between ? base + s.rise + 0.98 : undefined })
   }
-  batch.add(lib.steel, steel.build())
+  batch.add(designer && s.between ? lib.blackMetal : lib.steel, steel.build())
   out.walkables.push({
     rect: !s.between ? [rect[0] - (dx < 0 ? 0.02 : 0), rect[1] - (dz < 0 ? 0.02 : 0), rect[2] + (dx > 0 ? 0.02 : 0), rect[3] + (dz > 0 ? 0.02 : 0)] : rect,
     between: s.between,
@@ -261,20 +262,23 @@ function stair(s: Stair, base: number, lib: MaterialLibrary, batch: MeshBatch, r
   })
 }
 
-function terrace(t: Terrace, lib: MaterialLibrary, batch: MeshBatch, rand: () => number) {
+function terrace(t: Terrace, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, designer: boolean) {
   const [x0, z0, x1, z1] = t.rect
   const top = t.height ?? 0.045
   const gb = new GeoBuilder()
-  const size = 0.6
-  const joint = 0.012
-  for (let x = x0; x < x1 - 0.05; x += size + joint)
+  const concrete = designer && t.kind === 'concrete'
+  const gravel = designer && t.kind === 'gravel'
+  const size = gravel ? 0.34 : 0.6
+  const joint = gravel ? 0 : 0.012
+  if (concrete) gb.box(x0, top - 0.055, z0, x1, top, z1)
+  else for (let x = x0; x < x1 - 0.05; x += size + joint)
     for (let z = z0; z < z1 - 0.05; z += size + joint) {
-      const tn = 0.9 + rand() * 0.18
+      const tn = gravel ? 0.73 + rand() * 0.33 : 0.9 + rand() * 0.18
       gb.color = [tn, tn, tn * 0.98]
       gb.uvOffset = [rand() * 4, rand() * 4]
       gb.box(x, top - 0.045, z, Math.min(x + size, x1), top, Math.min(z + size, z1))
     }
-  batch.add(lib.pavers, gb.build(true))
+  batch.add(concrete ? lib.concrete : gravel ? GRAVEL : lib.pavers, gb.build(!concrete))
   // setting bed (dark joints) and, for raised terraces, a concrete retaining edge
   const base = new GeoBuilder()
   base.box(x0 - 0.02, top - 0.07, z0 - 0.02, x1 + 0.02, top - 0.03, z1 + 0.02, ['bottom'])

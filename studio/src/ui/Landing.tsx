@@ -2,7 +2,7 @@ import { memo, useCallback, useLayoutEffect, useRef, useState, type MouseEvent }
 import { Credits } from './Credits'
 import { HomePage } from './HomePage'
 import { Icon } from './icons'
-import { homeFromRoute, homeRoute } from './routes'
+import { designerRoute, homeFromRoute, homeRoute, PRESENTATION_ROUTE } from './routes'
 import { BrowseImage, GalleryGrid, homes, images, imageSrc, SiteDialog } from './SiteGallery'
 import { StyleComparison } from './StyleComparison'
 
@@ -112,7 +112,7 @@ export function Landing({ hash, progress, ready, pending, error, onRetry, onDesi
             <a href="#compare">Compare</a>
             <a href="#gallery">Gallery</a>
           </nav>
-          <a href="#studio" className="site-header-cta">{ready ? 'Enter the studio' : 'Explore in 3D'} <Icon.diagonal /></a>
+          <a href={PRESENTATION_ROUTE} className="site-header-cta" onClick={openDesign}>{ready ? 'Enter the studio' : 'Explore in 3D'} <Icon.diagonal /></a>
         </div>
       </header>
 
@@ -125,7 +125,7 @@ export function Landing({ hash, progress, ready, pending, error, onRetry, onDesi
             walkThrough={error ? (
               <button type="button" className="site-cta site-walk-cta" onClick={onRetry}>Retry studio load <Icon.diagonal /></button>
             ) : (
-              <a href={walk?.share ?? '#studio'} className="site-cta site-walk-cta" onClick={openDesign}>
+              <a href={walk?.share ?? PRESENTATION_ROUTE} className="site-cta site-walk-cta" onClick={openDesign}>
                 <span>{ready ? 'Walk through' : `Loading the 3D studio… ${progress}%`}</span><Icon.diagonal />
                 {!ready && <span className="site-cta-progress" style={{ width: `${progress}%` }} aria-hidden="true" />}
               </a>
@@ -142,11 +142,14 @@ export function Landing({ hash, progress, ready, pending, error, onRetry, onDesi
                 {error ? (
                   <button type="button" className="site-cta" onClick={onRetry}>Retry studio load <Icon.diagonal /></button>
                 ) : (
-                  <a href="#studio" className={`site-cta site-hero-cta ${ready ? 'site-ready' : ''}`}>
+                  <a href={PRESENTATION_ROUTE} onClick={openDesign} className={`site-cta site-hero-cta ${ready ? 'site-ready' : ''}`}>
                     <span>{ready ? 'Enter the studio' : status}</span><Icon.diagonal />
                     {!ready && <span className="site-cta-progress" style={{ width: `${progress}%` }} aria-hidden="true" />}
                   </a>
                 )}
+                <a href={designerRoute()} className="site-cta site-tour-cta" onClick={openDesign}>
+                  Design your own <Icon.diagonal />
+                </a>
               </div>
               <p className="site-hero-caption">Cedar Ridge <span>·</span> Golden hour</p>
             </div>
