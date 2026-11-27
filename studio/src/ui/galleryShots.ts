@@ -10,6 +10,8 @@ export interface GalleryImage {
   style: string
   light: string
   share: string
+  width?: number
+  height?: number
 }
 
 export interface GalleryCatalog {
