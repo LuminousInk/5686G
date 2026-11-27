@@ -255,6 +255,22 @@ async function analyse(url: string): Promise<Analysed> {
   }
 }
 
+/** Orthographic bounds in the sun's view, aligned to a fixed light-space texel grid. */
+export function motionShadowBounds(box: THREE.Box3, lightView: THREE.Matrix4, mapSize: THREE.Vector2) {
+  const bounds = box.clone().applyMatrix4(lightView)
+  const size = bounds.getSize(new THREE.Vector3())
+  const center = bounds.getCenter(new THREE.Vector3())
+  // Leave space around the receiving region for the snapped center and the PCF taps.
+  const pad = 5
+  const dx = size.x / Math.max(1, mapSize.x - 2 * pad)
+  const dy = size.y / Math.max(1, mapSize.y - 2 * pad)
+  const x = Math.round(center.x / dx) * dx
+  const y = Math.round(center.y / dy) * dy
+  const halfX = dx * mapSize.x * 0.5
+  const halfY = dy * mapSize.y * 0.5
+  return new THREE.Vector4(x - halfX, x + halfX, y - halfY, y + halfY)
+}
+
 export class SkyEnvironment {
   readonly sun: THREE.DirectionalLight
   readonly sunTarget = new THREE.Object3D()
@@ -289,6 +305,7 @@ export class SkyEnvironment {
 
   /** Fit the sun's shadow camera around a box (the house and its yard). */
   fitShadow(box: THREE.Box3) {
+    this.setMotionShadowRegion(box)
     const c = box.getCenter(new THREE.Vector3())
     const r = box.getSize(new THREE.Vector3()).length() / 2
     const cam = this.sun.shadow.camera
@@ -308,9 +325,53 @@ export class SkyEnvironment {
 
   private shadowCenter = new THREE.Vector3()
   private shadowRadius = 30
+  private motionShadowRegion = new THREE.Box3()
+  private motionShadowActive = false
+
+  setMotionShadowRegion(box: THREE.Box3) {
+    this.motionShadowRegion.copy(box)
+    this.restoreStillShadowBounds()
+  }
+
+  private restoreStillShadowBounds() {
+    if (!this.motionShadowActive) return
+    const cam = this.sun.shadow.camera
+    cam.left = cam.bottom = -this.shadowRadius
+    cam.right = cam.top = this.shadowRadius
+    cam.updateProjectionMatrix()
+    this.motionShadowActive = false
+  }
+
+  /** Cache the unjittered sun map during navigation. The fit covers the house and yard for every heading. */
+  beginMotionShadows(refresh: boolean) {
+    const shadow = this.sun.shadow
+    if (!this.motionShadowActive) {
+      this.placeSun(this.sunDir)
+      if (!this.motionShadowRegion.isEmpty()) {
+        this.sunTarget.updateMatrixWorld()
+        shadow.updateMatrices(this.sun)
+        const cam = shadow.camera
+        const fit = motionShadowBounds(this.motionShadowRegion, cam.matrixWorldInverse, shadow.mapSize)
+        cam.left = fit.x
+        cam.right = fit.y
+        cam.bottom = fit.z
+        cam.top = fit.w
+        cam.updateProjectionMatrix()
+      }
+      this.motionShadowActive = true
+      shadow.needsUpdate = true
+    }
+    shadow.needsUpdate ||= refresh
+    shadow.autoUpdate = false
+  }
+
+  endMotionShadows() {
+    this.sun.shadow.autoUpdate = true
+  }
 
   /** Position the light along a direction (used per frame to jitter for soft accumulated shadows). */
   placeSun(dir: THREE.Vector3) {
+    this.restoreStillShadowBounds()
     this.sun.position.copy(this.shadowCenter).addScaledVector(dir, this.shadowRadius * 2 + 20)
     this.sun.updateMatrixWorld()
   }
