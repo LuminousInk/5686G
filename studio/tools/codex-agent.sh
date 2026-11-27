@@ -9,7 +9,7 @@
 # The sandbox is workspace-write with network access (so the worker can run vite preview + Playwright renders on
 # localhost and view them); it cannot write .git, so it never commits. Review `git diff` in the worktree, then commit
 # there and merge the branch cx/<name>. CODEX_MODEL / CODEX_EFFORT / CODEX_TIMEOUT (seconds, default 7200) override the
-# model, reasoning effort and time limit.
+# model, reasoning effort and time limit. REUSE=1 continues in an existing worktree (follow-up briefs).
 set -u
 NAME=$1
 BRIEF=$(realpath "$2")
@@ -24,6 +24,11 @@ LOG=$WORK/logs/$NAME.log
 mkdir -p "$WORK/wt" "$WORK/logs"
 if [ -d "$WT" ] && [ "$(git -C "$WT" branch --show-current)" != "cx/$NAME" ]; then
   echo "worktree $WT belongs to $(git -C "$WT" branch --show-current), not cx/$NAME: pick another name" >&2
+  exit 1
+fi
+# An existing cx/<name> worktree may be hours old. Reuse it only on purpose (a follow-up on the same branch).
+if [ -d "$WT" ] && [ -z "${REUSE:-}" ]; then
+  echo "worktree $WT already exists at $(git -C "$WT" log --oneline -1): set REUSE=1 for a follow-up, or pick a new name" >&2
   exit 1
 fi
 if [ ! -d "$WT" ]; then
