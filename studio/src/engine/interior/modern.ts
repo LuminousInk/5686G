@@ -5,6 +5,9 @@ import type { MaterialLibrary } from '../materials/library'
 import { V3 } from '../geo'
 
 /** Glossy TV screen, shared by every tv() so it is created once. */
+const throwFabric = new THREE.MeshStandardMaterial({ color: '#997457', roughness: 0.94, name: 'woven-throw' })
+const bookCloth = new THREE.MeshStandardMaterial({ color: '#6b7770', roughness: 0.85, name: 'book-cloth' })
+const bookPaper = new THREE.MeshStandardMaterial({ color: '#d7cabb', roughness: 0.92, name: 'book-paper' })
 const screenMaterial = new THREE.MeshStandardMaterial({ color: '#0b0d10', roughness: 0.12, metalness: 0 })
 
 /**
@@ -83,7 +86,7 @@ class Piece {
 }
 
 /** Low oak platform bed: floating plinth, mattress, folded duvet, pillows and an upholstered headboard. */
-export function platformBed(lib: MaterialLibrary, w: number, l: number): THREE.Group {
+export function platformBed(lib: MaterialLibrary, w: number, l: number, headHeight = 0.96): THREE.Group {
   const p = new Piece()
   const pw = w + 0.1 // platform slightly overhangs the mattress
   const pl = l + 0.1
@@ -92,10 +95,12 @@ export function platformBed(lib: MaterialLibrary, w: number, l: number): THREE.G
   p.box(lib.darkWood, pw - 0.16, 0.1, pl - 0.16, 0, 0.05, 0, 0.02)
   p.box(lib.cabinet, pw, 0.28, pl, 0, bedTop - 0.14, 0, 0.02)
   p.box(lib.fabric, w, 0.22, l, 0, bedTop + 0.11, 0, 0.03)
-  // duvet folded back at the foot third (+z), covering the head two-thirds
-  p.box(lib.fabric2, w + 0.08, 0.06, (l * 2) / 3, 0, bedTop + 0.25, -l / 6, 0.02)
+  // The soft fold sits on the mattress and stops short of the platform edge.
+  p.box(lib.fabric, w + 0.035, 0.065, l * 0.7, 0, bedTop + 0.248, l * 0.13, 0.029)
+  p.box(throwFabric, w * 0.81, 0.026, 0.39, w * 0.055, bedTop + 0.289, l / 2 - 0.24, 0.011)
+  p.box(throwFabric, w * 0.81, 0.016, 0.082, w * 0.055, bedTop + 0.302, l / 2 - 0.4, 0.006)
   // two pillows per 0.9 m of width, leaning against the headboard
-  const n = Math.max(2, Math.round((2 * w) / 0.9))
+  const n = 2
   const gap = 0.04
   const pillW = (w - 0.1 - gap * (n - 1)) / n
   for (let i = 0; i < n; i++) {
@@ -103,13 +108,12 @@ export function platformBed(lib: MaterialLibrary, w: number, l: number): THREE.G
     p.tiltBack(lib.fabric, pillW, 0.16, 0.42, V3(x, bedTop + 0.22, -l / 2 + 0.4), 0.3, 0.04)
   }
   // upholstered headboard spans the bed width + 0.1, flush with the platform back
-  p.box(lib.fabric2, pw, 1.05, 0.08, 0, 0.525, -pl / 2 - 0.04, 0.03)
+  p.box(lib.fabric2, pw, headHeight, 0.08, 0, headHeight / 2, -pl / 2 - 0.04, 0.03)
   return p.build('platformBed')
 }
 
-export function nightstand(lib: MaterialLibrary): THREE.Group {
+export function nightstand(lib: MaterialLibrary, w = 0.48, withLamp = true): THREE.Group {
   const p = new Piece()
-  const w = 0.48
   const d = 0.4
   const h = 0.46
   const legH = 0.12
@@ -121,9 +125,9 @@ export function nightstand(lib: MaterialLibrary): THREE.Group {
   p.slab(lib.blackMetal, w - 0.06, 0.003, 0.003, 0, legH + h - 0.05, faceZ)
   p.slab(lib.blackMetal, 0.12, 0.008, 0.008, 0, legH + h / 2 - 0.1, faceZ + 0.002)
   const g = p.build('nightstand')
-  const lamp = tableLamp(lib)
-  lamp.position.y = legH + h
-  g.add(lamp)
+  const accessory = withLamp ? tableLamp(lib) : bookStack(lib)
+  accessory.position.y = legH + h
+  g.add(accessory)
   return g
 }
 
@@ -131,8 +135,8 @@ export function tableLamp(lib: MaterialLibrary): THREE.Group {
   const p = new Piece()
   // tapered ceramic base
   p.cylinder(lib.porcelain, 0.07, 0.12, 0.28, 0, 0.14, 0)
-  // open drum shade
-  p.cylinder(lib.lamp('shade', '#ffe2b8', 4), 0.16, 0.16, 0.2, 0, 0.38, 0, true)
+  p.cylinder(lib.fixtureMetal, 0.012, 0.012, 0.085, 0, 0.301, 0)
+  p.cylinder(lib.lamp('shade', '#ffe2b8', 4), 0.12, 0.148, 0.18, 0, 0.408, 0, true)
   return p.build('tableLamp')
 }
 
@@ -148,6 +152,9 @@ export function diningTable(lib: MaterialLibrary, w: number, d: number): THREE.G
   const p = new Piece()
   const topY = 0.75
   p.box(lib.cabinet, w, 0.04, d, 0, topY - 0.02, 0, 0.006)
+  for (const k of [-1, 1]) {
+    p.box(lib.cabinet, w - 0.18, 0.057, 0.032, 0, topY - 0.066, k * (d / 2 - 0.099), 0.003)
+  }
   const lx = w / 2 - 0.08 - 0.0225
   const lz = d / 2 - 0.08 - 0.0225
   for (const sx of [-1, 1]) for (const sz of [-1, 1])
@@ -182,6 +189,67 @@ export function barStool(lib: MaterialLibrary): THREE.Group {
   return p.build('barStool')
 }
 
+export function bookStack(lib: MaterialLibrary): THREE.Group {
+  const p = new Piece()
+  for (const [i, w, d, x] of [[0, 0.22, 0.155, 0], [1, 0.185, 0.13, 0.018]]) {
+    const y = i * 0.028
+    const cover = i === 0 ? lib.darkWood : bookCloth
+    p.box(cover, w, 0.003, d, x, y + 0.0015, 0, 0.001)
+    p.slab(bookPaper, w - 0.006, 0.022, d - 0.004, x, y + 0.014, 0)
+    p.slab(cover, 0.004, 0.022, d, x - w / 2 + 0.002, y + 0.014, 0)
+    p.box(cover, w, 0.003, d, x, y + 0.0265, 0, 0.001)
+  }
+  return p.build('books')
+}
+
+export function bench(lib: MaterialLibrary, w: number, d: number): THREE.Group {
+  const p = new Piece()
+  p.box(lib.cabinet, w, 0.046, d, 0, 0.419, 0, 0.012)
+  for (const k of [-1, 1]) {
+    p.box(lib.darkWood, 0.053, 0.396, d - 0.065, k * (w / 2 - 0.098), 0.198, 0, 0.009)
+  }
+  p.box(lib.fabric2, w * 0.56, 0.046, d - 0.06, -w * 0.12, 0.465, 0, 0.022)
+  return p.build('entryBench')
+}
+
+export function bathVanity(lib: MaterialLibrary, w: number, d: number): THREE.Group {
+  const p = new Piece()
+  const top = 0.86
+  const front = d / 2 - 0.027
+  p.box(lib.darkWood, w - 0.11, 0.085, d - 0.105, 0, 0.0425, -0.025, 0.006)
+  p.box(lib.cabinet, w - 0.032, 0.71, d - 0.044, 0, 0.44, -0.012, 0.008)
+  for (const k of [-1, 1]) {
+    const x = k * w / 4
+    p.box(lib.cabinet, w / 2 - 0.006, 0.727, 0.019, x, 0.456, front, 0.004)
+    p.box(lib.fixtureMetal, 0.115, 0.009, 0.02, x, 0.704, front + 0.019, 0.003)
+  }
+  // A ceramic deck around an open basin, with a recessed drain.
+  const basinW = Math.min(0.45, w * 0.67)
+  const rim = (w - basinW) / 2
+  for (const k of [-1, 1]) p.box(lib.porcelain, rim, 0.036, d, k * (basinW / 2 + rim / 2), top - 0.018, 0, 0.006)
+  p.box(lib.porcelain, basinW, 0.036, 0.116, 0, top - 0.018, -d / 2 + 0.058, 0.005)
+  p.box(lib.porcelain, basinW, 0.036, 0.062, 0, top - 0.018, d / 2 - 0.031, 0.005)
+  p.box(lib.porcelain, basinW, 0.02, d - 0.174, 0, top - 0.055, 0.027, 0.006)
+  p.cylinder(lib.fixtureMetal, 0.022, 0.022, 0.004, 0, top - 0.043, 0.026, false, 14)
+  p.cylinder(lib.fixtureMetal, 0.02, 0.025, 0.145, 0, top + 0.0725, -d / 2 + 0.047, false, 16)
+  p.box(lib.fixtureMetal, 0.035, 0.035, 0.135, 0, top + 0.125, -d / 2 + 0.099, 0.013)
+  return p.build('bathVanity')
+}
+
+/** A wall-mounted bar with two layers of folded bath linen. */
+export function towelRail(lib: MaterialLibrary, w: number): THREE.Group {
+  const p = new Piece()
+  for (const k of [-1, 1]) {
+    p.box(lib.fixtureMetal, 0.028, 0.028, 0.074, k * (w / 2 - 0.018), 0, 0, 0.004)
+  }
+  p.box(lib.fixtureMetal, w, 0.014, 0.014, 0, 0, 0.033, 0.006)
+  const towelW = w * 0.76
+  p.box(lib.fabric2, towelW, 0.35, 0.016, 0, -0.161, 0.041, 0.006)
+  p.box(lib.fabric2, towelW, 0.29, 0.014, 0, -0.129, 0.057, 0.006)
+  p.box(lib.fabric, towelW - 0.013, 0.021, 0.003, 0, -0.24, 0.065, 0.001)
+  return p.build('towelRail')
+}
+
 export function sideboard(lib: MaterialLibrary, w: number): THREE.Group {
   const p = new Piece()
   const d = 0.45
@@ -210,7 +278,7 @@ export function mediaConsole(lib: MaterialLibrary, w: number): THREE.Group {
   for (let i = 1; i < doors; i++)
     p.slab(lib.blackMetal, 0.003, h, 0.003, -w / 2 + i * dw, legH + h / 2, d / 2 + 0.002)
   const g = p.build('mediaConsole')
-  const t = tv(lib)
+  const t = tv(lib, Math.min(1.58, w * 0.99))
   t.position.y = legH + h
   g.add(t)
   return g
@@ -220,15 +288,16 @@ export function tv(lib: MaterialLibrary, diag = 1.4): THREE.Group {
   const p = new Piece()
   const w = diag * (16 / Math.hypot(16, 9))
   const h = diag * (9 / Math.hypot(16, 9))
-  // thin black body with an 8 mm bezel; the screen sits just proud of its front face
-  p.box(lib.blackMetal, w, h, 0.03, 0, h / 2, 0, 0.006)
-  p.slab(screenMaterial, w - 0.016, h - 0.016, 0.004, 0, h / 2, 0.016)
+  // The pedestal sits flat on the console top, with a short stem under the screen.
+  p.box(lib.blackMetal, w * 0.38, 0.014, 0.19, 0, 0.007, 0, 0.005)
+  p.slab(lib.blackMetal, 0.09, 0.064, 0.032, 0, 0.044, 0)
+  p.box(lib.blackMetal, w, h, 0.03, 0, h / 2 + 0.07, 0, 0.006)
+  p.slab(screenMaterial, w - 0.016, h - 0.016, 0.004, 0, h / 2 + 0.07, 0.016)
   return p.build('tv')
 }
 
-export function wardrobe(lib: MaterialLibrary, w: number): THREE.Group {
+export function wardrobe(lib: MaterialLibrary, w: number, d = 0.6): THREE.Group {
   const p = new Piece()
-  const d = 0.6
   const h = 2.2
   const plinthH = 0.08
   p.box(lib.darkWood, w - 0.1, plinthH, d - 0.1, 0, plinthH / 2, 0, 0.01)
