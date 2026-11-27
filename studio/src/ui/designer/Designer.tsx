@@ -148,7 +148,7 @@ export function Designer(props: DesignerProps) {
       onSave={persist} onProjects={() => { setShowProjects(true); setCreating(false) }} />}
     {props.visible && showProjects && <section className="ds-start" aria-label="Start a home design">
       <header className="ds-start-header">
-        <a href="#home" aria-label="Cuby Homes website" className="ds-wordmark"><img src="./cuby.svg" alt="" /> Cuby Studio</a>
+        <a href="#home" aria-label="Cuby Homes website" className="ds-wordmark"><img src="./cuby.png" alt="" width={28} height={28} /> Cuby Studio</a>
         {active ? <button type="button" className="ds-secondary" onClick={() => setShowProjects(false)}>Back to design</button>
           : <a className="ds-secondary" href={PRESENTATION_ROUTE}>Explore homes</a>}
       </header>
