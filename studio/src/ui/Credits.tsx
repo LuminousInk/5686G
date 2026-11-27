@@ -1,4 +1,5 @@
 import objaverse from '../../tools/objaverse.json'
+import art from '../../public/assets/art/manifest.json'
 
 /** Asset credits, shared by the studio help sheet and the website footer. Objaverse entries come from the manifest. */
 const objaverseCredits = Object.entries(objaverse as Record<string, { title: string; author: string; source: string }>)
@@ -16,6 +17,16 @@ export function Credits() {
           <span key={id}>
             {i ? ', ' : ''}
             <a href={source} target="_blank" rel="noreferrer">{title}</a> by {author}
+          </span>
+        ))}
+        .
+      </p>
+      <p>
+        Open-access artwork from the Art Institute of Chicago (CC0 1.0).{' '}
+        {Object.entries(art).map(([id, { title, artist, source }], i) => (
+          <span key={id}>
+            {i ? ', ' : ''}
+            <a href={source} target="_blank" rel="noreferrer">{title}</a> by {artist}
           </span>
         ))}
         .

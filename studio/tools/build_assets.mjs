@@ -5,6 +5,7 @@
 //   models{,-lo}/<id>.json + <id>_<n>.webp  simplified meshes as glTF JSON (one inline buffer, no meshopt:
 //                                        hosts may refuse WebAssembly) with textures as separate webp files
 //   trees/*.webp                         ez-tree bark and needle textures
+//   art/*.webp and manifest.json          Art Institute of Chicago prints (see fetch_art.py)
 // Usage: node tools/build_assets.mjs [only-matching-substring]
 import fs from 'node:fs'
 import path from 'node:path'
@@ -241,8 +242,31 @@ async function trees() {
   }
 }
 
+async function art() {
+  const src = path.join(RAW, 'art')
+  const dest = path.join(OUT, 'art')
+  const metadata = path.join(src, 'manifest.json')
+  if (!fs.existsSync(metadata)) {
+    if (steps.includes('art')) throw new Error('Run tools/fetch_art.py before building art assets')
+    return
+  }
+  fs.mkdirSync(dest, { recursive: true })
+  const manifest = JSON.parse(fs.readFileSync(metadata, 'utf8'))
+  for (const [id, work] of Object.entries(manifest)) {
+    const file = path.join(dest, `${id}.webp`)
+    if (!only || id.includes(only)) {
+      await sharp(path.join(src, `${id}.jpg`)).rotate().resize(512, 512, { fit: 'inside' })
+        .webp({ quality: 84 }).toFile(file)
+    }
+    const { width, height } = await sharp(file).metadata()
+    Object.assign(work, { width, height })
+  }
+  fs.writeFileSync(path.join(dest, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
+}
+
 if (run('hdri')) await hdris()
 if (run('tex')) await textures()
 if (run('models')) await models()
 if (run('trees')) await trees()
+if (run('art')) await art()
 log('BUILD_ASSETS_OK')

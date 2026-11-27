@@ -4,10 +4,13 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { MaterialLibrary } from '../materials/library'
 import { V3 } from '../geo'
 
-/** Glossy TV screen, shared by every tv() so it is created once. */
 const bookCloth = new THREE.MeshStandardMaterial({ color: '#6b7770', roughness: 0.85, name: 'book-cloth' })
 const bookPaper = new THREE.MeshStandardMaterial({ color: '#d7cabb', roughness: 0.92, name: 'book-paper' })
-const screenMaterial = new THREE.MeshStandardMaterial({ color: '#0b0d10', roughness: 0.12, metalness: 0 })
+
+export function decor<T extends THREE.Object3D>(object: T): T {
+  object.userData.bakeIgnore = true
+  return object
+}
 
 /**
  * Accumulates geometry per material in a piece's local space, then merges each material into a single mesh. Every
@@ -89,8 +92,8 @@ export class Piece {
   }
 }
 
-/** Low oak platform bed: floating plinth, mattress, folded duvet, pillows and an upholstered headboard. */
-export function platformBed(lib: MaterialLibrary, w: number, l: number, headHeight = 0.96): THREE.Group {
+/** Low oak platform bed with a fitted duvet and separately staged linens. */
+export function platformBed(lib: MaterialLibrary, w: number, l: number, headHeight = 0.96, accent = lib.oliveLinen): THREE.Group {
   const p = new Piece()
   const pw = w + 0.1 // platform slightly overhangs the mattress
   const pl = l + 0.1
@@ -101,21 +104,30 @@ export function platformBed(lib: MaterialLibrary, w: number, l: number, headHeig
   const headZ = -pl / 2 - 0.04
   p.box(lib.cabinet, pw, headHeight, 0.08, 0, headHeight / 2, headZ, 0.026)
   p.box(lib.fabric, pw - 0.10, headHeight - 0.37, 0.045, 0, (headHeight + 0.29) / 2, headZ + 0.055, 0.02)
-  p.add(lib.linen, bedcover(w - 0.055, -l * 0.27, l * 0.52, 0.578, 0.20, 0.16))
-  p.add(lib.oliveLinen, bedcover(w - 0.048, l * 0.13, l * 0.47, 0.611, 0.17, 0))
+  p.add(lib.linen, bedcover(w - 0.096, -l * 0.28, l * 0.50 + 0.036, 0.575, 0.19, 0.17))
+  const linens = new Piece()
+  const throwWidth = w - 0.083
+  const runner = bedcover(throwWidth, l * 0.14, l * 0.43, 0.603, 0.20, 0)
+  runner.rotateY(0.014)
+  linens.add(lib.throwLinen, runner)
+  const heel = bedcover(throwWidth, l * 0.156, l * 0.188, 0.606, 0.20, 0)
+  heel.rotateY(0.014)
+  linens.add(accent, heel)
   for (const side of [-1, 1]) {
     const x = side * w * 0.238
-    const pillowHeight = Math.max(0.13, Math.min(0.36, headHeight - 0.60))
-    p.tiltBack(lib.linen, w * 0.44, pillowHeight, 0.135, V3(x, 0.56, -l / 2 + 0.235), 0.27, 0.045)
-    p.tiltBack(lib.fabric, w * 0.35, pillowHeight * 0.80, 0.125, V3(x * 0.95, 0.56, -l / 2 + 0.37), 0.34, 0.045)
-    p.tiltBack(lib.oliveLinen, w * 0.24, pillowHeight * 0.63, 0.105, V3(x * 0.73, 0.56, -l / 2 + 0.48), 0.37, 0.038)
+    const pillowHeight = Math.max(0.13, Math.min(0.39, headHeight - 0.56))
+    linens.tiltBack(lib.linen, w * 0.44, pillowHeight, 0.135, V3(x, 0.548, -l / 2 + 0.265), 0.27, 0.052)
+    linens.tiltBack(lib.fabric2, w * 0.36, pillowHeight * 0.82, 0.125, V3(x * 0.98, 0.555, -l / 2 + 0.39), 0.34, 0.048)
+    linens.tiltBack(accent, w * 0.23, pillowHeight * 0.65, 0.105, V3(x * 0.73, 0.567, -l / 2 + 0.50), 0.37, 0.038)
   }
-  return p.build('platformBed')
+  const bed = p.build('platformBed')
+  bed.add(decor(linens.build('bed-throws-and-pillows')))
+  return bed
 }
 
 /** Fabric rolls down the sides and foot while broad folds continue across the mattress. */
 function bedcover(width: number, head: number, foot: number, top: number, sideDrop: number, footDrop: number) {
-  const geo = new THREE.PlaneGeometry(1, 1, 24, 22)
+  const geo = new THREE.PlaneGeometry(1, 1, 24, 12)
   const position = geo.getAttribute('position')
   for (let i = 0; i < position.count; i++) {
     const u = position.getX(i) * 2
@@ -124,9 +136,9 @@ function bedcover(width: number, head: number, foot: number, top: number, sideDr
     const end = footDrop ? Math.max(0, (v - 0.85) / 0.15) : 0
     const roll = side * Math.PI / 2
     const hem = end * Math.PI / 2
-    const inner = width / 2 - 0.025
+    const inner = width / 2 - 0.018
     const fold = Math.sin(u * 23 + v * 3) + 0.45 * Math.sin(u * 39 - v * 8)
-    const x = u * inner / Math.max(0.80, Math.abs(u)) + Math.sign(u) * 0.078 * Math.sin(roll)
+    const x = u * inner / Math.max(0.80, Math.abs(u)) + Math.sign(u) * 0.086 * Math.sin(roll)
     const z = footDrop
       ? head + Math.min(v / 0.85, 1) * (foot - head - 0.082) + 0.082 * Math.sin(hem)
       : THREE.MathUtils.lerp(head, foot, v)
@@ -171,16 +183,17 @@ export function tableLamp(lib: MaterialLibrary): THREE.Group {
   // tapered ceramic base
   p.cylinder(lib.bathStone, 0.066, 0.09, 0.245, 0, 0.1225, 0)
   p.cylinder(lib.fixtureMetal, 0.012, 0.012, 0.085, 0, 0.301, 0)
-  p.cylinder(lib.diffuser, 0.104, 0.14, 0.18, 0, 0.382, 0, true)
-  return p.build('tableLamp')
+  p.cylinder(lib.linenShade, 0.104, 0.14, 0.18, 0, 0.382, 0, true, 20)
+  p.cylinder(lib.diffuser, 0.101, 0.101, 0.006, 0, 0.437, 0, false, 16)
+  return decor(p.build('tableLamp'))
 }
 
 export function floorLamp(lib: MaterialLibrary): THREE.Group {
   const p = new Piece()
   p.cylinder(lib.blackMetal, 0.15, 0.16, 0.02, 0, 0.01, 0)
   p.cylinder(lib.blackMetal, 0.01, 0.01, 1.55, 0, 0.02 + 1.55 / 2, 0, false, 16)
-  p.cylinder(lib.diffuser, 0.16, 0.20, 0.2, 0, 0.02 + 1.55 + 0.1, 0, true)
-  return p.build('floorLamp')
+  p.cylinder(lib.linenShade, 0.16, 0.20, 0.2, 0, 0.02 + 1.55 + 0.1, 0, true, 20)
+  return decor(p.build('floorLamp'))
 }
 
 export function diningTable(lib: MaterialLibrary, w: number, d: number): THREE.Group {
@@ -234,7 +247,7 @@ export function bookStack(lib: MaterialLibrary): THREE.Group {
     p.slab(cover, 0.004, 0.022, d, x - w / 2 + 0.002, y + 0.014, 0)
     p.box(cover, w, 0.003, d, x, y + 0.0265, 0, 0.001)
   }
-  return p.build('books')
+  return decor(p.build('books'))
 }
 
 export function bench(lib: MaterialLibrary, w: number, d: number): THREE.Group {
@@ -257,7 +270,7 @@ export function towelRail(lib: MaterialLibrary, w: number): THREE.Group {
   p.box(lib.fabric2, towelW, 0.35, 0.016, 0, -0.161, 0.041, 0.006)
   p.box(lib.fabric2, towelW, 0.29, 0.014, 0, -0.129, 0.057, 0.006)
   p.box(lib.fabric, towelW - 0.013, 0.021, 0.003, 0, -0.24, 0.065, 0.001)
-  return p.build('towelRail')
+  return decor(p.build('towelRail'))
 }
 
 export function sideboard(lib: MaterialLibrary, w: number): THREE.Group {
@@ -299,10 +312,10 @@ export function tv(lib: MaterialLibrary, diag = 1.4): THREE.Group {
   const w = diag * (16 / Math.hypot(16, 9))
   const h = diag * (9 / Math.hypot(16, 9))
   // The pedestal sits flat on the console top, with a short stem under the screen.
-  p.box(lib.blackMetal, w * 0.38, 0.014, 0.19, 0, 0.007, 0, 0.005)
-  p.slab(lib.blackMetal, 0.09, 0.064, 0.032, 0, 0.044, 0)
-  p.box(lib.blackMetal, w, h, 0.03, 0, h / 2 + 0.07, 0, 0.006)
-  p.slab(screenMaterial, w - 0.016, h - 0.016, 0.004, 0, h / 2 + 0.07, 0.016)
+  p.box(lib.tvCase, w * 0.38, 0.014, 0.19, 0, 0.007, 0, 0.005)
+  p.slab(lib.tvCase, 0.09, 0.064, 0.032, 0, 0.044, 0)
+  p.box(lib.tvCase, w, h, 0.03, 0, h / 2 + 0.07, 0, 0.006)
+  p.slab(lib.tvGlass, w - 0.016, h - 0.016, 0.004, 0, h / 2 + 0.07, 0.016)
   return p.build('tv')
 }
 

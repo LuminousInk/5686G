@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
 import { plumbingArc } from './catalogFixtures'
-import { Piece } from './modern'
+import { decor, Piece } from './modern'
 
 export function stoneWall(lib: MaterialLibrary, width: number, height: number, bottom = 0) {
   const p = new Piece()
@@ -69,8 +69,8 @@ export function vanity(lib: MaterialLibrary, w: number, d: number, green: boolea
     tap.position.set(x, 0.862, 0.11 * depth)
     g.add(tap)
     const mirrorW = Math.min(bay * 0.80, 0.76)
-    for (const [inset, mat] of [[0, metal], [0.026, lib.mirror]] as const) {
-      const mirror = new THREE.Mesh(new THREE.ShapeGeometry(roundPanel(mirrorW - inset, 0.80 - inset, 0.09), 8), mat)
+    for (const [inset, mat] of [[0, lib.blackMetal], [0.020, lib.vanityGlass]] as const) {
+      const mirror = decor(new THREE.Mesh(new THREE.ShapeGeometry(roundPanel(mirrorW - inset, 0.80 - inset, 0.09), 8), mat))
       mirror.name = inset ? 'vanity-mirror' : 'vanity-mirror-frame'
       mirror.position.set(x, 1.51, inset ? 0.043 : 0.04)
       g.add(mirror)
@@ -82,7 +82,7 @@ export function vanity(lib: MaterialLibrary, w: number, d: number, green: boolea
     sconces.box(metal, 0.045, 0.44, 0.035, x, 1.53, 0.055, 0.009)
     sconces.box(lib.diffuser, 0.024, 0.365, 0.029, x, 1.54, 0.079, 0.012)
   }
-  g.add(sconces.build('vanity-sconces'))
+  g.add(decor(sconces.build('vanity-sconces')))
   return g
 }
 

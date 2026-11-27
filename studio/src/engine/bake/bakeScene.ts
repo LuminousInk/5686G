@@ -84,6 +84,9 @@ export function collectBakeMeshes(house: HouseModel, interior: THREE.Object3D | 
   const near = house.bounds.clone().expandByScalar(MAX_SITE_REACH)
   const box = new THREE.Box3()
   const visit = (root: THREE.Object3D, isTarget: (mesh: THREE.Mesh, name: string) => boolean, siteObjects = false) => {
+    for (let parent = root.parent; parent; parent = parent.parent) {
+      if (parent.userData.bakeIgnore === true) return
+    }
     root.updateWorldMatrix(true, true)
     const collect = (o: THREE.Object3D) => {
       const mesh = o as THREE.Mesh
@@ -99,9 +102,13 @@ export function collectBakeMeshes(house: HouseModel, interior: THREE.Object3D | 
       const target = isTarget(mesh, material.name)
       out.push({ mesh, material, target, key: meshKey(mesh, material, target, geometryHashes) })
     }
-    // A dollhouse toggles these root groups. Traverse their children as they appear in the full house.
-    if (root === house.roof || root === house.ceilings) root.children.forEach(o => o.traverseVisible(collect))
-    else root.traverseVisible(collect)
+    const walk = (object: THREE.Object3D, ignoreVisibility = false) => {
+      if (object.userData.bakeIgnore === true || (!ignoreVisibility && !object.visible)) return
+      collect(object)
+      for (const child of object.children) walk(child)
+    }
+    // A dollhouse toggles these root groups. Visit them as they appear in the full house.
+    walk(root, root === house.roof || root === house.ceilings)
   }
   for (const root of [house.shell, house.ceilings, house.interior]) visit(root, (_, name) => SHELL_RECEIVERS.has(name))
   for (const root of [house.roof, house.outdoor]) visit(root, () => false)
