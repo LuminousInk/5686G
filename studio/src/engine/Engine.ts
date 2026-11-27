@@ -62,6 +62,10 @@ export class Engine {
   private adapt = 1
   private meterAt = -1e9
   private meterSerial = -1
+  private meteredStill = false
+  private snapExposure = true
+  private snapPending = false
+  private lastCamPos = new THREE.Vector3()
   /** absolute exposure the light meter asks for (0 until the first reading) */
   private metered = 0
   dollhouse = false
@@ -363,21 +367,47 @@ export class Engine {
       return
     }
     // eye adaptation: inside, a camera-style light meter on the rendered frame sets the exposure (see render/meter.ts);
-    // outside keeps each time of day's tuned exposure
-    if ((moved || this.pipeline.frames <= 1) && t - this.meterAt > 120) {
+    // outside keeps each time of day's tuned exposure. Readings are taken while the camera moves and once when it
+    // stops, and only a change of more than 10% is acted on, so a still view settles and stops rendering.
+    // a jump (view button, room tap) snaps to the next reading instead of easing in from the last room
+    if (this.camera.position.distanceToSquared(this.lastCamPos) > 1) this.snapExposure = true
+    this.lastCamPos.copy(this.camera.position)
+    if (moved) {
+      this.meteredStill = false
+      if (t - this.meterAt > 120) {
+        this.pipeline.requestMeter()
+        this.meterAt = t
+      }
+    } else if (!this.meteredStill) {
+      this.meteredStill = true
       this.pipeline.requestMeter()
       this.meterAt = t
     }
     const meter = this.pipeline.meter
     if (meter.last && meter.serial !== this.meterSerial) {
       this.meterSerial = meter.serial
-      this.metered = exposureFor(meter.last, 0.3 - 0.14 * this.sky.preset.lamps)
+      const e = exposureFor(meter.last, 0.3 - 0.14 * this.sky.preset.lamps)
+      if (!(this.metered > 0) || Math.abs(Math.log(e / this.metered)) > 0.1) this.metered = e
+      if (this.snapExposure) {
+        this.snapExposure = false
+        this.snapPending = true
+      }
     }
     const inside = this.isInside(this.camera.position)
     let want = 1
     if (inside) want = this.metered > 0 && meter.supported ? THREE.MathUtils.clamp(this.metered / this.sky.exposure, 0.35, 40) : this.insideExposure()
-    if (Math.abs(Math.log(want / this.adapt)) > 0.006) {
-      this.adapt *= Math.pow(want / this.adapt, Math.min(1, dt * 3))
+    if (this.snapPending) {
+      this.snapPending = false
+      this.adapt = want
+      this.pipeline.reset()
+    }
+    const d = Math.log(want / this.adapt)
+    if (Math.abs(d) > 0.02) {
+      this.adapt *= Math.exp(d * Math.min(1, dt * 3))
+      this.pipeline.reset()
+    } else if (d !== 0) {
+      // close enough: snap once, then hold still
+      this.adapt = want
       this.pipeline.reset()
     }
     this.pipeline.exposure = this.sky.exposure * this.adapt

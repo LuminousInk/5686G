@@ -1,4 +1,4 @@
-# Cuby Studio 3D
+# Cuby Studio Variant A
 
 A real-time 3D home configurator for Cuby. Browse five home plans, walk through them, change finishes and
 light, edit the plan, and render a ray-traced photo. Everything runs in the browser (three.js), with no

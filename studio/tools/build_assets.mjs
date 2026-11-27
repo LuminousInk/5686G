@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { NodeIO } from '@gltf-transform/core'
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
-import { dedup, prune, weld, simplify, textureCompress, reorder, flatten, join } from '@gltf-transform/functions'
+import { dedup, prune, weld, simplify, textureCompress, reorder, flatten, join, metalRough, unpartition, getBounds } from '@gltf-transform/functions'
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -61,6 +61,27 @@ const MODELS = {
   GlamVelvetSofa: { tris: 12000, tex: 1024 },
   SheenChair: { tris: 12000, tex: 1024 },
   SheenWoodLeatherSofa: { tris: 12000, tex: 1024 },
+  // Objaverse (Sketchfab, CC BY 4.0; authors in tools/objaverse.json, fetched by tools/fetch_objaverse.py)
+  sofa_beige: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
+  sectional_grey: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
+  sideboard_midcentury: { loTex: 512, tris: 20000, tex: 1024, objaverse: true },
+  dining_table_oak: { loTex: 512, tris: 10000, tex: 1024, objaverse: true },
+  dining_chair_bentwood: { tris: 10000, tex: 512, objaverse: true, error: 0.003 },
+  bar_stool_wood: { tris: 6000, tex: 512, objaverse: true },
+  fridge_steel: { tris: 6000, tex: 1024, objaverse: true },
+  kitchen_faucet: { tris: 6000, tex: 512, objaverse: true, error: 0.003 },
+  bed_upholstered_white: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
+  bed_dark_headboard: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
+  table_lamp_white: { tris: 8000, tex: 512, objaverse: true },
+  dresser_tall: { tris: 15000, tex: 1024, objaverse: true },
+  vanity_floating: { tris: 15000, tex: 1024, objaverse: true },
+  toilet_modern: { tris: 15000, tex: 512, objaverse: true },
+  basin_mixer_dark: { tris: 6000, tex: 512, objaverse: true, error: 0.003 },
+  shower_black: { tris: 12000, tex: 512, objaverse: true, error: 0.02 },
+  towel_bar: { tris: 6000, tex: 512, objaverse: true, error: 0.003 },
+  mirror_wood: { tris: 5000, tex: 512, objaverse: true },
+  desk_lamp_black: { tris: 12000, tex: 512, objaverse: true },
+  stool_aalto: { tris: 10000, tex: 512, objaverse: true },
 }
 
 const log = (...a) => console.log(...a)
@@ -79,7 +100,7 @@ async function hdris() {
 async function textures() {
   const base = path.join(RAW, 'tex')
   for (const id of fs.readdirSync(base)) {
-    if (!id.includes(only)) continue
+    if (only && !only.split(',').some(o => id === o || id.includes(o))) continue
     for (const res of fs.readdirSync(path.join(base, id))) {
       const dir = path.join(base, id, res)
       const jobs = [
@@ -113,6 +134,32 @@ function triCount(doc) {
   return n
 }
 
+/** Sketchfab uploads often carry a flat shadow-catcher disc or floor under the object: drop it. */
+function dropGroundPlanes(doc, id) {
+  const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0]
+  const all = getBounds(scene)
+  const H = all.max[1] - all.min[1]
+  const nodes = doc.getRoot().listNodes().filter(n => n.getMesh())
+  const info = nodes.map(n => {
+    const b = getBounds(n)
+    return { n, b, h: b.max[1] - b.min[1], area: (b.max[0] - b.min[0]) * (b.max[2] - b.min[2]) }
+  })
+  const solid = info.filter(i => i.h >= 0.02 * H)
+  if (!solid.length) return
+  const lo = [Infinity, Infinity], hi = [-Infinity, -Infinity]
+  for (const i of solid) {
+    lo[0] = Math.min(lo[0], i.b.min[0]); lo[1] = Math.min(lo[1], i.b.min[2])
+    hi[0] = Math.max(hi[0], i.b.max[0]); hi[1] = Math.max(hi[1], i.b.max[2])
+  }
+  const solidArea = (hi[0] - lo[0]) * (hi[1] - lo[1])
+  for (const i of info) {
+    if (i.h < 0.02 * H && i.area > 1.6 * solidArea && i.b.max[1] <= all.min[1] + 0.05 * H) {
+      log('drop ground plane', id, i.n.getName())
+      i.n.setMesh(null)
+    }
+  }
+}
+
 async function models() {
   await MeshoptEncoder.ready
   await MeshoptSimplifier.ready
@@ -121,11 +168,11 @@ async function models() {
     .registerDependencies({ 'meshopt.encoder': MeshoptEncoder })
   fs.mkdirSync(path.join(OUT, 'models-lo'), { recursive: true })
   for (const [id, cfg0] of Object.entries(MODELS)) {
-    if (!id.includes(only)) continue
+    if (only && !only.split(',').some(o => id === o || id.includes(o))) continue
     for (const lo of [false, true]) {
     const isRock = /rock|stone|boulder/.test(id)
     // furniture and props never need more than 512px; phones get 256 (rocks keep 512)
-    const cfg = { ...cfg0, tex: lo ? (isRock ? 512 : 256) : Math.min(cfg0.tex, isRock ? 1024 : 512) }
+    const cfg = { ...cfg0, tex: lo ? (isRock ? 512 : cfg0.loTex ?? 256) : Math.min(cfg0.tex, isRock ? 1024 : 512) }
     const base = path.join(RAW, 'models', id)
     // Poly Haven ships .gltf + .bin + textures; the Khronos samples are self-contained .glb
     const src = [path.join(base, `${id}.gltf`), path.join(base, `${id}.glb`)].find(f => fs.existsSync(f))
@@ -135,6 +182,11 @@ async function models() {
     for (const node of doc.getRoot().listNodes()) node.setExtension('KHR_lights_punctual', null)
     const before = triCount(doc)
     const ratio = Math.min(1, cfg.tris / before)
+    // Sketchfab exports often use the old specular-glossiness workflow, which three.js no longer reads
+    if (cfg.objaverse) {
+      await doc.transform(metalRough(), unpartition())
+      dropGroundPlanes(doc, id)
+    }
     await doc.transform(
       dedup(),
       prune(),

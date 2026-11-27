@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Engine } from '../engine/Engine'
 import { loadModel, setModelQuality } from '../engine/models'
+import * as kit from '../engine/interior/modern'
 import { Navigator, type NavMode } from '../engine/nav/navigator'
 import { PLANS, planById } from '../plans'
 import { FloorPlan } from './FloorPlan'
@@ -19,7 +20,7 @@ declare global {
     __ready?: boolean
     /** offline bake hook (tools/bake): the loaded home as GLB + world sky + sun, base64 encoded */
     __bakeExport?: () => Promise<{ glb: string; sky: string; meta: unknown }>
-    __models?: { load: (id: string) => Promise<THREE.Group>; lowRes: (lo: boolean) => void; three: typeof THREE }
+    __models?: { load: (id: string) => Promise<THREE.Group>; lowRes: (lo: boolean) => void; three: typeof THREE; kit: typeof kit }
   }
 }
 
@@ -75,7 +76,7 @@ export function App() {
       return { glb: await b64(r.glb), sky: await b64(r.sky.buffer as ArrayBuffer), meta: r.meta }
     }
     // test hook: tools render each furniture model on its own to check it is assembled correctly
-    window.__models = { load: loadModel, lowRes: setModelQuality, three: THREE }
+    window.__models = { load: loadModel, lowRes: setModelQuality, three: THREE, kit }
     nav = new Navigator(engine, canvas)
     window.__nav = nav
     engine.keepAlive = () => !!nav?.active

@@ -115,10 +115,27 @@ export async function modelPieces(id: string): Promise<THREE.Mesh[]> {
   return out
 }
 
-/** Clone a model and scale it so its largest horizontal dimension equals `size` meters (optional). */
-export async function placeModel(id: string, opts: { size?: number; height?: number } = {}): Promise<THREE.Group> {
+/**
+ * Facing fixes, in radians about +y, for models whose front does not face +z (the convention of every placement in
+ * src/engine/interior): applied before measuring, so sizes refer to the corrected orientation.
+ */
+export const MODEL_YAW: Record<string, number> = {
+  bed_dark_headboard: Math.PI / 2,
+  dresser_tall: -Math.PI / 2,
+  vanity_floating: Math.PI / 2,
+  toilet_modern: -Math.PI / 2,
+  basin_mixer_dark: Math.PI / 2,
+}
+
+/**
+ * Clone a model, turn it to face +z, and scale it uniformly: `size` = largest horizontal dimension, `width` = x
+ * extent, `height` = y extent (meters; the last one given wins). Rests on y = 0, centred on x and z.
+ */
+export async function placeModel(id: string, opts: { size?: number; width?: number; height?: number } = {}): Promise<THREE.Group> {
   const src = await loadModel(id)
   const g = src.clone(true)
+  g.rotation.y = MODEL_YAW[id] ?? 0
+  g.updateMatrixWorld(true)
   const box = new THREE.Box3().setFromObject(g)
   const wrap = new THREE.Group()
   wrap.name = id
@@ -127,6 +144,7 @@ export async function placeModel(id: string, opts: { size?: number; height?: num
   const s = box.getSize(new THREE.Vector3())
   let k = 1
   if (opts.size) k = opts.size / Math.max(s.x, s.z)
+  if (opts.width) k = opts.width / s.x
   if (opts.height) k = opts.height / s.y
   g.scale.setScalar(k)
   // rest on y=0, centred

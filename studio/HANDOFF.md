@@ -1,4 +1,4 @@
-# Handoff: Cuby Studio 3D (for a new Claude Code session)
+# Handoff: Cuby Studio Variant A (for a new Claude Code session)
 
 ## State
 A real-time 3D home configurator (three.js r187, React 19, Vite 8) has replaced the picture-based studio. It has five plans:

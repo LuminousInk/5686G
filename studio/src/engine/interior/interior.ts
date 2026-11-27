@@ -334,7 +334,7 @@ export class Interior {
     return Math.atan2(dx, dz)
   }
 
-  private async model(id: string, x: number, z: number, yaw: number, opts: { size?: number; height?: number; y?: number } = {}) {
+  private async model(id: string, x: number, z: number, yaw: number, opts: { size?: number; width?: number; height?: number; y?: number } = {}) {
     try {
       const g = await placeModel(id, opts)
       g.traverse(o => {
