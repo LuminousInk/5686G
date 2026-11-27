@@ -8,7 +8,8 @@
 #
 # The sandbox is workspace-write with network access (so the worker can run vite preview + Playwright renders on
 # localhost and view them); it cannot write .git, so it never commits. Review `git diff` in the worktree, then commit
-# there and merge the branch cx/<name>. CODEX_MODEL / CODEX_EFFORT override the model and reasoning effort.
+# there and merge the branch cx/<name>. CODEX_MODEL / CODEX_EFFORT / CODEX_TIMEOUT (seconds, default 7200) override the
+# model, reasoning effort and time limit.
 set -u
 NAME=$1
 BRIEF=$(realpath "$2")
@@ -32,7 +33,7 @@ if [ ! -d "$WT" ]; then
 fi
 cd "$WT/studio" || exit 1
 echo "== $NAME (codex) at $(date +%T)" > "$LOG"
-timeout 7200 codex exec -s workspace-write -c sandbox_workspace_write.network_access=true \
+timeout "${CODEX_TIMEOUT:-7200}" codex exec -s workspace-write -c sandbox_workspace_write.network_access=true \
   -c model_reasoning_effort="${CODEX_EFFORT:-high}" ${CODEX_MODEL:+-m "$CODEX_MODEL"} \
   "${IMAGES[@]}" < "$BRIEF" >> "$LOG" 2>&1
 echo "== exit $? at $(date +%T)" >> "$LOG"
