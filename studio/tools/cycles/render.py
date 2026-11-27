@@ -31,6 +31,13 @@ def light(scene, name, kind, position=None):
     return obj
 
 
+EXTERIOR_SKY = {
+    "golden": (0.58, 1.24, (1.07, 1.0, 0.94)),
+    "day": (0.68, 1.28, (0.96, 1.0, 1.06)),
+    "dusk": (0.56, 1.30, (1.28, 1.03, 0.89)),
+}
+
+
 def lighting(scene, prefix, meta):
     w, h = (meta["sky"][k] for k in ("width", "height"))
     pixels = np.fromfile(Path(f"{prefix}.sky.f32"), dtype="<f4").reshape(h, w, 3)
@@ -52,6 +59,25 @@ def lighting(scene, prefix, meta):
     background = nodes["Background"]
     background.inputs["Strength"].default_value = fill
     strength = meta["backgroundScale"] * (0.85 if interior_daylight else 1.0)
+    color = env.outputs["Color"]
+    sky_grade = EXTERIOR_SKY.get(meta["preset"]) if not meta["interior"] else None
+    if sky_grade:
+        gain, saturation, channels = sky_grade
+        strength *= gain
+        sky_color = nodes.new("ShaderNodeHueSaturation")
+        sky_color.inputs["Saturation"].default_value = saturation
+        links.new(color, sky_color.inputs["Color"])
+        tint = nodes.new("ShaderNodeMixRGB")
+        tint.blend_type = "MULTIPLY"
+        tint.inputs[0].default_value = 1
+        tint.inputs[2].default_value = (*channels, 1)
+        links.new(sky_color.outputs[0], tint.inputs[1])
+        visible = nodes.new("ShaderNodeMixRGB")
+        rays = nodes.new("ShaderNodeLightPath")
+        links.new(rays.outputs["Is Camera Ray"], visible.inputs[0])
+        links.new(color, visible.inputs[1])
+        links.new(tint.outputs[0], visible.inputs[2])
+        color = visible.outputs[0]
     if strength != fill:
         rays = nodes.new("ShaderNodeLightPath")
         mix = nodes.new("ShaderNodeMixRGB")
@@ -59,7 +85,7 @@ def lighting(scene, prefix, meta):
         mix.inputs[2].default_value = (strength, strength, strength, 1)
         links.new(rays.outputs["Is Camera Ray"], mix.inputs[0])
         links.new(mix.outputs[0], background.inputs["Strength"])
-    links.new(env.outputs["Color"], background.inputs["Color"])
+    links.new(color, background.inputs["Color"])
 
     solar = meta["sun"]
     if solar["intensity"] > 0:
@@ -79,16 +105,18 @@ def lighting(scene, prefix, meta):
             portal.data.size_y = opening["height"]
             aim(portal, xyz(opening["inward"]))
 
+    practical_gain = 1.13 if not meta["interior"] and meta["preset"] == "dusk" else 1
     for lamp in meta["lamps"]:
         spot = "target" in lamp
         obj = light(scene, "Practical", "SPOT" if spot else "POINT", lamp["position"])
         obj.data.color = lamp["color"]
-        obj.data.energy = lamp["intensity"] * 4 * math.pi
+        obj.data.energy = lamp["intensity"] * 4 * math.pi * practical_gain
         obj.data.shadow_soft_size = 0.075 if spot else 0.12
         if spot:
             obj.data.spot_size = lamp["angle"] * 2
             obj.data.spot_blend = lamp["penumbra"]
             aim(obj, xyz(lamp["target"]) - obj.location)
+    return pixels
 
 
 def connect(links, source, socket):
@@ -150,6 +178,40 @@ def sheer_fabric(nodes, links, surface, shader):
     links.new(weave.outputs[0], surface)
 
 
+def foliage(nodes, links, surface, shader, distant=False):
+    translucent = nodes.new("ShaderNodeBsdfTranslucent")
+    base = shader.inputs["Base Color"]
+    connect(links, base, translucent.inputs["Color"])
+    connect(links, shader.inputs["Normal"], translucent.inputs["Normal"])
+    shader.inputs["Specular IOR Level"].default_value = 0.27
+    if distant:
+        # The card already carries the tree bake's soft fill. Relight the crown while retaining a little of that fill.
+        connect(links, base, shader.inputs["Emission Color"])
+        shader.inputs["Emission Strength"].default_value = 0.10
+    weight = nodes.new("ShaderNodeMath")
+    weight.operation = "MULTIPLY"
+    weight.inputs[1].default_value = 0.20 if distant else 0.33
+    connect(links, shader.inputs["Alpha"], weight.inputs[0])
+    leaf = nodes.new("ShaderNodeMixShader")
+    links.new(weight.outputs[0], leaf.inputs[0])
+    links.new(shader.outputs[0], leaf.inputs[1])
+    links.new(translucent.outputs[0], leaf.inputs[2])
+    links.new(leaf.outputs[0], surface)
+
+
+def contact_shadows(nodes, links, shader, distance, strength=0.22):
+    contact = nodes.new("ShaderNodeAmbientOcclusion")
+    contact.samples = 4
+    contact.inputs["Distance"].default_value = distance
+    multiply = nodes.new("ShaderNodeMixRGB")
+    multiply.blend_type = "MULTIPLY"
+    multiply.inputs[0].default_value = strength
+    base = shader.inputs["Base Color"]
+    connect(links, base, multiply.inputs[1])
+    links.new(contact.outputs["AO"], multiply.inputs[2])
+    links.new(multiply.outputs[0], base)
+
+
 def noise_detail(nodes, links, shader, scale, distance, strength):
     coord = nodes.new("ShaderNodeTexCoord")
     noise = nodes.new("ShaderNodeTexNoise")
@@ -166,6 +228,21 @@ def noise_detail(nodes, links, shader, scale, distance, strength):
     links.new(bump.outputs[0], normal)
     return noise
 
+
+def surface_relief(nodes, links, shader, scale, distance, strength, variation):
+    noise = noise_detail(nodes, links, shader, scale, distance, strength)
+    gain = nodes.new("ShaderNodeMath")
+    gain.operation = "MULTIPLY_ADD"
+    gain.inputs[1].default_value = variation
+    gain.inputs[2].default_value = 1 - variation / 2
+    links.new(noise.outputs["Fac"], gain.inputs[0])
+    base = shader.inputs["Base Color"]
+    multiply = nodes.new("ShaderNodeMixRGB")
+    multiply.blend_type = "MULTIPLY"
+    multiply.inputs[0].default_value = 1
+    connect(links, base, multiply.inputs[1])
+    links.new(gain.outputs[0], multiply.inputs[2])
+    links.new(multiply.outputs[0], base)
 
 
 def camera_bevel(nodes, links, shader, radius):
@@ -192,7 +269,10 @@ def camera_bevel(nodes, links, shader, radius):
     for socket in consumers:
         links.new(mix.outputs[0], socket)
 
-def materials(bevel_scale, daylight_interior):
+def materials(bevel_scale, meta):
+    daylight_interior = meta["interior"] and meta["preset"] in {"day", "golden"}
+    gravel = {mat for obj in bpy.data.objects if obj.type == "MESH" and obj.name.partition(".")[0] == "Decomposed granite paths"
+              for mat in obj.data.materials}
     for mat in bpy.data.materials:
         if mat.node_tree is None:
             continue
@@ -202,10 +282,13 @@ def materials(bevel_scale, daylight_interior):
         if shader is None or output is None:
             continue
         surface = output.inputs["Surface"]
+        name = mat.name.partition(".")[0]
         if mat.get("beautyThinGlass"):
-            thin_glass(nodes, links, surface, shader, 0.5 if daylight_interior and mat.name == "glass" else 1)
+            thin_glass(nodes, links, surface, shader, 0.45 if daylight_interior and name == "glass" else 1)
         elif mat.get("beautySheer"):
             sheer_fabric(nodes, links, surface, shader)
+        elif mat.get("beautyFoliage") or mat.get("beautyForestCard"):
+            foliage(nodes, links, surface, shader, bool(mat.get("beautyForestCard")))
         if mat.get("beautyCanyon"):
             noise = noise_detail(nodes, links, shader, 1.8, 0.11, 0.42)
             base = shader.inputs["Base Color"]
@@ -217,8 +300,14 @@ def materials(bevel_scale, daylight_interior):
             links.new(multiply.outputs[0], base)
         if mat.get("beautyOcean"):
             noise_detail(nodes, links, shader, 0.7, 0.18, 0.4)
+        if not meta["interior"] and name == "Canyon terrain splat":
+            surface_relief(nodes, links, shader, 5.2, 0.032, 0.35, 0.23)
+            contact_shadows(nodes, links, shader, 0.32, 0.28)
+        if not meta["interior"] and mat in gravel:
+            surface_relief(nodes, links, shader, 18, 0.013, 0.48, 0.38)
         # Scans supply the grain; low-amplitude variation breaks up an otherwise uniform gloss.
-        name = mat.name.partition(".")[0]
+        if daylight_interior and name in {"floor", "cabinet"}:
+            contact_shadows(nodes, links, shader, 0.16 if name == "floor" else 0.085)
         if name in {"floor", "ceilingWood", "cabinet", "counter", "zone:walls"}:
             plaster = name == "zone:walls"
             noise = noise_detail(nodes, links, shader, 85 if plaster else 28, 0.0015 if plaster else 0.0007, 0.16)
@@ -273,8 +362,8 @@ def camera(scene, view, args):
 
 
 
-def aerial_perspective(scene):
-    """Fade distant coastal terrain into daylight while keeping the HDRI horizon."""
+def aerial_perspective(scene, meta, sky, strength, pano):
+    """Use the coastal shader's exponential distance falloff and horizon tint."""
     scene.view_layers[0].use_pass_z = True
     scene.render.compositor_device = "CPU"
     tree = bpy.data.node_groups.new("Aerial perspective", "CompositorNodeTree")
@@ -283,29 +372,51 @@ def aerial_perspective(scene):
     nodes, links = tree.nodes, tree.links
     render = nodes.new("CompositorNodeRLayers")
     distance = render.outputs["Depth"]
-    haze = nodes.new("ShaderNodeMapRange")
-    haze.interpolation_type = "SMOOTHERSTEP"
-    haze.clamp = True
-    haze.inputs["From Min"].default_value = 32
-    haze.inputs["From Max"].default_value = 205
-    haze.inputs["To Max"].default_value = 0.67
-    links.new(distance, haze.inputs["Value"])
+    density = 0.0016
+    optical_depth = nodes.new("ShaderNodeMath")
+    optical_depth.operation = "MULTIPLY_ADD"
+    optical_depth.inputs[1].default_value = -density
+    optical_depth.inputs[2].default_value = 31 * density
+    links.new(distance, optical_depth.inputs[0])
+    beyond_foreground = nodes.new("ShaderNodeMath")
+    beyond_foreground.operation = "MINIMUM"
+    beyond_foreground.inputs[1].default_value = 0
+    links.new(optical_depth.outputs[0], beyond_foreground.inputs[0])
+    transmission = nodes.new("ShaderNodeMath")
+    transmission.operation = "EXPONENT"
+    links.new(beyond_foreground.outputs[0], transmission.inputs[0])
+    maximum = min(1, strength * (0.44 if meta["preset"] == "dusk" else 0.70))
+    haze = nodes.new("ShaderNodeMath")
+    haze.operation = "MULTIPLY_ADD"
+    haze.inputs[1].default_value = -maximum
+    haze.inputs[2].default_value = maximum
+    links.new(transmission.outputs[0], haze.inputs[0])
     terrain = nodes.new("ShaderNodeMath")
     terrain.operation = "LESS_THAN"
     terrain.inputs[1].default_value = 60000
     links.new(distance, terrain.inputs[0])
     mask = nodes.new("ShaderNodeMath")
     mask.operation = "MULTIPLY"
-    links.new(haze.outputs["Result"], mask.inputs[0])
+    links.new(haze.outputs[0], mask.inputs[0])
     links.new(terrain.outputs[0], mask.inputs[1])
     mix = nodes.new("ShaderNodeMix")
     mix.data_type = "RGBA"
     factor, image, air = (socket for socket in mix.inputs if socket.enabled)
-    air.default_value = (0.38, 0.51, 0.62, 1)
+    height, width, _ = sky.shape
+    row = round((0.5 - math.asin(0.018) / math.pi) * height - 0.5)
+    x, _, z = meta["camera"]["position"]
+    tx, _, tz = meta["camera"]["target"]
+    center = int((math.atan2(tz - z, tx - x) / math.tau + 0.5) * width)
+    columns = np.arange(width) if pano else np.arange(center - width // 14, center + width // 14) % width
+    horizon = np.median(sky[row, columns], axis=0) * meta["backgroundScale"]
+    horizon = np.minimum(horizon, 4)
+    tint = horizon / (1 + max(horizon)) * (0.30, 0.43, 0.62)
+    air.default_value = (*tint, 1)
     links.new(mask.outputs[0], factor)
     links.new(render.outputs["Image"], image)
     output = nodes.new("NodeGroupOutput")
     links.new(next(socket for socket in mix.outputs if socket.enabled), output.inputs["Image"])
+
 
 def dimensions(value):
     try:
@@ -329,6 +440,7 @@ def main():
     parser.add_argument("--ev", type=float, default=0, help="additional exposure in stops")
     parser.add_argument("--white-balance", type=float, help="white balance in Kelvin")
     parser.add_argument("--bevel-scale", type=float, default=1)
+    parser.add_argument("--haze", type=float, default=1, help="exterior aerial perspective multiplier")
     parser.add_argument("--threads", type=int, default=4)
     args = parser.parse_args()
     width, height = args.size or ((2560, 1280) if args.pano else (1600, 900))
@@ -342,8 +454,8 @@ def main():
         positive += (args.focus,)
     if any(not math.isfinite(n) or n <= 0 for n in positive):
         parser.error("samples, threads, focus, f-stop and white balance must be positive")
-    if not math.isfinite(args.ev) or not math.isfinite(args.bevel_scale) or args.bevel_scale < 0:
-        parser.error("exposure must be finite and bevel scale must be nonnegative")
+    if not math.isfinite(args.ev) or any(not math.isfinite(n) or n < 0 for n in (args.bevel_scale, args.haze)):
+        parser.error("exposure must be finite, and bevel scale and haze must be finite and nonnegative")
     formats = {".webp": "WEBP", ".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG"}
     if args.out.suffix.lower() not in formats:
         parser.error("output must be .webp, .png or .jpg")
@@ -379,17 +491,17 @@ def main():
         bpy.ops.import_scene.gltf(filepath=f"{args.prefix}.glb", import_scene_extras=False)
     finally:
         bpy.app.debug_value = 0
-    daylight_interior = meta["interior"] and meta["preset"] in {"day", "golden"}
-    materials(args.bevel_scale, daylight_interior)
-    lighting(scene, args.prefix, meta)
+    materials(args.bevel_scale, meta)
+    sky = lighting(scene, args.prefix, meta)
     camera(scene, meta["camera"], args)
-    if not meta["interior"] and meta["preset"] in {"day", "golden"}:
-        aerial_perspective(scene)
+    if args.haze and not meta["interior"] and meta["preset"] in EXTERIOR_SKY:
+        aerial_perspective(scene, meta, sky, args.haze, args.pano)
     view = scene.view_settings
     view.view_transform = "AgX"
     view.look = "AgX - Medium Low Contrast" if meta["interior"] else "None"
     room_bias = {"golden": 2.6, "day": 3.0}.get(meta["preset"], 0) if meta["interior"] else 0
-    view.exposure = math.log2(max(0.001, meta["exposure"])) + room_bias + args.ev
+    exterior_bias = 0.38 if not meta["interior"] and meta["preset"] == "day" else 0
+    view.exposure = math.log2(max(0.001, meta["exposure"])) + room_bias + exterior_bias + args.ev
     view.use_white_balance = True
     view.white_balance_temperature = args.white_balance or (7100 if room_bias and meta["preset"] == "day" else 6500)
     scene.render.resolution_x = width

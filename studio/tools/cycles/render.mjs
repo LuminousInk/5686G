@@ -1,7 +1,7 @@
 // Export a studio view in Chromium and render it offline in Blender Cycles.
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,7 +12,7 @@ const script = fileURLToPath(new URL('./render.py', import.meta.url))
 const timeout = 420_000
 const times = ['golden', 'day', 'dusk', 'night']
 const browserArgs = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
-const numericFlags = ['samples', 'threads', 'focus', 'f-stop', 'ev', 'white-balance', 'bevel-scale']
+const numericFlags = ['samples', 'threads', 'focus', 'f-stop', 'ev', 'white-balance', 'bevel-scale', 'haze']
 const renderFlags = {
   ...Object.fromEntries(numericFlags.map(name => [name, { type: 'string' }])),
   size: { type: 'string' },
@@ -66,18 +66,29 @@ function parsePose(raw) {
   return { pos, target: look, fov, mode }
 }
 
-async function savePageBuffer(page, key, file, length) {
-  const handle = await open(file, 'w')
-  try {
-    const chunk = 4 * 1024 * 1024
-    for (let offset = 0; offset < length; offset += chunk) {
-      const raw = await page.evaluate(({ key, offset, chunk }) =>
-        window.__cyclesPayload[key].slice(offset, offset + chunk), { key, offset, chunk })
-      await handle.writeFile(Buffer.from(raw, 'base64'))
-    }
-  } finally {
-    await handle.close()
-  }
+async function savePageBuffer(page, key, file) {
+  // Keep large GLBs off Playwright's JSON channel. The browser writes a local binary download.
+  const [download, url] = await Promise.all([
+    page.waitForEvent('download'),
+    page.evaluate(key => {
+      const encoded = window.__cyclesPayload[key]
+      const chunks = []
+      const chunk = 4 * 1024 * 1024
+      for (let offset = 0; offset < encoded.length; offset += chunk) {
+        const part = encoded.slice(offset, offset + chunk)
+        chunks.push(Uint8Array.fromBase64 ? Uint8Array.fromBase64(part) : Uint8Array.from(atob(part), c => c.charCodeAt(0)))
+      }
+      const handle = document.createElement('a')
+      handle.href = URL.createObjectURL(new Blob(chunks, { type: 'application/octet-stream' }))
+      handle.download = key
+      handle.click()
+      delete window.__cyclesPayload[key]
+      return handle.href
+    }, key),
+  ])
+  await download.saveAs(file)
+  await page.evaluate(url => URL.revokeObjectURL(url), url)
+  await download.delete()
 }
 
 async function exportScene(browser, { shot, plan, view, pose, time, finishes, quality = 'high', prefix, base: address = base() }) {
@@ -85,6 +96,10 @@ async function exportScene(browser, { shot, plan, view, pose, time, finishes, qu
   const page = await browser.newPage({ viewport: { width: 960, height: 540 } })
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
+  const shaderErrors = []
+  page.on('console', message => {
+    if (message.type() === 'error' && message.text().includes('THREE.WebGLProgram: Shader Error')) shaderErrors.push(message.text())
+  })
   page.setDefaultTimeout(timeout)
   try {
     const url = new URL(address)
@@ -114,16 +129,17 @@ async function exportScene(browser, { shot, plan, view, pose, time, finishes, qu
       }
       if (pose) window.__nav.goToPose(pose)
     }, { pose, plan, view })
-    const { meta, glb, sky } = await page.evaluate(async finishes => {
+    const { meta, size } = await page.evaluate(async finishes => {
       window.__cyclesPayload = await window.__beautyExport(finishes)
-      const { glb, sky, meta } = window.__cyclesPayload
-      return { glb: glb.length, sky: sky.length, meta }
+      const { glb, meta } = window.__cyclesPayload
+      return { size: glb.length, meta }
     }, finishes)
+    if (shaderErrors.length) throw new Error(shaderErrors.join('\n'))
     await mkdir(path.dirname(prefix), { recursive: true })
-    await savePageBuffer(page, 'glb', prefix + '.glb', glb)
-    await savePageBuffer(page, 'sky', prefix + '.sky.f32', sky)
+    await savePageBuffer(page, 'glb', prefix + '.glb')
+    await savePageBuffer(page, 'sky', prefix + '.sky.f32')
     await writeFile(prefix + '.json', JSON.stringify(meta) + '\n')
-    console.log(`EXPORTED ${meta.plan} / ${meta.preset} | ${(glb * 0.75 / 1e6).toFixed(1)} MB GLB | ${((performance.now() - start) / 1000).toFixed(1)}s`)
+    console.log(`EXPORTED ${meta.plan} / ${meta.preset} | ${(size * 0.75 / 1e6).toFixed(1)} MB GLB | ${((performance.now() - start) / 1000).toFixed(1)}s`)
   } finally {
     await page.close()
   }
@@ -189,7 +205,7 @@ async function main() {
   if (values.help) {
     console.log('Usage: node tools/cycles/render.mjs SHOT | --plan ID [--view ID | --pose "x,y,z;tx,ty,tz;fov"] | --from PREFIX')
     console.log('Options: --out FILE --size WxH --samples N --pano --time PRESET --finish ZONE=OPTION (repeatable)')
-    console.log('         --focus METRES --f-stop N --ev STOPS --white-balance K --threads N --bevel-scale N')
+    console.log('         --focus METRES --f-stop N --ev STOPS --white-balance K --threads N --bevel-scale N --haze N')
     console.log('         --export-only PREFIX --save-export PREFIX --quality medium|high')
     return
   }
