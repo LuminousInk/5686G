@@ -318,6 +318,7 @@ export function App({ target, visible, requested, onLoad }: {
         window.__ready = true
         report(100)
         reportedTarget.current = target
+        currentEngine.enableAtmospherePrecompute()
       } catch (error) {
         console.error(error)
         if (cancelled) return

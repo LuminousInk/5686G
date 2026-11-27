@@ -3,8 +3,7 @@ import { AerialPerspectiveEffect, SkyMaterial } from '@takram/three-atmosphere'
 import { Ellipsoid, Geodetic } from '@takram/three-geospatial'
 import { EffectPass } from 'postprocessing'
 import type { TimePreset } from './environment'
-import tablesUrl from './atmosphere-lut/coastal.bin?url&no-inline'
-import './atmosphere-lut/ATMOSPHERE-LICENSE.txt?url&no-inline'
+import { canPrecomputeAtmosphere, coastalScatteringZScale, precomputeCoastalAtmosphere } from './atmospherePrecompute'
 
 const { degToRad } = THREE.MathUtils
 const origin = new Geodetic(degToRad(-118.53), degToRad(34.05)).toECEF()
@@ -30,43 +29,13 @@ export function atmosphereSunDirection(preset: string, sceneSun: THREE.Vector3, 
   return out.copy(preset === 'dusk' ? twilightDirection : sceneSun).transformDirection(frame)
 }
 
-// Retain the first eight altitude slices of the 32-slice Bruneton table. These cover the
-// first ~3 km with the original angular and vertical sampling (see atmosphere-lut/README.md).
-const transmittanceWidth = 256
-const transmittanceHeight = 64
-const scatteringWidth = 256
-const scatteringHeight = 128
-const scatteringDepth = 8
-const transmittanceWords = transmittanceWidth * transmittanceHeight * 4
-const scatteringWords = scatteringWidth * scatteringHeight * scatteringDepth * 4
-
-async function loadTables() {
-  const response = await fetch(tablesUrl)
-  if (!response.ok || !response.body) throw new Error(`Atmosphere table HTTP ${response.status}`)
-  const data = await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()
-  if (data.byteLength !== (transmittanceWords + scatteringWords) * 2) throw new Error('Invalid atmosphere table size')
-  const transmittanceTexture = new THREE.DataTexture(
-    new Uint16Array(data, 0, transmittanceWords), transmittanceWidth, transmittanceHeight,
-    THREE.RGBAFormat, THREE.HalfFloatType,
-  )
-  const scatteringTexture = new THREE.Data3DTexture(
-    new Uint16Array(data, transmittanceWords * 2), scatteringWidth, scatteringHeight, scatteringDepth,
-  )
-  scatteringTexture.type = THREE.HalfFloatType
-  for (const texture of [transmittanceTexture, scatteringTexture]) {
-    texture.minFilter = texture.magFilter = THREE.LinearFilter
-    texture.needsUpdate = true
-  }
-  return { transmittanceTexture, scatteringTexture }
-}
-
 function replaceShaderPart(shader: string, original: string, replacement: string) {
   if (!shader.includes(original)) throw new Error(`Atmosphere shader is missing ${original}`)
   return shader.replaceAll(original, replacement)
 }
 
 function cropScatteringLookup(shader: string) {
-  const scale = (32 / scatteringDepth).toFixed(1)
+  const scale = coastalScatteringZScale.toFixed(1)
   return replaceShaderPart(shader, 'uvwz.z, uvwz.w);', `uvwz.z, uvwz.w * ${scale});`)
 }
 
@@ -88,14 +57,20 @@ class CoastalAerialEffect extends AerialPerspectiveEffect {
   private readonly opticalDepthScale = new THREE.Uniform(5)
   private readonly hasOcean = new THREE.Uniform(false)
 
-  constructor(camera: THREE.PerspectiveCamera, coastalGlowColor: THREE.Uniform<THREE.Vector3>) {
+  constructor(
+    camera: THREE.PerspectiveCamera,
+    coastalGlowColor: THREE.Uniform<THREE.Vector3>,
+    atmosphereWeight: THREE.Uniform<number>,
+  ) {
     super(camera, { correctGeometricError: false, sun: false, moon: false, ground: false })
     this.uniforms.set('hazeStart', this.hazeStart)
     this.uniforms.set('opticalDepthScale', this.opticalDepthScale)
     this.uniforms.set('hasOcean', this.hasOcean)
     this.uniforms.set('coastalGlowColor', coastalGlowColor)
+    this.uniforms.set('atmosphereWeight', atmosphereWeight)
 
     let shader = /* glsl */`
+      uniform float atmosphereWeight;
       uniform vec2 hazeStart;
       uniform float opticalDepthScale;
       uniform bool hasOcean;
@@ -132,7 +107,7 @@ class CoastalAerialEffect extends AerialPerspectiveEffect {
       void mainImage(`)
     shader = replaceShaderPart(shader, 'depth = reverseLogDepth(depth, cameraNear, cameraFar);', /* glsl */`
       if (hasOcean && depth >= 0.9999998) {
-        outputColor = vec4(oceanAerial(inputColor.rgb, rayDirection), inputColor.a);
+        outputColor = vec4(mix(inputColor.rgb, oceanAerial(inputColor.rgb, rayDirection), atmosphereWeight), inputColor.a);
         return;
       }
       depth = reverseLogDepth(depth, cameraNear, cameraFar);
@@ -154,7 +129,7 @@ class CoastalAerialEffect extends AerialPerspectiveEffect {
       #ifdef TRANSMITTANCE
       radiance = radiance * coastalTransmittance;`)
     shader = replaceShaderPart(shader, 'outputColor = vec4(radiance, inputColor.a);',
-      'outputColor = vec4(mix(inputColor.rgb, radiance, hazeWeight), inputColor.a);')
+      'outputColor = vec4(mix(inputColor.rgb, radiance, hazeWeight * atmosphereWeight), inputColor.a);')
     this.setFragmentShader(shader)
   }
 
@@ -178,9 +153,13 @@ export class CoastalAtmosphere {
   private readonly coastalGlowColor = new THREE.Uniform(new THREE.Vector3())
   private lastPreset?: TimePreset
   private lastSeaLevel?: number
-  private tables: Promise<boolean> | undefined
-  private loaded = false
-  private disposed = false
+  private readonly atmosphereWeight = new THREE.Uniform(0)
+  private readonly abort = new AbortController()
+  private tables?: Awaited<ReturnType<typeof precomputeCoastalAtmosphere>>
+  private preparation?: Promise<boolean>
+  private unavailable = false
+  private inside = true
+  private fadeProgress = 0
   private daylight = true
   private hasOcean = false
 
@@ -189,14 +168,22 @@ export class CoastalAtmosphere {
     this.irradianceScale = sky.uniforms.SKY_SPECTRAL_RADIANCE_TO_LUMINANCE.value.clone()
     // Upstream shares these uniform vectors between effect instances.
     sky.uniforms.SKY_SPECTRAL_RADIANCE_TO_LUMINANCE.value = this.irradianceScale.clone()
-    this.haze = new CoastalAerialEffect(camera, this.coastalGlowColor)
+    this.haze = new CoastalAerialEffect(camera, this.coastalGlowColor, this.atmosphereWeight)
     this.haze.uniforms.get('SKY_SPECTRAL_RADIANCE_TO_LUMINANCE')!.value = this.irradianceScale.clone()
     sky.uniforms.coastalGlowColor = this.coastalGlowColor
-    sky.fragmentShader = replaceShaderPart(cropScatteringLookup(sky.fragmentShader), 'void main() {', `${coastalGlowShader}
+    sky.uniforms.atmosphereWeight = this.atmosphereWeight
+    // Alpha composite over the HDRI in the opaque queue, before transparent glazing.
+    sky.blending = THREE.CustomBlending
+    sky.blendSrc = THREE.SrcAlphaFactor
+    sky.blendDst = THREE.OneMinusSrcAlphaFactor
+    sky.blendSrcAlpha = THREE.OneFactor
+    sky.blendDstAlpha = THREE.OneMinusSrcAlphaFactor
+    sky.fragmentShader = replaceShaderPart(cropScatteringLookup(sky.fragmentShader), 'void main() {', `uniform float atmosphereWeight;
+      ${coastalGlowShader}
       void main() {`)
     sky.fragmentShader = replaceShaderPart(sky.fragmentShader, 'outputColor.a = 1.0;', /* glsl */`
       outputColor.rgb += coastalGlow(vCameraPosition, rayDirection, sunDirection);
-      outputColor.a = 1.0;
+      outputColor.a = atmosphereWeight;
     `)
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), sky)
     this.mesh.name = 'Pacific Palisades sky'
@@ -207,22 +194,33 @@ export class CoastalAtmosphere {
     this.pass.enabled = false
   }
 
-  prepare(preset: TimePreset) {
-    if (preset.id === 'night') return Promise.resolve(false)
-    this.tables ??= loadTables().then(tables => {
-      if (this.disposed) {
-        for (const texture of Object.values(tables)) texture.dispose()
+  prepare(renderer: THREE.WebGLRenderer) {
+    return this.preparation ??= this.generate(renderer).then(ready => {
+      this.unavailable = !ready
+      return ready
+    })
+  }
+
+  private async generate(renderer: THREE.WebGLRenderer) {
+    const { signal } = this.abort
+    if (signal.aborted || !canPrecomputeAtmosphere(renderer.extensions)) return false
+    try {
+      const tables = await precomputeCoastalAtmosphere(renderer, signal)
+      if (signal.aborted) {
+        tables.dispose()
         return false
       }
-      Object.assign(this.mesh.material, tables)
-      Object.assign(this.haze, tables)
-      return this.loaded = true
-    }).catch(error => {
-      if (!this.disposed) console.warn('Atmosphere tables unavailable, using the HDRI sky', error)
-      this.tables = undefined
+      this.tables = tables
+      const { transmittanceTexture, scatteringTexture } = tables
+      for (const consumer of [this.mesh.material, this.haze]) {
+        consumer.transmittanceTexture = transmittanceTexture
+        consumer.scatteringTexture = scatteringTexture
+      }
+      return true
+    } catch (error) {
+      if (!signal.aborted) console.warn('Atmosphere precompute unavailable, using the HDRI sky', error)
       return false
-    })
-    return this.tables
+    }
   }
 
   configure(preset: TimePreset, sun: THREE.Vector3, seaLevel?: number) {
@@ -253,15 +251,32 @@ export class CoastalAtmosphere {
     this.haze.setOpticalDepthScale(preset.id === 'golden' ? 12 : preset.id === 'dusk' ? 3.5 : 7)
   }
 
-  setView(inside: boolean, lowMotion: boolean) {
-    this.pass.enabled = this.loaded && this.daylight && !inside
+  needsTransition(inside: boolean) {
+    return !!this.tables && this.daylight && !inside && this.fadeProgress < 1
+  }
+
+  get weight() { return this.pass.enabled ? this.atmosphereWeight.value : 0 }
+
+  /** Capture tools wait for the final look, while the render loop can idle on the HDRI. */
+  get settled() {
+    return this.inside || !this.daylight || this.unavailable || this.fadeProgress === 1
+  }
+
+  setView(inside: boolean, lowMotion: boolean, dt: number) {
+    this.inside = inside
     this.haze.setView(this.hasOcean, lowMotion)
+    const transitioning = this.needsTransition(inside)
+    if (transitioning) {
+      this.fadeProgress = Math.min(1, this.fadeProgress + dt / 0.36)
+      this.atmosphereWeight.value = THREE.MathUtils.smoothstep(this.fadeProgress, 0, 1)
+    }
+    this.pass.enabled = this.daylight && !inside && this.fadeProgress > 0
+    return transitioning && this.fadeProgress === 1
   }
 
   dispose() {
-    this.disposed = true
-    this.mesh.material.transmittanceTexture?.dispose()
-    this.mesh.material.scatteringTexture?.dispose()
+    this.abort.abort()
+    this.tables?.dispose()
     this.mesh.material.dispose()
     this.mesh.geometry.dispose()
     // The composer owns the effect pass.

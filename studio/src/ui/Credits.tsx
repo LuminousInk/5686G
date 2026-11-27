@@ -11,6 +11,10 @@ export function Credits() {
         the Khronos glTF Sample Assets (CC BY 4.0). Trees by ez-tree (MIT).
       </p>
       <p>
+        Atmosphere by Takram three-geospatial (MIT) and Eric Bruneton / INRIA, Precomputed Atmospheric
+        Scattering (BSD-3-Clause).
+      </p>
+      <p>
         Furniture and fixtures from Sketchfab creators via Objaverse, CC BY 4.0:{' '}
         {objaverseCredits.map(([id, { title, author, source }], i) => (
           <span key={id}>

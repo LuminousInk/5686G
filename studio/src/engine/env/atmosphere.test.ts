@@ -1,16 +1,23 @@
-import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { resolve } from 'node:path'
-import { gunzipSync } from 'node:zlib'
 import { Geodetic } from '@takram/three-geospatial'
-import { MathUtils, PerspectiveCamera, Vector3 } from 'three'
+import { Data3DTexture, DataTexture, MathUtils, PerspectiveCamera, Vector3, type WebGLRenderer } from 'three'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CoastalAtmosphere, atmosphereSunDirection, palisadesFrame } from './atmosphere'
+import * as precompute from './atmospherePrecompute'
 import { TIME_PRESETS } from './environment'
 
-const packed = readFileSync(new URL('./atmosphere-lut/coastal.bin', import.meta.url))
+function rendererWith(extension?: string) {
+  return { extensions: { has: (name: string) => name === extension } } as WebGLRenderer
+}
 
-afterEach(() => vi.unstubAllGlobals())
+function testTables() {
+  return {
+    transmittanceTexture: new DataTexture(),
+    scatteringTexture: new Data3DTexture(),
+    dispose: vi.fn(),
+  }
+}
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('coastal atmosphere', () => {
   it('places the ocean on the Palisades WGS84 datum and preserves local metre scale', () => {
@@ -34,59 +41,79 @@ describe('coastal atmosphere', () => {
     expect(twilight.y).toBeLessThan(0)
   })
 
-  it('packs the original half-float samples available to the low-altitude shaders', () => {
-    const require = createRequire(import.meta.url)
-    const upstream = resolve(require.resolve('@takram/three-atmosphere'), '../../assets')
-    const transmittance = readFileSync(resolve(upstream, 'transmittance.bin'))
-    const scattering = readFileSync(resolve(upstream, 'scattering.bin'))
-    const data = gunzipSync(packed)
-    expect(data.byteLength).toBe(transmittance.byteLength + 256 * 128 * 8 * 8)
-    expect(data.subarray(0, transmittance.byteLength).equals(transmittance)).toBe(true)
-    expect(data.subarray(transmittance.byteLength).equals(scattering.subarray(0, 256 * 128 * 8 * 8))).toBe(true)
-  })
-
-  it('loads the shared tables once and bypasses the daylight pass indoors and at night', async () => {
-    const fetch = vi.fn(async () => new Response(Uint8Array.from(packed)))
-    vi.stubGlobal('fetch', fetch)
+  it('precomputes once and fades only on exterior daylight frames', async () => {
+    const tables = testTables()
+    let finish!: (value: typeof tables) => void
+    const generate = vi.spyOn(precompute, 'precomputeCoastalAtmosphere')
+      .mockReturnValue(new Promise(resolve => { finish = resolve }))
     const atmosphere = new CoastalAtmosphere(new PerspectiveCamera())
-    const golden = TIME_PRESETS[0]
-    const dusk = TIME_PRESETS[2]
-    const night = TIME_PRESETS[3]
+    const renderer = rendererWith('EXT_color_buffer_half_float')
+    const [golden, , dusk, night] = TIME_PRESETS
     const sun = new Vector3(0, 1, 0)
     try {
-      await Promise.all([atmosphere.prepare(golden), atmosphere.prepare(dusk)])
-      expect(fetch).toHaveBeenCalledTimes(1)
+      const pending = atmosphere.prepare(renderer)
+      expect(atmosphere.prepare(renderer)).toBe(pending)
       atmosphere.configure(golden, sun, -28)
-      atmosphere.setView(false, true)
-      expect(atmosphere.pass.enabled).toBe(true)
-      atmosphere.setView(true, false)
+      atmosphere.setView(false, true, 0.1)
       expect(atmosphere.pass.enabled).toBe(false)
+      expect(atmosphere.settled).toBe(false)
+      finish(tables)
+      expect(await pending).toBe(true)
+      expect(generate).toHaveBeenCalledTimes(1)
+      expect(atmosphere.mesh.material.scatteringTexture).toBe(tables.scatteringTexture)
+
+      expect(atmosphere.needsTransition(false)).toBe(true)
+      expect(atmosphere.setView(false, false, 0.18)).toBe(false)
+      expect(atmosphere.weight).toBeCloseTo(0.5)
+      expect(atmosphere.setView(true, false, 10)).toBe(false)
+      expect(atmosphere.weight).toBe(0)
+      expect(atmosphere.settled).toBe(true)
       atmosphere.configure(night, sun, -28)
-      atmosphere.setView(false, false)
-      expect(atmosphere.pass.enabled).toBe(false)
+      expect(atmosphere.setView(false, false, 10)).toBe(false)
+      expect(atmosphere.weight).toBe(0)
+      expect(atmosphere.settled).toBe(true)
+      atmosphere.configure(dusk, sun, -28)
+      expect(atmosphere.setView(false, false, 0.18)).toBe(true)
+      expect(atmosphere.weight).toBe(1)
+      expect(atmosphere.settled).toBe(true)
+      expect(atmosphere.needsTransition(false)).toBe(false)
+      expect(atmosphere.setView(false, false, 0.18)).toBe(false)
     } finally {
       atmosphere.pass.dispose()
       atmosphere.dispose()
     }
+    expect(tables.dispose).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps the HDRI available after a failed table request and retries on the next preset', async () => {
-    const fetch = vi.fn()
-      .mockResolvedValueOnce(new Response(null, { status: 404 }))
-      .mockResolvedValueOnce(new Response(Uint8Array.from(packed)))
-    vi.stubGlobal('fetch', fetch)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const atmosphere = new CoastalAtmosphere(new PerspectiveCamera())
-    try {
-      expect(await atmosphere.prepare(TIME_PRESETS[0])).toBe(false)
-      atmosphere.setView(false, false)
-      expect(atmosphere.pass.enabled).toBe(false)
-      expect(await atmosphere.prepare(TIME_PRESETS[1])).toBe(true)
-      expect(fetch).toHaveBeenCalledTimes(2)
-    } finally {
-      warn.mockRestore()
-      atmosphere.pass.dispose()
-      atmosphere.dispose()
+  it('keeps the HDRI active when color render targets are unsupported or generation fails', async () => {
+    const generate = vi.spyOn(precompute, 'precomputeCoastalAtmosphere').mockRejectedValue(new Error('incomplete'))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const extension of [undefined, 'EXT_color_buffer_float']) {
+      const atmosphere = new CoastalAtmosphere(new PerspectiveCamera())
+      try {
+        const renderer = rendererWith(extension)
+        expect(await atmosphere.prepare(renderer)).toBe(false)
+        expect(await atmosphere.prepare(renderer)).toBe(false)
+        expect(atmosphere.setView(false, false, 1)).toBe(false)
+        expect(atmosphere.pass.enabled).toBe(false)
+        expect(atmosphere.settled).toBe(true)
+      } finally {
+        atmosphere.pass.dispose()
+        atmosphere.dispose()
+      }
     }
+    expect(generate).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborts work on teardown and disposes any tables that complete concurrently', async () => {
+    const tables = testTables()
+    const generate = vi.spyOn(precompute, 'precomputeCoastalAtmosphere').mockResolvedValue(tables)
+    const atmosphere = new CoastalAtmosphere(new PerspectiveCamera())
+    const pending = atmosphere.prepare(rendererWith('EXT_color_buffer_float'))
+    atmosphere.dispose()
+    atmosphere.pass.dispose()
+    expect(generate.mock.calls[0][1].aborted).toBe(true)
+    expect(await pending).toBe(false)
+    expect(tables.dispose).toHaveBeenCalledTimes(1)
   })
 })
