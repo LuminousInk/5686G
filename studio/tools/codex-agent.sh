@@ -21,6 +21,10 @@ WORK=${OC_WORK:-$ROOT/../oc-work}
 WT=$WORK/wt/$NAME
 LOG=$WORK/logs/$NAME.log
 mkdir -p "$WORK/wt" "$WORK/logs"
+if [ -d "$WT" ] && [ "$(git -C "$WT" branch --show-current)" != "cx/$NAME" ]; then
+  echo "worktree $WT belongs to $(git -C "$WT" branch --show-current), not cx/$NAME: pick another name" >&2
+  exit 1
+fi
 if [ ! -d "$WT" ]; then
   git -C "$ROOT" worktree add -q "$WT" -b "cx/$NAME" HEAD
   ln -s "$ROOT/studio/node_modules" "$WT/studio/node_modules"

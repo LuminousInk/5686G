@@ -41,6 +41,9 @@ export type Roof =
 export interface Block {
   id: string
   rect: Rect
+  level?: string
+  /** Rotation in radians around the centre, in Three.js's +Y convention. */
+  yaw?: number
   roof: Roof
   cladding: Partial<Record<Side, CladdingSpec>> & { default: CladdingSpec }
   /** interior ceiling: 'vaulted' follows the roof, a number is a flat ceiling height */
@@ -78,6 +81,8 @@ export interface Opening {
   panes?: number
   /** horizontal transom bar height above sill */
   transom?: number
+  /** Open slider configuration. Centre uses four leaves with both middle leaves partly retracted. */
+  slide?: 'center' | 'right'
 }
 
 export interface InteriorWall {
@@ -85,6 +90,9 @@ export interface InteriorWall {
   a: [number, number]
   b: [number, number]
   thickness?: number
+  level?: string
+  /** Rotated block whose local coordinates are used for a, b. */
+  frame?: string
 }
 
 export type RoomType =
@@ -102,16 +110,20 @@ export type RoomType =
   | 'office'
   | 'garage'
   | 'mudroom'
+  | 'gym'
 
 export interface RoomDef {
   id: string
   name: string
   type: RoomType
   rect: Rect
+  level?: string
+  /** Rotated block whose local coordinates are used for rect. */
+  frame?: string
   /** floor finish zone: 'floor' (palette wood) or 'tile' */
   floor?: 'wood' | 'tile' | 'concrete'
   /** furniture layout hints */
-  furnish?: Record<string, unknown>
+  furnish?: Record<string, unknown> & { bath?: 'vanity' | 'shower' | 'toilet' }
 }
 
 export interface Deck {
@@ -122,12 +134,17 @@ export interface Deck {
   boardsAlong: 'x' | 'z'
   /** sides with railing */
   rails?: Side[]
+  railHeight?: number
   zone?: string
+  supportY?: number
+  spa?: Rect
 }
 
 export interface Porch {
   id: string
   rect: Rect
+  /** Rotated block whose local coordinates are used for rect and posts. */
+  frame?: string
   /** underside of the porch roof above grade */
   height: number
   posts: [number, number][]
@@ -146,14 +163,22 @@ export interface Stair {
   rise: number
   steps: number
   rails?: ('left' | 'right')[]
+  /** Tread depth (defaults to 0.3 m). */
+  going?: number
+  /** An indoor stair's upper and lower floor. Rise must match their difference. */
+  between?: { upper: string; lower: string }
 }
 
 export interface Terrace {
   id: string
   rect: Rect
+  /** Rotated block whose local coordinates are used for rect. */
+  frame?: string
   kind: 'pavers' | 'concrete' | 'gravel'
   /** top of the terrace above grade (raised terraces sit on a retained fill) */
   height?: number
+  /** Base of the retaining edge where local ground is below grade. */
+  supportY?: number
 }
 
 export interface CameraView {
@@ -205,6 +230,18 @@ export interface PlanFacts {
   stories: number
   width: number
   depth: number
+  main?: number
+  adu?: number
+  lower?: number
+  deck?: number
+  total?: number
+}
+
+export interface FloorLevel {
+  id: string
+  label: string
+  /** Finished floor offset from the main floor. The first level is the main floor. */
+  offset: number
 }
 
 export interface HomePlan {
@@ -215,6 +252,7 @@ export interface HomePlan {
   facts: PlanFacts
   /** finished floor height above grade */
   floorY: number
+  levels?: FloorLevel[]
   blocks: Block[]
   walls: InteriorWall[]
   openings: Opening[]

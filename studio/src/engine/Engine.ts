@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import { applyLightmap, clearLightmap, roomIrradiance } from './bake/lightmaps'
 import { buildHouse, type HouseModel } from './house/build'
+import { framePoint, inRect, levelFloor } from './house/levels'
+import { roofHeightAt } from './house/massing'
 import type { HomePlan } from './house/types'
 import { MaterialLibrary } from './materials/library'
 import { SkyEnvironment, TIME_PRESETS } from './env/environment'
@@ -200,7 +202,7 @@ export class Engine {
     if (!this.cubeRT) this.cubeRT = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType, generateMipmaps: false })
     if (!this.pmrem) this.pmrem = new THREE.PMREMGenerator(this.renderer)
     const cam = new THREE.CubeCamera(0.05, 400, this.cubeRT)
-    cam.position.set(cx, plan.floorY + 1.45, cz)
+    cam.position.set(cx, levelFloor(plan, room.level) + 1.45, cz)
     const prevTarget = this.renderer.getRenderTarget()
     // exterior surfaces must not be hidden; lawn rings follow the main camera so keep them as they are
     this.lib.interiorEnv(0.3, null)
@@ -311,8 +313,9 @@ export class Engine {
     const plan = this.plan
     if (!plan || this.dollhouse) return false
     for (const b of plan.blocks) {
-      const [x0, z0, x1, z1] = b.rect
-      if (p.x > x0 + 0.1 && p.x < x1 - 0.1 && p.z > z0 + 0.1 && p.z < z1 - 0.1 && p.y < plan.floorY + 4.5) return true
+      const [x, z] = framePoint(b, p.x, p.z, true)
+      const y = levelFloor(plan, b.level)
+      if (inRect(b.rect, x, z, 0.1) && p.y >= y && p.y < y + (plan.levels ? roofHeightAt(b, x, z) : 4.5)) return true
     }
     return false
   }

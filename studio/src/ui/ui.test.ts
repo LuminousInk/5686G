@@ -3,6 +3,7 @@ import { TIME_PRESETS } from '../engine/env/environment'
 import { neighbours } from '../engine/house/massing'
 import { ZONES } from '../engine/materials/catalog'
 import { PLANS } from '../plans'
+import { aspenCustom } from '../plans/aspenCustom'
 import { planProblems } from '../plans/validate'
 import { feetInches, planGeometry } from './FloorPlan'
 import { MIN_BLOCK, moveBlockEdge } from './planEdits'
@@ -50,6 +51,15 @@ describe('floor plan', () => {
       expect(g.windows.length).toBeGreaterThan(0)
       expect(g.doors.length).toBeGreaterThan(0)
     }
+  })
+
+  it('draws the angled ADU on the main plan and the two separate suites below', () => {
+    const main = planGeometry(aspenCustom, 'main')
+    const lower = planGeometry(aspenCustom, 'lower')
+    expect(main.exterior.some(([x, z, a, b]) => Math.abs(x - a) > 0.1 && Math.abs(z - b) > 0.1)).toBe(true)
+    expect(lower.exterior).toHaveLength(8)
+    expect(lower.doors).toHaveLength(4)
+    expect(lower.bounds[3]).toBeLessThan(main.bounds[3])
   })
 })
 

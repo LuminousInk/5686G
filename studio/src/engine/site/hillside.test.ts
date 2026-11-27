@@ -48,13 +48,22 @@ describe('hillside lots', () => {
   })
 
   it('cuts a walkout below its selected house face and keeps the front at grade', () => {
-    const hill = new Hillside(aspenCustom, { downhill: 180, grade: 0.135, walkout: { side: 'n', drop: 2.55 } })
-    expect(hill.heightAt(0, -12.93)).toBeCloseTo(0)
-    expect(hill.heightAt(0, -13)).toBeCloseTo(-2.55)
-    expect(hill.heightAt(0, -19)).toBeCloseTo(-2.55)
+    const site = aspenCustom.landscape.site!
+    const { drop } = site.walkout!
+    const hill = new Hillside(aspenCustom, site)
+    const mat = new THREE.MeshStandardMaterial()
+    const [terrain] = hill.buildSurface(mat, mat, true).children
+    for (const { rect: [x0, z0, x1, z1] } of aspenCustom.blocks.filter(b => b.level === 'lower')) {
+      const x = (x0 + x1) / 2
+      expect(hill.heightAt(x, z0)).toBeCloseTo(-drop)
+      expect(hill.heightAt(x, z0 - 6)).toBeCloseTo(-drop)
+      expect(hill.heightAt(x, z1 + 0.07)).toBeCloseTo(0)
+      expect(hill.heightAt(x1 + 0.07, (z0 + z1) / 2)).toBeCloseTo(0)
+      const ray = new THREE.Raycaster(new THREE.Vector3(x, 1, (z0 + z1) / 2), new THREE.Vector3(0, -1, 0))
+      expect(ray.intersectObject(terrain)[0].point.y).toBeCloseTo(-drop)
+    }
     expect(hill.heightAt(0, 2)).toBeCloseTo(0)
     expect(hill.heightAt(-21, 9)).toBeCloseTo(0)
-    expect(hill.heightAt(9.6, -13)).toBeCloseTo(0)
   })
 
   it('transitions through sea level at the beach and extends the headland out to sea', () => {

@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
 import { V3 } from '../geo'
 import type { HouseModel } from '../house/build'
+import { buildInteriorLevels } from '../house/interiorLevels'
 import { blockAt, ceilingAt, INT_WALL_T, sideIntervals, WALL_T } from '../house/massing'
 import type { HomePlan, Opening, Rect, RoomDef, Side } from '../house/types'
 import type { MaterialLibrary } from '../materials/library'
@@ -99,18 +100,30 @@ export class Interior {
 
   constructor(
     private lib: MaterialLibrary,
-    _quality: QualitySettings,
+    _quality?: QualitySettings,
   ) {
     this.group.name = 'interior'
   }
 
   async build(plan: HomePlan, house: HouseModel) {
+    if (plan.levels || plan.blocks.some(b => b.yaw)) {
+      await buildInteriorLevels(plan, this, house.colliders, async (local, barriers) => {
+        const child = new Interior(this.lib)
+        await child.buildRooms(local, barriers)
+        return child
+      })
+      return
+    }
+    await this.buildRooms(plan, house.colliders)
+  }
+
+  private async buildRooms(plan: HomePlan, barriers: readonly Segment2[]) {
     this.plan = plan
     this.fy = plan.floorY
     this.layouts.clear()
     this.boundaries.clear()
     this.openings.clear()
-    this.barriers = house.colliders
+    this.barriers = barriers
     const jobs: Promise<void>[] = []
     for (const r of plan.rooms) {
       const b = blockAt(plan.blocks, (r.rect[0] + r.rect[2]) / 2, (r.rect[1] + r.rect[3]) / 2)
@@ -923,30 +936,32 @@ export class Interior {
     const depthOf = (a: Anchor) => a.inX > 0 ? x1 - a.x : a.inX < 0 ? a.x - x0 : a.inZ > 0 ? z1 - a.z : a.z - z0
     const door = this.roomOpenings(r).find(o => !o.exterior && this.isPassage(o.kind))
     let best: { wall: Anchor; bed: Footprint; stands: Footprint[]; shift: number; score: number } | undefined
-    for (const wall of walls) {
-      for (const w of primary ? [1.9, 1.75, 1.6] : [1.62, 1.48, 1.32]) {
-        const d = primary ? 2.23 : 2.14
+    for (const d of primary ? [2.23, 2.08] : [2.14]) {
+      if (best) break
+      for (const wall of walls) {
         const depth = depthOf(wall)
         if (depth - d < 0.66) continue
-        for (const standW of [0.48, 0.39, 0.34]) {
-          const tableOffset = w / 2 + 0.055 + standW / 2
-          for (const shift of SLIDES) {
-            if (Math.abs(shift) + tableOffset + standW / 2 > wall.len / 2) continue
-            const bed = { ...this.wallPoint(wall, d, shift), w, d }
-            const stands = [-1, 1].map(k => ({
-              ...this.wallPoint(wall, 0.4, shift + k * tableOffset),
-              w: standW, d: 0.4,
-            }))
-            if (![bed, ...stands].every(f => this.canPlace(r, f.x, f.z, f.w, f.d, f.yaw))) continue
-            const uninterrupted = solid.some(a => a.side === wall.side &&
-              Math.abs((a.x - bed.x) * wall.inZ - (a.z - bed.z) * wall.inX) + tableOffset + standW / 2 < a.len / 2)
-            const sideGap = wall.inX === 0 ? Math.min(bed.x - x0, x1 - bed.x) - w / 2
-              : Math.min(bed.z - z0, z1 - bed.z) - w / 2
-            const score = w * 2 + standW + Math.min(1.12, sideGap) * 0.8 +
-              Math.min(1.05, depth - d) + (uninterrupted ? 0.75 : 0) +
-              (wall.side === 's' || wall.side === 'w' ? 0 : 0.3) -
-              (wall.side === door?.side ? 0.4 : 0) - Math.abs(shift) * 0.35
-            if (!best || score > best.score) best = { wall, bed, stands, shift, score }
+        for (const w of primary ? [1.9, 1.75, 1.6] : [1.62, 1.48, 1.32]) {
+          for (const standW of [0.48, 0.39, 0.34]) {
+            const tableOffset = w / 2 + 0.055 + standW / 2
+            for (const shift of SLIDES) {
+              if (Math.abs(shift) + tableOffset + standW / 2 > wall.len / 2) continue
+              const bed = { ...this.wallPoint(wall, d, shift), w, d }
+              const stands = [-1, 1].map(k => ({
+                ...this.wallPoint(wall, 0.4, shift + k * tableOffset),
+                w: standW, d: 0.4,
+              }))
+              if (![bed, ...stands].every(f => this.canPlace(r, f.x, f.z, f.w, f.d, f.yaw))) continue
+              const uninterrupted = solid.some(a => a.side === wall.side &&
+                Math.abs((a.x - bed.x) * wall.inZ - (a.z - bed.z) * wall.inX) + tableOffset + standW / 2 < a.len / 2)
+              const sideGap = wall.inX === 0 ? Math.min(bed.x - x0, x1 - bed.x) - w / 2
+                : Math.min(bed.z - z0, z1 - bed.z) - w / 2
+              const score = w * 2 + standW + Math.min(1.12, sideGap) * 0.8 +
+                Math.min(1.05, depth - d) + (uninterrupted ? 0.75 : 0) +
+                (wall.side === 's' || wall.side === 'w' ? 0 : 0.3) -
+                (wall.side === door?.side ? 0.4 : 0) - Math.abs(shift) * 0.35
+              if (!best || score > best.score) best = { wall, bed, stands, shift, score }
+            }
           }
         }
       }
@@ -1030,20 +1045,27 @@ export class Interior {
             this.canPlace(r, x, z, access.w, access.d, access.yaw, 0, { ignoreFurniture: true, allowDoorLanding: true }) ? [{ f, wall, access }] : []
         })
       }))
-    const toilets = candidates([0.439], 0.623, 0.53)
-    const vanities = candidates(powder ? [0.63, 0.55] : [1.12, 0.99, 0.85, 0.68], powder ? 0.37 : 0.46, powder ? 0.44 : 0.55)
-    const showers = powder ? [null] : candidates([1.38, 1.19, 1.02, 0.88], 0.83, 0.47)
+    const fixture = r.furnish?.bath
+    const toilets = !fixture || fixture === 'toilet' ? candidates([0.439], 0.623, 0.53) : [null]
+    const [x0, z0, x1, z1] = this.inner(r)
+    const narrow = Math.min(x1 - x0, z1 - z0) < 1.45
+    const vanities = !fixture || fixture === 'vanity'
+      ? candidates(powder ? [0.63, 0.55] : narrow ? [0.68, 0.63, 0.55] : [1.12, 0.99, 0.85, 0.68],
+        powder || narrow ? 0.37 : 0.46, powder ? 0.44 : 0.55)
+      : [null]
+    const showers = !powder && (!fixture || fixture === 'shower')
+      ? candidates(narrow ? [1.02, 0.88, 0.80] : [1.38, 1.19, 1.02, 0.88], 0.83, 0.47) : [null]
     let best: { vanity: typeof vanities[number]; toilet: typeof toilets[number]; shower: typeof showers[number]; score: number } | undefined
     for (const vanity of vanities) {
       for (const toilet of toilets) {
         for (const shower of showers) {
-          const set = shower ? [vanity, toilet, shower] : [vanity, toilet]
+          const set = [vanity, toilet, shower].filter(f => f !== null)
           if (set.some(a => set.some(b => a !== b && (
             this.clearance(a.f, b.f) < 0.03 || this.clearance(a.access, b.f) < -FIT_EPSILON
           )))) continue
-          const score = vanity.f.w * 1.25 + (shower?.f.w ?? 0) +
-            Math.min(0.7, this.clearance(vanity.f, toilet.f)) * 0.45 +
-            Math.min(0.6, shower ? this.clearance(vanity.f, shower.f) : 0) * 0.3
+          const score = (vanity?.f.w ?? 0) * 1.25 + (shower?.f.w ?? 0) +
+            Math.min(0.7, vanity && toilet ? this.clearance(vanity.f, toilet.f) : 0) * 0.45 +
+            Math.min(0.6, vanity && shower ? this.clearance(vanity.f, shower.f) : 0) * 0.3
           if (!best || score > best.score) best = { vanity, toilet, shower, score }
         }
       }
@@ -1051,19 +1073,22 @@ export class Interior {
     if (!best) return
 
     const { vanity, toilet, shower } = best
-    const v = this.occupy(r, vanity.f, true)
-    const t = this.occupy(r, toilet.f, true)
-    this.kit(bathVanity(lib, v.w, v.d), v.x, v.z, v.yaw, tileY)
-    const [mx, mz] = this.localPoint(v.x, v.z, v.yaw, 0, -v.d / 2 + 0.005)
-    this.box(lib.blackMetal, mx, fy + 1.12, mz, v.w * 0.87 + 0.022, 0.75, 0.022, v.yaw, 0.008)
-    const mirror = new THREE.Mesh(new THREE.PlaneGeometry(v.w * 0.87, 0.72), lib.mirror)
-    const [mirrorX, mirrorZ] = this.localPoint(mx, mz, v.yaw, 0, 0.012)
-    mirror.position.set(mirrorX, fy + 1.495, mirrorZ)
-    mirror.rotation.y = v.yaw
-    this.group.add(mirror)
-    const jobs: Promise<unknown>[] = [
-      this.model('toilet_modern', t.x, t.z, t.yaw, { height: 0.776, width: t.w, depth: t.d, y: tileY }),
-    ]
+    const v = vanity && this.occupy(r, vanity.f, true)
+    if (v) {
+      this.kit(bathVanity(lib, v.w, v.d), v.x, v.z, v.yaw, tileY)
+      const [mx, mz] = this.localPoint(v.x, v.z, v.yaw, 0, -v.d / 2 + 0.005)
+      this.box(lib.blackMetal, mx, fy + 1.12, mz, v.w * 0.87 + 0.022, 0.75, 0.022, v.yaw, 0.008)
+      const mirror = new THREE.Mesh(new THREE.PlaneGeometry(v.w * 0.87, 0.72), lib.mirror)
+      const [mirrorX, mirrorZ] = this.localPoint(mx, mz, v.yaw, 0, 0.012)
+      mirror.position.set(mirrorX, fy + 1.495, mirrorZ)
+      mirror.rotation.y = v.yaw
+      this.group.add(mirror)
+    }
+    const jobs: Promise<unknown>[] = []
+    if (toilet) {
+      const t = this.occupy(r, toilet.f, true)
+      jobs.push(this.model('toilet_modern', t.x, t.z, t.yaw, { height: 0.776, width: t.w, depth: t.d, y: tileY }))
+    }
     if (shower) {
       const f = this.occupy(r, shower.f)
       const [wx, wz] = this.localPoint(f.x, f.z, f.yaw, 0, -f.d / 2 + 0.005)
@@ -1071,7 +1096,7 @@ export class Interior {
       this.box(lib.porcelain, f.x, fy, f.z, f.w, 0.045, f.d, f.yaw, 0.008)
       const spaceBesideShower = (side: number) => {
         const [x, z] = this.localPoint(f.x, f.z, f.yaw, side * f.w, 0)
-        return this.clearance({ ...f, x, z }, v)
+        return v ? this.clearance({ ...f, x, z }, v) : 0
       }
       const screenSide = spaceBesideShower(1) < spaceBesideShower(-1) ? 1 : -1
       const screenX = screenSide * (f.w / 2 - 0.012)
@@ -1105,7 +1130,7 @@ export class Interior {
       }
       if (towel) break
     }
-    if (!towel) {
+    if (!towel && v) {
       const [x, z] = this.localPoint(v.x, v.z, v.yaw, 0, v.d / 2)
       this.kit(towelRail(lib, 0.3), x, z, v.yaw, tileY + 0.7)
     }

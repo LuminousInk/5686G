@@ -5,6 +5,7 @@ import { PLANS } from '../../plans'
 import { MeshBatch } from '../geo'
 import type { HouseModel } from '../house/build'
 import { buildInteriorShell } from '../house/interiorShell'
+import { buildingSections } from '../house/levels'
 import type { Rect, RoomDef } from '../house/types'
 import type { MaterialLibrary } from '../materials/library'
 import { TIERS } from '../quality'
@@ -47,7 +48,12 @@ function inRoom(room: RoomDef, o: THREE.Object3D) {
   return o.position.x > x0 && o.position.x < x1 && o.position.z > z0 && o.position.z < z1
 }
 
-describe.each(PLANS)('$name interior', plan => {
+const sections = PLANS.flatMap(plan => buildingSections(plan).map(section => ({
+  name: [plan.name, plan.levels && section.level, section.frame?.id].filter(Boolean).join(' / '),
+  plan: section.plan,
+})))
+
+describe.each(sections)('$name interior', ({ plan }) => {
   let interior: Interior
 
   beforeAll(async () => {
@@ -161,8 +167,13 @@ describe.each(PLANS)('$name interior', plan => {
         expect(byName('kitchen-base'), room.id).toHaveLength(1)
         expect(byName('fridge_steel'), room.id).toHaveLength(1)
         const [island] = byName('kitchen-island')
-        expect(island, room.id).toBeDefined()
         const stools = byName('bar_stool_wood')
+        if (room.id === 'adu-kitchen') {
+          expect(island, room.id).toBeUndefined()
+          expect(stools, room.id).toHaveLength(0)
+          continue
+        }
+        expect(island, room.id).toBeDefined()
         expect([2, 3], room.id).toContain(stools.length)
         const islandBounds = new THREE.Box3().setFromObject(island, true)
         for (const stool of stools) {
@@ -170,10 +181,11 @@ describe.each(PLANS)('$name interior', plan => {
         }
       }
       if (room.type === 'bath' || room.type === 'powder') {
-        expect(byName('bathVanity'), room.id).toHaveLength(1)
-        expect(byName('toilet_modern'), room.id).toHaveLength(1)
-        expect(byName('towelRail'), room.id).toHaveLength(1)
-        expect(byName('shower_black'), room.id).toHaveLength(room.type === 'bath' ? 1 : 0)
+        const fixture = room.furnish?.bath
+        expect(byName('bathVanity'), room.id).toHaveLength(!fixture || fixture === 'vanity' ? 1 : 0)
+        expect(byName('toilet_modern'), room.id).toHaveLength(!fixture || fixture === 'toilet' ? 1 : 0)
+        if (fixture !== 'toilet') expect(byName('towelRail'), room.id).toHaveLength(1)
+        expect(byName('shower_black'), room.id).toHaveLength(room.type === 'bath' && (!fixture || fixture === 'shower') ? 1 : 0)
         const floor = plan.floorY + (room.floor === 'tile' ? 0.004 : 0)
         for (const fixture of [...byName('bathVanity'), ...byName('toilet_modern')]) {
           expect(new THREE.Box3().setFromObject(fixture, true).min.y, room.id).toBeCloseTo(floor, 3)

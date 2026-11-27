@@ -4,3 +4,5 @@ dist
 *.tsbuildinfo
 shots
 dist-review
+dist-cx
+dist-test

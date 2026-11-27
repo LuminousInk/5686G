@@ -1,11 +1,17 @@
 import * as THREE from 'three'
+import { framePoint, levelFloor, levelId } from '../house/levels'
 import type { HomePlan, Rect, Side, SiteSpec } from '../house/types'
 
 const margin = 1.4
 const cutWidth = 0.22
 const terraceRun = 5.6
+const foundationCut = 0.04
 const { clamp, lerp, smoothstep } = THREE.MathUtils
 const normals: Record<Side, [number, number]> = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] }
+
+function corners([x0, z0, x1, z1]: Rect): [number, number][] {
+  return [[x0, z0], [x0, z1], [x1, z0], [x1, z1]]
+}
 
 export function siteFootprints(plan: HomePlan): Rect[] {
   const stairs = plan.stairs.map(({ from: [x, z], dir, steps, width }): Rect => {
@@ -17,8 +23,22 @@ export function siteFootprints(plan: HomePlan): Rect[] {
     return [Math.min(x, ex) - Math.abs(dz) * w, Math.min(z, ez) - Math.abs(dx) * w,
       Math.max(x, ex) + Math.abs(dz) * w, Math.max(z, ez) + Math.abs(dx) * w]
   })
-  return [...plan.blocks, ...plan.decks, ...plan.porches, ...plan.terraces].map(p => p.rect)
-    .concat(plan.landscape.driveway ?? [], stairs)
+  const framed = [...plan.porches, ...plan.terraces].map(p => ({ rect: p.rect, frame: plan.blocks.find(b => b.id === p.frame) }))
+  const footprints = [...plan.blocks.map(b => ({ rect: b.rect, frame: b })), ...framed].map(({ rect, frame }): Rect => {
+    if (!frame?.yaw) return rect
+    const points = corners(rect).map(([x, z]) => framePoint(frame, x, z))
+    const xs = points.map(p => p[0])
+    const zs = points.map(p => p[1])
+    return [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)]
+  })
+  return footprints.concat(plan.decks.map(d => d.rect), plan.landscape.driveway ?? [], stairs)
+}
+
+interface WalkoutCut {
+  edge: number
+  back: number
+  low: number
+  high: number
 }
 
 // The same shoreline drives the terrain profile, wet sand and surf.
@@ -40,7 +60,7 @@ export class Hillside {
   readonly oceanDistance?: number
   private readonly drivewayApproach: [number, number][]
   private beds: NonNullable<HomePlan['landscape']['berms']>
-  private walkout?: { side: Side; edge: number; low: number; high: number; drop: number }
+  private walkout?: { side: Side; drop: number; cuts: WalkoutCut[] }
 
   constructor(plan: HomePlan, spec: SiteSpec, origin?: { cx: number; cz: number }) {
     this.beds = plan.landscape.berms ?? []
@@ -55,8 +75,7 @@ export class Hillside {
     this.dx = Math.abs(Math.sin(angle)) < 1e-10 ? 0 : Math.sin(angle)
     this.dz = Math.abs(Math.cos(angle)) < 1e-10 ? 0 : Math.cos(angle)
     this.grade = Math.max(0, spec.grade ?? 0.14)
-    const points = siteFootprints(plan).flatMap(([ax, az, bx, bz]) =>
-      [[ax, az], [ax, bz], [bx, az], [bx, bz]].map(([x, z]) => this.local(x, z)))
+    const points = siteFootprints(plan).flatMap(rect => corners(rect).map(([x, z]) => this.local(x, z)))
     const drives = [...plan.terraces.filter(t => t.id === 'drive').map(t => t.rect), ...(plan.landscape.driveway ?? [])]
     this.drivewayApproach = this.dz < 0.9 ? [] : drives.map(([ax, , bx, bz]) =>
       [this.local(ax, bz)[0], this.local(bx, bz)[0]])
@@ -71,11 +90,15 @@ export class Hillside {
       const { side, drop } = spec.walkout
       const [nx, nz] = normals[side]
       const edge = Math.max(x0 * nx, x1 * nx) + Math.max(z0 * nz, z1 * nz)
-      const faces = blocks.filter(b => Math.abs(Math.max(b[0] * nx, b[2] * nx) + Math.max(b[1] * nz, b[3] * nz) - edge) < 0.001)
-      this.walkout = { side, edge, drop,
-        low: Math.min(...faces.map(b => b[nx ? 1 : 0])),
-        high: Math.max(...faces.map(b => b[nx ? 3 : 2])),
-      }
+      const face = (b: Rect) => Math.max(b[0] * nx, b[2] * nx) + Math.max(b[1] * nz, b[3] * nz)
+      const lower = plan.blocks.filter(b => levelFloor(plan, levelId(plan, b.level)) < 0 && !b.yaw)
+      const cuts = lower.length ? lower.map(({ rect: b }) => ({
+        edge: face(b), back: Math.min(b[0] * nx, b[2] * nx) + Math.min(b[1] * nz, b[3] * nz),
+        low: b[nx ? 1 : 0], high: b[nx ? 3 : 2],
+      })) : blocks.filter(b => Math.abs(face(b) - edge) < 0.001).map(b => ({
+        edge, back: edge, low: b[nx ? 1 : 0], high: b[nx ? 3 : 2],
+      }))
+      this.walkout = { side, drop, cuts }
     }
   }
 
@@ -108,36 +131,43 @@ export class Hillside {
     const upper = Math.max(run, 0)
     const ramp = this.drivewayApproach.reduce((open, [a, b]) =>
       Math.max(open, 1 - smoothstep(Math.max(a - u, u - b, 0), 0.26, 1.35)), 0)
-    const cuts = this.grade * 5 * width * (1 - ramp) * (smoothstep(run, 0, cutWidth) + 0.85 * smoothstep(run, terraceRun, terraceRun + cutWidth))
+    const retainingDrops = this.grade * 5 * width * (1 - ramp) * (smoothstep(run, 0, cutWidth) + 0.85 * smoothstep(run, terraceRun, terraceRun + cutWidth))
     const fall = lerp(upper, Math.max(0, upper - 2) - 0.65 * clamp(upper - 2, 0, terraceRun - 2), width)
     const canyonSides = smoothstep(side, 0, 35)
     const undulation = folds * lerp(0.49, 1, canyonSides) + canyons * outer * lerp(0.31, 1, canyonSides)
-    let h = uphill - this.grade * fall - cuts + landBlend * undulation
+    let h = uphill - this.grade * fall - retainingDrops + landBlend * undulation
     // A broad shoulder rises beside the lot, leaving the middle of the view corridor open.
     h += smoothstep(side, 7, 70) * (4 + 18 * smoothstep(back, 10, 95)) * (1 - smoothstep(run, 15, 140))
 
-    if (this.walkout) {
-      const { side: wall, edge: face, low, high, drop } = this.walkout
-      const [nx, nz] = normals[wall]
-      const along = nx ? z : x
-      const out = x * nx + z * nz - face
-      const ends = Math.max(low - along, along - high, 0)
-      // Keep the cut on the exposed side of the foundation and taper the returns.
-      const exposure = smoothstep(out, -0.04, 0) * (1 - smoothstep(ends, 0.08, 2.8)) * (1 - smoothstep(out, 11, 27))
-      h = lerp(h, Math.min(h, 0) - drop, exposure)
+    if (this.oceanDistance !== undefined && run > 0) {
+      const coast = shoreline(u, this.oceanDistance)
+      const inland = coast - v
+      const extension = Math.max(0, coast - this.oceanDistance)
+      const headland = smoothstep(extension, 16, 100)
+      const taper = smoothstep(v, this.oceanDistance * 0.48, this.oceanDistance + extension * 0.12)
+      const coastalRidge = (this.grade * extension + 23 * headland) * taper
+      const coastalProfile = this.seaLevel + clamp(inland * 0.145, -8, 4)
+      const bluff = smoothstep(inland, 7, 32)
+      const aboveBeach = Math.max(0, coastalProfile - h - coastalRidge) * (1 - smoothstep(inland, 32, 62))
+      h = lerp(h, lerp(coastalProfile, h + coastalRidge + aboveBeach, bluff), smoothstep(run, 0, 9))
     }
 
-    if (this.oceanDistance === undefined || run <= 0) return h
-    const coast = shoreline(u, this.oceanDistance)
-    const inland = coast - v
-    const extension = Math.max(0, coast - this.oceanDistance)
-    const headland = smoothstep(extension, 16, 100)
-    const taper = smoothstep(v, this.oceanDistance * 0.48, this.oceanDistance + extension * 0.12)
-    const coastalRidge = (this.grade * extension + 23 * headland) * taper
-    const coastalProfile = this.seaLevel + clamp(inland * 0.145, -8, 4)
-    const bluff = smoothstep(inland, 7, 32)
-    const aboveBeach = Math.max(0, coastalProfile - h - coastalRidge) * (1 - smoothstep(inland, 32, 62))
-    return lerp(h, lerp(coastalProfile, h + coastalRidge + aboveBeach, bluff), smoothstep(run, 0, 9))
+    if (!this.walkout) return h
+    const { side: wall, drop, cuts } = this.walkout
+    const [nx, nz] = normals[wall]
+    const along = nx ? z : x
+    const outward = x * nx + z * nz
+    let excavation = 0
+    for (const { edge, back, low, high } of cuts) {
+      const out = outward - edge
+      const ends = Math.max(low - along, along - high, 0)
+      // The walls retain grade around the buried sides. The banks flare out beyond the walkout.
+      const returnWidth = lerp(foundationCut, 2.8, smoothstep(out, 0, 2))
+      const exposure = smoothstep(outward, back - foundationCut, back) *
+        (1 - smoothstep(ends, 0, returnWidth)) * (1 - smoothstep(out, 11, 27))
+      excavation = Math.max(excavation, exposure)
+    }
+    return lerp(h, -drop, excavation)
   }
 
   private terrainColor(u: number, v: number, y: number, color: THREE.Color) {
@@ -168,18 +198,20 @@ export class Hillside {
     const uFeatures: number[] = []
     const vFeatures = [v1 + cutWidth, v1 + terraceRun, v1 + terraceRun + cutWidth]
     if (this.walkout) {
-      const { side, edge, low: start, high: end } = this.walkout
+      const { side, cuts } = this.walkout
       const [nx, nz] = normals[side]
-      const point = (d: number, along: number) => this.local(nx ? (edge + d) * nx : along, nz ? (edge + d) * nz : along)
-      const face = point(0, start)
-      const inner = point(-0.04, start)
-      const other = point(0, end)
-      if (face[0] === inner[0]) {
-        uFeatures.push(face[0], other[0])
-        vFeatures.push(inner[1], face[1])
-      } else if (face[1] === inner[1]) {
-        uFeatures.push(inner[0], face[0])
-        vFeatures.push(face[1], other[1])
+      // Pin grid lines to the foundation so triangles do not cross into the lower rooms.
+      if (this.dx === 0 || this.dz === 0) {
+        const point = (d: number, along: number) => this.local(nx ? d * nx : along, nz ? d * nz : along)
+        for (const { back, edge, low, high } of cuts) {
+          for (const d of [back - foundationCut, back, edge, edge + 2, edge + 11, edge + 27]) {
+            for (const along of [low - foundationCut, low, high, high + foundationCut]) {
+              const [u, v] = point(d, along)
+              uFeatures.push(u)
+              vFeatures.push(v)
+            }
+          }
+        }
       }
     }
     const across = axis(u0, u1, low, -1520, 1640, uFeatures)

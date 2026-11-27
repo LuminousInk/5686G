@@ -6,6 +6,7 @@ import * as kit from '../engine/interior/modern'
 import { Navigator, type NavMode } from '../engine/nav/navigator'
 import { PLANS, planById } from '../plans'
 import { FloorPlan } from './FloorPlan'
+import { framePoint, levelFloor } from '../engine/house/levels'
 import { Icon } from './icons'
 import { Joystick } from './Joystick'
 import { CustomizePanel, HelpSheet, PlanFacts, PlanSheet, ShareSheet } from './Panels'
@@ -37,7 +38,8 @@ export function App() {
   const walkHint = useStore(s => s.walkHint)
   const photo = useStore(s => s.photo)
   const editing = useStore(s => s.editing)
-  const [you, setYou] = useState<{ x: number; z: number; yaw: number } | null>(null)
+  const [you, setYou] = useState<{ x: number; z: number; yaw: number; level?: string } | null>(null)
+  const [openedLevel, setOpenedLevel] = useState<string>()
   const [viewId, setViewId] = useState<string | null>('hero')
   const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
   const [portrait, setPortrait] = useState(() => window.innerHeight > window.innerWidth * 1.15)
@@ -100,7 +102,7 @@ export function App() {
       const now = performance.now()
       if (now - last < 120 || !nav) return
       last = now
-      if (nav.mode === 'walk') setYou({ x: engine!.camera.position.x, z: engine!.camera.position.z, yaw: nav.yaw })
+      if (nav.mode === 'walk') setYou({ x: engine!.camera.position.x, z: engine!.camera.position.z, yaw: nav.yaw, level: nav.floorLevel })
       else setYou(null)
     }
     const onHash = () => {
@@ -187,9 +189,10 @@ export function App() {
     setState({ planId: next.id, mode: 'orbit', editing: false, sheet: getState().sheet === 'plans' ? 'plans' : null })
   }
 
-  const setMode = (m: UiMode) => {
+  const setMode = (m: UiMode, level?: string) => {
     if (!nav || !engine) return
     if (m === 'plan') {
+      setOpenedLevel(level)
       setState({ mode: 'plan', sheet: null })
       return
     }
@@ -234,10 +237,12 @@ export function App() {
     if (preset) {
       nav.goToView(preset)
     } else if (r) {
-      const fy = plan.floorY
-      const tx = (r.rect[0] + r.rect[2]) / 2
-      const tz = r.rect[1] + 0.3
-      nav.goToView({ id: 'room', label: r.name, kind: 'walk', pos: [x, fy + 1.62, Math.min(r.rect[3] - 0.6, z + 1.2)], target: [tx, fy + 1.2, tz], fov: 66 })
+      const fy = levelFloor(plan, r.level)
+      const frame = plan.blocks.find(b => b.id === r.frame)
+      const [lx, lz] = framePoint(frame, x, z, true)
+      const [px, pz] = framePoint(frame, lx, Math.max(lz, Math.min(r.rect[3] - 0.6, lz + 1.2)))
+      const [tx, tz] = framePoint(frame, (r.rect[0] + r.rect[2]) / 2, r.rect[1] + 0.3)
+      nav.goToView({ id: 'room', label: r.name, kind: 'walk', pos: [px, fy + 1.62, pz], target: [tx, fy + 1.2, tz], fov: 66 })
     }
     setState({ mode: 'walk' })
   }
@@ -306,11 +311,13 @@ export function App() {
           </button>
         </nav>
 
-        {mode === 'walk' && (
+        {mode === 'walk' && (plan.levels && plan.levels.length > 1 ? (
+          <FloorPlan className="minimap" plan={plan} you={you} compact onOpen={level => setMode('plan', level)} />
+        ) : (
           <button className="minimap" onClick={() => setMode('plan')} aria-label="Open floor plan">
             <FloorPlan plan={plan} you={you} compact />
           </button>
-        )}
+        ))}
 
         <div className="bottom">
           {mode !== 'plan' && chips.length > 0 && (
@@ -366,7 +373,7 @@ export function App() {
                 <Icon.close />
               </button>
             </div>
-            <FloorPlan className="plan-big" plan={plan} onRoom={roomWalk} rotate={portrait && plan.facts.width > plan.facts.depth * 1.15} />
+            <FloorPlan className="plan-big" plan={plan} you={plan.levels ? you : null} initialLevel={openedLevel} onRoom={roomWalk} rotate={portrait && plan.facts.width > plan.facts.depth * 1.15} />
             <p className="note center">Tap a room to stand in it.</p>
           </div>
         )}

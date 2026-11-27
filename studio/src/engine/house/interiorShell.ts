@@ -2,8 +2,9 @@ import * as THREE from 'three'
 import { applyMatrixKeepWinding, GeoBuilder, MeshBatch, V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
 import { buildInteriorDoor } from './interiorDoor'
+import { subtractRect } from './levels'
 import { blockAt, ceilingAt, INT_WALL_T, sideIntervals, sidePoint, SIDES, WALL_T } from './massing'
-import type { BuiltDoor, HomePlan } from './types'
+import type { BuiltDoor, HomePlan, Rect } from './types'
 import type { Segment2 } from './walls'
 
 export interface InteriorShellOutput {
@@ -12,7 +13,7 @@ export interface InteriorShellOutput {
 }
 
 /** Partition walls (with door openings), floors, tile floors and baseboards. */
-export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch): InteriorShellOutput {
+export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch, floorCuts: Rect[] = []): InteriorShellOutput {
   const out: InteriorShellOutput = { colliders: [], doors: [] }
   const fy = plan.floorY
   const ceil = (x: number, z: number) => {
@@ -75,9 +76,11 @@ export function buildInteriorShell(plan: HomePlan, lib: MaterialLibrary, batch: 
 
   // floors
   for (const b of plan.blocks) {
-    const [x0, z0, x1, z1] = b.rect
     const gb = new GeoBuilder()
-    gb.quad(V3(x0 + 0.01, fy, z1 - 0.01), V3(x1 - 0.01, fy, z1 - 0.01), V3(x1 - 0.01, fy, z0 + 0.01), V3(x0 + 0.01, fy, z0 + 0.01))
+    const [x0, z0, x1, z1] = b.rect
+    const floor: Rect = [x0 + 0.01, z0 + 0.01, x1 - 0.01, z1 - 0.01]
+    for (const [a, c, d, e] of floorCuts.reduce((pieces, cut) => pieces.flatMap(r => subtractRect(r, cut)), [floor]))
+      gb.quad(V3(a, fy, e), V3(d, fy, e), V3(d, fy, c), V3(a, fy, c))
     batch.add(b.utility ? lib.concrete : lib.floor, gb.build())
   }
   for (const r of plan.rooms) {
