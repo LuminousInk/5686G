@@ -117,6 +117,12 @@ function modelLoader(priority: number) {
  * A model that fails to load resolves to an empty group: one missing chair or rock must not stop the home loading.
  */
 export function loadModel(id: string): Promise<THREE.Group> {
+  if (import.meta.env.PUBLIC_BUILD) {
+    // Use the live library exposed by the studio so procedural furniture shares its active finishes.
+    const lib = window.__engine?.lib
+    if (!lib) return Promise.reject(new Error('The studio material library is unavailable'))
+    return import('./standins').then(({ standinModel }) => standinModel(lib, id, MODEL_YAW[id] ?? 0))
+  }
   const base = `./assets/${folder}/`
   const url = `${base}${id}.json`
   let p = cache.get(url)

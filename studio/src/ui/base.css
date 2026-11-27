@@ -25,9 +25,6 @@
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
 }
 
-@font-face { font-family: 'Chakra Petch'; font-weight: 400; font-display: swap; src: url('../fonts/chakra-petch-400.woff2') format('woff2'); }
-@font-face { font-family: 'Chakra Petch'; font-weight: 500; font-display: swap; src: url('../fonts/chakra-petch-500.woff2') format('woff2'); }
-@font-face { font-family: 'Chakra Petch'; font-weight: 600; font-display: swap; src: url('../fonts/chakra-petch-600.woff2') format('woff2'); }
 
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 14px; overflow: hidden; -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
