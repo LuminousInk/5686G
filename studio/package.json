@@ -21,6 +21,10 @@
   "dependencies": {
     "@dgreenheck/ez-tree": "^1.1.0",
     "@monogrid/gainmap-js": "^3.7.3",
+    "@photo-sphere-viewer/core": "^5.15.1",
+    "@photo-sphere-viewer/gyroscope-plugin": "^5.15.1",
+    "@photo-sphere-viewer/markers-plugin": "^5.15.1",
+    "@photo-sphere-viewer/virtual-tour-plugin": "^5.15.1",
     "@takram/three-atmosphere": "^0.19.1",
     "@takram/three-clouds": "^0.7.6",
     "@takram/three-geospatial": "^0.9.1",
@@ -56,5 +60,10 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
     "vitest": "^5.1.2"
+  },
+  "overrides": {
+    "@photo-sphere-viewer/core": {
+      "three": "$three"
+    }
   }
 }
