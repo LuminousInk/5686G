@@ -180,7 +180,7 @@ export function ShareSheet() {
 }
 
 /** Sketchfab authors of the CC BY furniture (tools/objaverse.json) */
-const CREDITS = ["13213213213", "allenbranch", "CioJay", "classe-saga", "crosslag", "dearsindy", "fedomo", "grove4069", "kreion", "mikkoh", "mohitoz", "olamii", "Pablo.Portela", "TabbieCat", "trendforward", "ubaid.kfat", "wadeedchishty", "williamozelimtorres", "zhousongjiang"]
+const CREDITS = ["13213213213", "allenbranch", "CioJay", "classe-saga", "crosslag", "dearsindy", "mohitoz", "olamii", "Pablo.Portela", "TabbieCat", "trendforward", "ubaid.kfat", "wadeedchishty", "williamozelimtorres", "zhousongjiang"]
 
 export function HelpSheet() {
   const touch = matchMedia('(pointer: coarse)').matches

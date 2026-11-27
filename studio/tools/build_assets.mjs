@@ -28,39 +28,22 @@ const MODELS = {
   rock_moss_set_01: { tris: 12000, tex: 1024, error: 0.03 },
   rock_moss_set_02: { tris: 12000, tex: 1024, error: 0.03 },
   namaqualand_boulder_02: { tris: 6000, tex: 1024, error: 0.03 },
-  namaqualand_boulders_01: { tris: 5000, tex: 1024, error: 0.03 },
   stone_01: { tris: 1200, tex: 512, error: 0.03 },
   rock_07: { tris: 1500, tex: 512, error: 0.03 },
   rock_09: { tris: 1200, tex: 512, error: 0.03 },
   fern_02: { tris: 6500, tex: 1024 },
   shrub_04: { tris: 16000, tex: 1024, error: 0.01 },
-  sofa_03: { tris: 9000, tex: 1024 },
-  Sofa_01: { tris: 9000, tex: 1024 },
-  modern_arm_chair_01: { tris: 9000, tex: 1024 },
   mid_century_lounge_chair: { tris: 7000, tex: 1024 },
   coffee_table_round_01: { tris: 5000, tex: 1024 },
-  modern_coffee_table_01: { tris: 5000, tex: 1024 },
-  dining_table: { tris: 2000, tex: 1024 },
-  dining_chair_02: { tris: 7000, tex: 512, error: 0.003 },
-  bar_chair_round_01: { tris: 6000, tex: 512, error: 0.003 },
-  modern_ceiling_lamp_01: { tris: 6000, tex: 512 },
   potted_plant_01: { tris: 30000, tex: 1024, error: 0.01 },
-  potted_plant_02: { tris: 24000, tex: 1024, error: 0.01 },
   potted_plant_04: { tris: 6500, tex: 512, error: 0.006 },
-  ceramic_vase_01: { tris: 3000, tex: 512, error: 0.004 },
   ceramic_vase_02: { tris: 3000, tex: 512, error: 0.004 },
-  ceramic_vase_03: { tris: 3000, tex: 512 },
-  ceramic_vase_04: { tris: 3000, tex: 512, error: 0.004 },
-  throw_pillows_01: { tris: 6500, tex: 512 },
-  side_table_01: { tris: 3000, tex: 512 },
   wooden_bowl_01: { tris: 3000, tex: 512, error: 0.004 },
   modern_wooden_cabinet: { tris: 5000, tex: 1024 },
   wooden_display_shelves_01: { tris: 5000, tex: 1024 },
-  desk_lamp_arm_01: { tris: 3000, tex: 512, error: 0.004 },
   // Khronos glTF Sample Assets (CC BY 4.0, Wayfair); gltf-transform keeps their sheen/specular extensions
   GlamVelvetSofa: { tris: 12000, tex: 1024 },
   SheenChair: { tris: 12000, tex: 1024 },
-  SheenWoodLeatherSofa: { tris: 12000, tex: 1024 },
   // Objaverse (Sketchfab, CC BY 4.0; authors in tools/objaverse.json, fetched by tools/fetch_objaverse.py)
   sofa_beige: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
   sectional_grey: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
@@ -72,16 +55,12 @@ const MODELS = {
   kitchen_faucet: { tris: 6000, tex: 512, objaverse: true, error: 0.003 },
   bed_upholstered_white: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
   bed_dark_headboard: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
-  table_lamp_white: { tris: 8000, tex: 512, objaverse: true },
   dresser_tall: { tris: 15000, tex: 1024, objaverse: true },
   vanity_floating: { tris: 15000, tex: 1024, objaverse: true },
   toilet_modern: { tris: 15000, tex: 512, objaverse: true },
-  basin_mixer_dark: { tris: 6000, tex: 512, objaverse: true, error: 0.003 },
   shower_black: { tris: 12000, tex: 512, objaverse: true, error: 0.02 },
   towel_bar: { tris: 6000, tex: 512, objaverse: true, error: 0.003 },
-  mirror_wood: { tris: 5000, tex: 512, objaverse: true },
   desk_lamp_black: { tris: 12000, tex: 512, objaverse: true },
-  stool_aalto: { tris: 10000, tex: 512, objaverse: true },
 }
 
 const log = (...a) => console.log(...a)
@@ -134,6 +113,14 @@ function triCount(doc) {
   return n
 }
 
+/** Names carry over into the glTF JSON; some uploads have broken encodings (U+FFFD), which strict hosts reject. */
+function sanitizeNames(doc) {
+  const root = doc.getRoot()
+  const lists = [root.listNodes(), root.listMeshes(), root.listMaterials(), root.listTextures(), root.listAccessors(), root.listScenes(),
+    root.listSkins(), root.listAnimations(), root.listCameras(), root.listBuffers()]
+  for (const list of lists) for (const p of list) p.setName(p.getName().replace(/[^\x20-\x7e]/g, '_'))
+}
+
 /** Sketchfab uploads often carry a flat shadow-catcher disc or floor under the object: drop it. */
 function dropGroundPlanes(doc, id) {
   const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0]
@@ -180,6 +167,7 @@ async function models() {
     const doc = await io.read(src)
     // some samples carry a presentation light; furniture must not light the room it stands in
     for (const node of doc.getRoot().listNodes()) node.setExtension('KHR_lights_punctual', null)
+    sanitizeNames(doc)
     const before = triCount(doc)
     const ratio = Math.min(1, cfg.tris / before)
     // Sketchfab exports often use the old specular-glossiness workflow, which three.js no longer reads
