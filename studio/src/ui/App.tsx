@@ -611,6 +611,53 @@ export function App({ target, visible, requested, onLoad }: {
   const walkViews = plan.views.filter(v => v.kind === 'walk')
   const chips = mode === 'walk' ? walkViews : exteriorViews
   const touring = !!tour.state
+  const viewsLabel = mode === 'walk' ? 'Walk views' : 'Exterior views'
+  const viewButtons = chips.map(v => (
+    <button key={v.id} className="chip-btn" aria-pressed={mode !== 'dollhouse' && viewId === v.id} onClick={() => goView(v.id)}>
+      {v.label}
+    </button>
+  ))
+  const editPlanButton = (
+    <button className="icon-btn edit-plan" title="Quick plan editor" onClick={() => {
+      loaded.current = null
+      setState({ editing: !editing, sheet: null })
+    }} aria-label="Edit plan" aria-pressed={editing}>
+      <Icon.pencil /><span className="tool-label">Edit plan</span>
+    </button>
+  )
+  const toolButtons = (
+    <>
+      <a className="icon-btn studio-design-link" href={designerRoute(planById(planId)?.id)} aria-label="Design your own home" title="Design your own home">
+        <Icon.plan /><span className="tool-label">Design your own home</span>
+      </a>
+      <button className="icon-btn" onClick={share} aria-label="Share design" title="Share design" aria-expanded={sheet === 'share'}>
+        <Icon.link /><span className="tool-label">Share design</span>
+      </button>
+      <button className="icon-btn" type="button" onClick={toggleHotspots} aria-label="Finish hotspots" title="Finish hotspots"
+        aria-pressed={hotspots} disabled={mode === 'plan' || editing || takingPhoto || !!loading}><Icon.hotspot /><span className="tool-label">Finish hotspots</span></button>
+      <button
+        className="icon-btn"
+        onClick={() => setState({ photo: { state: 'rendering', samples: 0 }, sheet: null })}
+        aria-label="Render a photo" title="Render a photo"
+      >
+        <Icon.aperture /><span className="tool-label">Render a photo</span>
+      </button>
+      <button
+        className="icon-btn"
+        onClick={() => {
+          const el = document.documentElement
+          if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+          else el.requestFullscreen?.().catch(() => toast('Fullscreen is not available here'))
+        }}
+        aria-label="Fullscreen" title="Fullscreen"
+      >
+        <Icon.expand /><span className="tool-label">Fullscreen</span>
+      </button>
+      <button className="icon-btn" onClick={() => setState({ sheet: sheet === 'help' ? null : 'help' })} aria-label="Controls" title="Controls" aria-expanded={sheet === 'help'}>
+        <Icon.help /><span className="tool-label">Controls</span>
+      </button>
+    </>
+  )
 
   return (
     <div className={`app mode-${mode} ${sheet ? `has-${sheet}` : ''} ${editing && editorModule ? 'is-editing' : ''} ${designer && !designWalk ? 'is-designing' : ''}`}
@@ -646,61 +693,39 @@ export function App({ target, visible, requested, onLoad }: {
             <button className="icon-btn ghost" onClick={() => stepPlan(-1)} aria-label="Previous plan">
               <Icon.left />
             </button>
-            <button className="plan-name" onClick={() => setState({ sheet: sheet === 'plans' ? null : 'plans' })} aria-label="All plans">
-              <span className="plan-count">
-                {PLANS.findIndex(p => p.id === planId) + 1}/{PLANS.length}
-              </span>
+            <button className="plan-name" onClick={() => setState({ sheet: sheet === 'plans' ? null : 'plans' })}
+              aria-label={`${plan.name}, browse all plans`} aria-expanded={sheet === 'plans'}>
               <span className="plan-title-line">{plan.name}</span>
-              <PlanFacts id={planId} short />
+              <span className="plan-switch-meta">
+                <span className="plan-count">{PLANS.findIndex(p => p.id === planId) + 1}/{PLANS.length}</span>
+                <PlanFacts id={planId} short />
+              </span>
             </button>
             <button className="icon-btn ghost" onClick={() => stepPlan(1)} aria-label="Next plan">
               <Icon.right />
             </button>
           </div>
-          <button className="btn btn-plans" onClick={() => setState({ sheet: sheet === 'plans' ? null : 'plans' })}>
-            <Icon.plans /> <span>All plans</span>
-          </button>
+          <div className="topbar-actions">
+            <button className="btn btn-plans" onClick={() => setState({ sheet: sheet === 'plans' ? null : 'plans' })}
+              aria-expanded={sheet === 'plans'}>
+              <Icon.plans /> <span>All plans</span>
+            </button>
+            {!!plan.tour?.length && <button className="btn btn-tour glass" type="button" onClick={touring ? tour.stop : startTour}
+              disabled={!!loading || editing || takingPhoto} aria-pressed={touring} data-tour-control><Icon.play /> Tour</button>}
+            <nav className="actions" aria-label="Studio tools">
+              {editPlanButton}
+              <div className="tools-inline">{toolButtons}</div>
+              <button className="icon-btn tools-trigger glass" type="button" aria-label="More tools" title="More tools" popoverTarget="studio-tools">
+                <Icon.more />
+              </button>
+              <div id="studio-tools" className="tools-menu hud-popover" popover="auto" role="group" aria-label="More tools"
+                onClick={e => { if ((e.target as Element).closest('button, a')) e.currentTarget.hidePopover() }}>
+                {editPlanButton}
+                {toolButtons}
+              </div>
+            </nav>
+          </div>
         </header>}
-
-        {!designer && <nav className="actions" aria-label="Tools">
-          {!!plan.tour?.length && <button className="btn btn-tour glass" type="button" onClick={touring ? tour.stop : startTour}
-            disabled={!!loading || editing || takingPhoto} aria-pressed={touring} data-tour-control><Icon.play /> Tour</button>}
-          <a className="icon-btn studio-design-link" href={designerRoute(planById(planId)?.id)} aria-label="Design your own home" title="Design your own home">
-            <Icon.plan /><span className="studio-design-label">Design your own</span><span className="studio-design-short" aria-hidden="true">Design</span>
-          </a>
-          <button className="icon-btn" title="Quick plan editor" onClick={() => {
-            loaded.current = null
-            setState({ editing: !editing, sheet: null })
-          }} aria-label="Edit plan" aria-pressed={editing}>
-            <Icon.pencil />
-          </button>
-          <button className="icon-btn" onClick={share} aria-label="Share design">
-            <Icon.link />
-          </button>
-          <button className="icon-btn" type="button" onClick={toggleHotspots} aria-label="Finish hotspots" title="Finish hotspots"
-            aria-pressed={hotspots} disabled={mode === 'plan' || editing || takingPhoto || !!loading}><Icon.hotspot /></button>
-          <button
-            className="icon-btn"
-            onClick={() => setState({ photo: { state: 'rendering', samples: 0 }, sheet: null })}
-            aria-label="Render a photo"
-          >
-            <Icon.aperture />
-          </button>
-          <button
-            className="icon-btn hide-touch"
-            onClick={() => {
-              const el = document.documentElement
-              if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
-              else el.requestFullscreen?.().catch(() => toast('Fullscreen is not available here'))
-            }}
-            aria-label="Fullscreen"
-          >
-            <Icon.expand />
-          </button>
-          <button className="icon-btn" onClick={() => setState({ sheet: sheet === 'help' ? null : 'help' })} aria-label="Controls">
-            <Icon.help />
-          </button>
-        </nav>}
 
         {!designer && engine && hotspots && !loading && !sheet && !editing && !takingPhoto && mode !== 'plan' && !touring &&
           <FrameFinishSurface.Provider value={mode === 'walk' ? null : (x, y) => nav?.frameSurface(x, y)}>
@@ -710,7 +735,7 @@ export function App({ target, visible, requested, onLoad }: {
             }} />
           </FrameFinishSurface.Provider>}
 
-        {mode === 'walk' && (plan.levels && plan.levels.length > 1 ? (
+        {mode === 'walk' && !touring && (plan.levels && plan.levels.length > 1 ? (
           <FloorPlan key={you?.level} className="minimap" plan={plan} you={you} compact onOpen={level => setMode('plan', level)} />
         ) : (
           <button className="minimap" onClick={() => setMode('plan')} aria-label="Open floor plan">
@@ -718,7 +743,7 @@ export function App({ target, visible, requested, onLoad }: {
           </button>
         ))}
 
-        <div className="bottom">
+        <div className={`bottom ${touring ? 'is-touring' : ''}`}>
           {tour.state && plan.tour && <TourControls stops={plan.tour} {...tour.state} jump={tour.jump} togglePause={tour.togglePause} end={tour.stop} />}
           {mode === 'dollhouse' && !editing && !takingPhoto && !loading && (
             <DollhouseControls cutaway={cutaway} level={dollhouseLevel} levels={plan.levels}
@@ -726,13 +751,18 @@ export function App({ target, visible, requested, onLoad }: {
               onLevel={level => nav?.setDollhouseLevel(level)} />
           )}
           {!touring && mode !== 'plan' && chips.length > 0 && (
-            <div className="chips" role="list">
-              {chips.map(v => (
-                <button key={v.id} role="listitem" className={`chip-btn ${viewId === v.id ? 'is-on' : ''}`} onClick={() => goView(v.id)}>
-                  {v.label}
+            <>
+              <div className="chips" role="group" aria-label={viewsLabel}>{viewButtons}</div>
+              {mode === 'walk' && <div className="view-picker">
+                <button type="button" className="chip-btn view-trigger" popoverTarget="studio-views">
+                  {viewsLabel} <Icon.up />
                 </button>
-              ))}
-            </div>
+                <div id="studio-views" className="views-menu hud-popover" popover="auto" role="group" aria-label={viewsLabel}
+                  onClick={e => { if ((e.target as Element).closest('button')) e.currentTarget.hidePopover() }}>
+                  {viewButtons}
+                </div>
+              </div>}
+            </>
           )}
           <div className="dock">
             <div className="modes" role="tablist" aria-label="View mode">
@@ -750,7 +780,7 @@ export function App({ target, visible, requested, onLoad }: {
                 </button>
               ))}
             </div>
-            {!designer && <button className={`btn btn-style ${sheet === 'customize' ? 'is-on' : ''}`} onClick={() => {
+            {!designer && <button className="btn btn-style" aria-expanded={sheet === 'customize'} onClick={() => {
               setCustomizeZone(undefined)
               setState({ sheet: sheet === 'customize' ? null : 'customize' })
             }}>
@@ -773,8 +803,7 @@ export function App({ target, visible, requested, onLoad }: {
           <div className="plan-overlay">
             <div className="plan-overlay-head">
               <div>
-                <p className="eyebrow">{plan.style}</p>
-                <h2>{plan.name}</h2>
+                <h2>Floor plan</h2>
                 <PlanFacts id={planId} />
               </div>
               <button className="icon-btn" onClick={() => setState({ mode: nav?.mode ?? 'orbit' })} aria-label="Close floor plan">

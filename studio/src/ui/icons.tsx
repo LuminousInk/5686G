@@ -7,6 +7,8 @@ const S = ({ children, size = 20 }: { children: ReactNode; size?: number }) => (
 )
 
 export const Icon = {
+  more: () => <S><circle cx="5" cy="12" r="1" fill="currentColor" /><circle cx="12" cy="12" r="1" fill="currentColor" /><circle cx="19" cy="12" r="1" fill="currentColor" /></S>,
+  up: () => <S><path d="m5 15 7-7 7 7" /></S>,
   play: () => <S><path d="M8 5v14l11-7z" /></S>,
   pause: () => <S><path d="M9 5v14M15 5v14" /></S>,
   hotspot: () => <S><circle cx="12" cy="12" r="8" /><path d="M9 12h6m-3-3v6" /></S>,
