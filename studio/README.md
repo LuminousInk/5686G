@@ -159,6 +159,29 @@ rules out, and how the app avoids it:
 Skies, textures and models: Poly Haven, CC0. Trees: ez-tree (MIT, vendored). Font: Chakra Petch (OFL).
 GlamVelvetSofa, SheenChair, SheenWoodLeatherSofa: Wayfair LLC, via the Khronos glTF Sample Assets
 (https://github.com/KhronosGroup/glTF-Sample-Assets), CC BY 4.0.
+Furniture from Objaverse (https://huggingface.co/datasets/allenai/objaverse, Sketchfab uploads), CC BY 4.0:
+
+- bar_stool_wood: "Barstool Round" by TabbieCat (https://sketchfab.com/3d-models/barstool-round-b221ad482e084c449408c229cab380d6)
+- basin_mixer_dark: "RENDER PRO" by kreion (https://sketchfab.com/3d-models/render-pro-ef501e91ba6641a29e0515a10fdac631)
+- bed_dark_headboard: "Bed" by dearsindy (https://sketchfab.com/3d-models/bed-8926f6be27704713980076253a78e057)
+- bed_upholstered_white: "Bed For Vr" by olamii (https://sketchfab.com/3d-models/bed-for-vr-2bd3fcc82c9f43cfb0c8cf26c7d0107c)
+- desk_lamp_black: "Luminaria" by williamozelimtorres (https://sketchfab.com/3d-models/luminaria-4b9a5c4d5e20434793388325ec18ba57)
+- dining_chair_bentwood: "Chair" by zhousongjiang (https://sketchfab.com/3d-models/chair-d2785b57e7da45858f2fe8bf4dedd68d)
+- dining_table_oak: "Kitchen Table" by CioJay (https://sketchfab.com/3d-models/kitchen-table-d7afff23c741411c82a5994ae9940669)
+- dresser_tall: "Leaves 40x60デスクサイドドロワー BC" by classe-saga (https://sketchfab.com/3d-models/leaves-40x60-bc-abbc90bbd5474f73b16482ccd10e07ec)
+- fridge_steel: "LG LFX25974ST B005VV62QY" by allenbranch (https://sketchfab.com/3d-models/lg-lfx25974st-b005vv62qy-53ad8efeb5e9427a901fc669b440e3cf)
+- kitchen_faucet: "Grohe G-32467002" by trendforward (https://sketchfab.com/3d-models/grohe-g-32467002-8d28b4123c6641b19c6557cf8f2f80c6)
+- mirror_wood: "Mirror in recycled wood." by grove4069 (https://sketchfab.com/3d-models/mirror-in-recycled-wood-d85091d6801a46d2ae1654c0ba8f8af3)
+- sectional_grey: "Escuadra Victoria Izquierda II" by Pablo.Portela (https://sketchfab.com/3d-models/escuadra-victoria-izquierda-ii-0eb6c94aa40c41b480cf35de229e8e88)
+- shower_black: "12 Le Vivi Milan Shower System" by 13213213213 (https://sketchfab.com/3d-models/12-le-vivi-milan-shower-system-776a3b4bb4f04594b8fae2f5af691cb1)
+- sideboard_midcentury: "AD-012" by zhousongjiang (https://sketchfab.com/3d-models/ad-012-7d0e63fad86240a6a827fd4d9a9ba507)
+- sofa_beige: "Feathers 5 Seat" by mohitoz (https://sketchfab.com/3d-models/feathers-5-seat-fbadc209177641978444636641a6d515)
+- stool_aalto: "Aalto Stool" by mikkoh (https://sketchfab.com/3d-models/aalto-stool-36af1647d51e4a869af42b7127d64558)
+- table_lamp_white: "Настольная лампа Favourite" by fedomo (https://sketchfab.com/3d-models/favourite-a9f27de045ff4869a48005dece8444a6)
+- toilet_modern: "HD177A" by wadeedchishty (https://sketchfab.com/3d-models/hd177a-455028add66d48e7ae391beda0a6dae6)
+- towel_bar: "MC-05-0085" by ubaid.kfat (https://sketchfab.com/3d-models/mc-05-0085-42afb2b0a7ea4ff086acd6da28787bb5)
+- vanity_floating: "Aquaterm170 EL13 4 Zn Z 120 V1" by crosslag (https://sketchfab.com/3d-models/aquaterm170-el13-4-zn-z-120-v1-6441fe1ec6744bacaafd3b21c424fc91)
+
 three.js, postprocessing, n8ao, three-mesh-bvh, three-gpu-pathtracer: MIT.
 
 ## Known limits / next

@@ -299,3 +299,6 @@ h1, h2 { text-wrap: balance; }
   .inspector { max-height: 36vh; }
   .insp-field { grid-template-columns: 110px 1fr; }
 }
+.credits { padding: 4px 18px 16px; }
+.credits summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+.credits .note { margin-top: 6px; font-size: 12px; }
