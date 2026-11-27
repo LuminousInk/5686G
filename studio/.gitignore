@@ -11,3 +11,4 @@ dist-test
 public/gallery/.cycles-*/
 public/pano/.cycles-*/
 dist-cyc
+dist-public
