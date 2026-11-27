@@ -18,6 +18,8 @@ import { CoastalAtmosphere } from '../env/atmosphere'
 import type { TimePreset } from '../env/environment'
 import type { QualitySettings } from '../quality'
 import { Meter } from './meter'
+import { RefineComposite } from './refineComposite'
+import { StillReflections } from './refineSSR'
 import { MotionHistory, motionResolveFragment } from './motionAA'
 
 // Three's 2D PCF rotates its five-tap disk per screen pixel. The pattern survives temporal averaging,
@@ -46,6 +48,7 @@ class AccumulatePass extends Pass {
   exposure = 1
   /** meters the next frame (before exposure) when set */
   meterNext = false
+  copySource?: THREE.Texture
   readonly meter = new Meter()
   readonly history = new MotionHistory()
   temporal = false
@@ -54,6 +57,7 @@ class AccumulatePass extends Pass {
   private stillMat: THREE.ShaderMaterial
   private copyMat: THREE.ShaderMaterial
   private motionMat: THREE.ShaderMaterial
+  depthTexture: THREE.Texture | null = null
 
   constructor(private view: THREE.PerspectiveCamera) {
     super('AccumulatePass')
@@ -112,11 +116,24 @@ class AccumulatePass extends Pass {
     this.motionMat.uniforms.texel.value.set(1 / w, 1 / h)
   }
 
+  get stillTexture() {
+    return this.count > 0 && !this.moving && !this.fading ? this.targets[1 - this.index].texture : undefined
+  }
+
   override setDepthTexture(texture: THREE.Texture | null) {
-    this.motionMat.uniforms.tDepth.value = texture
+    this.depthTexture = this.motionMat.uniforms.tDepth.value = texture
   }
 
   override render(renderer: THREE.WebGLRenderer, inputBuffer: THREE.WebGLRenderTarget, outputBuffer: THREE.WebGLRenderTarget | null) {
+    if (this.copySource) {
+      this.copyMat.uniforms.tMap.value = this.copySource
+      this.copyMat.uniforms.temporal.value = false
+      this.fullscreenMaterial = this.copyMat
+      renderer.setRenderTarget(outputBuffer)
+      renderer.render(this.scene, this.camera)
+      this.fullscreenMaterial = this.stillMat
+      return
+    }
     if (this.meterNext) {
       this.meterNext = false
       this.meter.measure(renderer, inputBuffer.texture)
@@ -222,6 +239,10 @@ export class RenderPipeline {
   readonly atmosphere: CoastalAtmosphere
   private accumulate: AccumulatePass
   private renderPass: RenderPass
+  private refinement?: RefineComposite
+  private ssr?: StillReflections
+  private reflected?: THREE.Texture
+  reflectionMs = 0
   /** frames to accumulate while still (0 = off) */
   maxFrames: number
   enabled = true
@@ -277,6 +298,7 @@ export class RenderPipeline {
   }
 
   setSize(w: number, h: number) {
+    this.reflected = undefined
     this.composer.setSize(w, h, false)
   }
 
@@ -306,6 +328,7 @@ export class RenderPipeline {
   }
 
   reset() {
+    this.reflected = undefined
     this.accumulate.count = 0
   }
 
@@ -369,7 +392,73 @@ export class RenderPipeline {
     }
   }
 
+  renderRefinement(
+    image: THREE.Texture, depth: THREE.Texture, blend: number, samples: number, inside: boolean, preset: TimePreset['id'],
+  ) {
+    const raster = this.reflected ?? this.accumulate.stillTexture
+    if (!raster) return false
+    if (!this.refinement) {
+      this.refinement = new RefineComposite(this.camera)
+      this.refinement.enabled = false
+      this.composer.addPass(this.refinement, this.composer.passes.indexOf(this.accumulate) + 1)
+    }
+    const composite = this.refinement
+    composite.setSource(raster, image, depth, this.accumulate.exposure, blend, samples, inside, preset)
+    try { this.renderPostOnly(composite) } finally { composite.clearSource() }
+    return true
+  }
+
+  reflectStill(renderer: THREE.WebGLRenderer, groups: readonly (THREE.Object3D | undefined)[]) {
+    if (this.reflected || !this.accumulate.stillTexture || !this.accumulate.depthTexture) return
+    const start = performance.now()
+    this.ssr ??= new StillReflections()
+    this.reflected = this.ssr.render(renderer, this.camera, this.accumulate.stillTexture, this.accumulate.depthTexture, groups)
+    this.renderStill()
+    this.reflectionMs = performance.now() - start
+  }
+
+  releaseRefinementBuffers() {
+    const composite = this.refinement
+    if (!composite) return
+    this.composer.removePass(composite)
+    composite.dispose()
+    this.refinement = undefined
+  }
+
+  disposeReflections() {
+    this.reflectionMs = 0
+    this.reflected = undefined
+    this.ssr?.dispose()
+    this.ssr = undefined
+  }
+
+  renderStill() {
+    // The accumulated HDR image stays available even after the canvas browser buffer was cleared.
+    const raster = this.reflected ?? this.accumulate.stillTexture
+    if (!raster) return false
+    this.accumulate.copySource = raster
+    this.renderPostOnly(this.accumulate)
+    return true
+  }
+
+  private renderPostOnly(source: Pass) {
+    const atmosphere = this.atmosphere.pass
+    const haze = atmosphere.enabled
+    this.renderPass.enabled = this.ao.enabled = atmosphere.enabled = false
+    this.accumulate.enabled = source === this.accumulate
+    source.enabled = true
+    try {
+      this.composer.render(0)
+    } finally {
+      source.enabled = false
+      this.accumulate.copySource = undefined
+      this.renderPass.enabled = this.ao.enabled = this.accumulate.enabled = true
+      atmosphere.enabled = haze
+    }
+  }
+
   dispose() {
+    this.disposeReflections()
     this.accumulate.meter.dispose()
     this.composer.dispose()
     this.atmosphere.dispose()
