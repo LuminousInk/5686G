@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { framePoint, inRect } from './levels'
 import type { Block, Rect, Roof, Side } from './types'
 
 export const WALL_T = 0.2
@@ -109,7 +110,7 @@ export function neighbours(b: Block, s: Side, all: Block[]): { block: Block; u0:
   const [x0, z0, x1, z1] = b.rect
   const out: { block: Block; u0: number; u1: number }[] = []
   for (const o of all) {
-    if (o === b) continue
+    if (o === b || b.yaw || o.yaw || (b.level ?? 'main') !== (o.level ?? 'main')) continue
     const [ox0, oz0, ox1, oz1] = o.rect
     let iv: [number, number] | null = null
     if (s === 's' && Math.abs(oz0 - z1) < EPS) iv = overlap1(x0, x1, ox0, ox1)
@@ -139,7 +140,11 @@ export function sideIntervals(b: Block, s: Side, all: Block[]) {
 }
 
 export function blockAt(blocks: Block[], x: number, z: number): Block | undefined {
-  return blocks.find(b => x >= b.rect[0] - 1e-6 && x <= b.rect[2] + 1e-6 && z >= b.rect[1] - 1e-6 && z <= b.rect[3] + 1e-6)
+  return blocks.find(b => {
+    if (!b.yaw) return inRect(b.rect, x, z, -1e-6)
+    const [px, pz] = framePoint(b, x, z, true)
+    return inRect(b.rect, px, pz, -1e-6)
+  })
 }
 
 /** Overhang per side; zero where the side touches a block whose roof is above this one. */

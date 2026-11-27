@@ -1,8 +1,9 @@
 import * as THREE from 'three'
 import { GeoBuilder, MeshBatch, V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
+import { subtractRect } from './levels'
 import { overhangs, roofHeightAt, roofThickness, sideIntervals } from './massing'
-import type { Block, HomePlan, Side } from './types'
+import type { Block, HomePlan, Rect, Side } from './types'
 
 export interface RoofOutput {
   /** light fixtures in soffits (world positions) for night lighting */
@@ -19,13 +20,13 @@ const RIB_PITCH = 0.42
 export const SHADOW_ONLY = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, shadowSide: THREE.DoubleSide })
 SHADOW_ONLY.name = 'shadow-only'
 
-export function buildRoofs(plan: HomePlan, lib: MaterialLibrary, roofBatch: MeshBatch, ceilingBatch: MeshBatch): RoofOutput {
+export function buildRoofs(plan: HomePlan, lib: MaterialLibrary, roofBatch: MeshBatch, ceilingBatch: MeshBatch, cuts: Rect[] = []): RoofOutput {
   const out: RoofOutput = { downlights: [] }
-  for (const b of plan.blocks) buildBlockRoof(plan, b, lib, roofBatch, ceilingBatch, out)
+  for (const b of plan.blocks) buildBlockRoof(plan, b, lib, roofBatch, ceilingBatch, out, cuts)
   return out
 }
 
-function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatch: MeshBatch, ceilingBatch: MeshBatch, out: RoofOutput) {
+function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatch: MeshBatch, ceilingBatch: MeshBatch, out: RoofOutput, cuts: Rect[]) {
   const fy = plan.floorY
   const r = b.roof
   const T = roofThickness(r)
@@ -44,6 +45,7 @@ function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatc
   const blocker = new GeoBuilder()
   const vaulted = typeof b.ceiling !== 'number'
   const ceilMat = b.utility ? lib.ceiling : b.ceilingFinish === 'wood' ? lib.ceilingWood : lib.ceiling
+  const withoutOpenings = (r: Rect) => cuts.reduce((pieces, cut) => pieces.flatMap(p => subtractRect(p, cut)), [r])
 
   /** one planar slab over [ax0..ax1] x [az0..az1] (heights from U, which is planar over this patch) */
   const slab = (ax0: number, az0: number, ax1: number, az1: number, ribAxis: 'x' | 'z', skipEdges: Side[] = []) => {
@@ -119,13 +121,20 @@ function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatc
       gutterAndDownspouts(plan, b, lib, roofBatch, 'w', { ex0, ex1, ez0, ez1 }, U, T)
     }
   } else {
-    slab(ex0, ez0, ex1, ez1, 'z')
+    for (const [a, c, d, e] of withoutOpenings([ex0, ez0, ex1, ez1])) {
+      const interiorEdges: Side[] = []
+      if (a > ex0) interiorEdges.push('w')
+      if (c > ez0) interiorEdges.push('n')
+      if (d < ex1) interiorEdges.push('e')
+      if (e < ez1) interiorEdges.push('s')
+      slab(a, c, d, e, 'z', interiorEdges)
+    }
   }
 
   // flat ceilings below a vault/attic
   if (!vaulted) {
     const h = fy + (b.ceiling as number)
-    ceil.quad(V3(x0, h, z0), V3(x1, h, z0), V3(x1, h, z1), V3(x0, h, z1))
+    for (const [a, c, d, e] of withoutOpenings(b.rect)) ceil.quad(V3(a, h, c), V3(d, h, c), V3(d, h, e), V3(a, h, e))
   }
 
   // soffit downlights over exterior doors/terraces: every ~2.4 m along overhangs deeper than 0.6 m

@@ -1,9 +1,11 @@
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { PLANS } from '../../plans'
+import { aspenCustom } from '../../plans/aspenCustom'
 import { MeshBatch } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
-import { buildInteriorShell } from './interiorShell'
+import { buildHouse } from './build'
+import { buildingSections } from './levels'
 import { sideFrame, sidePoint, WALL_T } from './massing'
 import type { BuiltDoor, HomePlan, Opening, RoomDef } from './types'
 import { buildExteriorWalls } from './walls'
@@ -21,6 +23,12 @@ function makeLib(): MaterialLibrary {
     concrete: material('concrete'),
     floor: material('floor'),
     tileFloor: material('tile-floor'),
+    pavers: material('pavers'),
+    soffit: material('soffit'),
+    soffitDark: material('soffit-dark'),
+    ceilingWood: material('ceiling-wood'),
+    solar: material('solar'),
+    solarFrame: material('solar-frame'),
     foundation: material('foundation'),
     glass: material('glass'),
     steel: material('steel'),
@@ -58,12 +66,13 @@ function openingLabel(op: Opening, index: number) {
 }
 
 function census(plan: HomePlan) {
-  const exterior = buildExteriorWalls(plan, makeLib(), new MeshBatch())
-  const interior = buildInteriorShell(plan, makeLib(), new MeshBatch())
-  const built = [...exterior.doors, ...interior.doors]
+  const house = buildHouse(plan, makeLib())
+  const built = house.doors
+  house.dispose()
+  const sections = buildingSections(plan)
   return plan.openings.flatMap((op, openingIndex) => {
     if (!DOOR_KINDS.has(op.kind)) return []
-    const rooms = roomsAround(plan, op)
+    const rooms = roomsAround(sections.find(s => s.plan.openings.includes(op))!.plan, op)
     return [{ op, openingIndex, rooms, records: built.filter(d => d.openingIndex === openingIndex) }]
   })
 }
@@ -106,6 +115,16 @@ describe('door census', () => {
   for (const plan of PLANS) {
     it(`${plan.name}: every doorway has its required leaf, panels or casing`, () => checkCensus(plan))
   }
+
+  it('builds both Aspen walkout sliders and both enclosed WC doors on the lower level', () => {
+    const lower = buildingSections(aspenCustom).find(s => s.level === 'lower')!
+    const rows = census(aspenCustom).filter(row => lower.plan.openings.includes(row.op))
+    expect(rows.map(row => row.op.id).sort()).toEqual(['walkout-1-slider-open', 'walkout-1-wc', 'walkout-2-slider-open', 'walkout-2-wc'])
+    for (const { records, op } of rows) {
+      expect(records).toHaveLength(1)
+      expect(records[0]).toMatchObject(op.kind === 'slider' ? { glass: true } : { leaf: true })
+    }
+  })
 
   it('builds an interior-style door on a side shared by two blocks', () => {
     const block = (id: string, rect: [number, number, number, number]) => ({

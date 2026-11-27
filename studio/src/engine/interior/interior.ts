@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
 import { MeshBatch, V3 } from '../geo'
 import type { HouseModel } from '../house/build'
+import { buildInteriorLevels } from '../house/interiorLevels'
 import { blockAt, ceilingAt, sideIntervals, WALL_T } from '../house/massing'
 import type { HomePlan, Opening, Rect, RoomDef, Side } from '../house/types'
 import type { MaterialLibrary } from '../materials/library'
@@ -68,7 +69,16 @@ export class Interior {
     this.group.name = 'interior'
   }
 
-  async build(plan: HomePlan, house: HouseModel) {
+  async build(plan: HomePlan, house: HouseModel, sectionOnly = false) {
+    if (!sectionOnly && (plan.levels || plan.blocks.some(b => b.yaw))) {
+      await buildInteriorLevels(plan, this, this.batch, async (local, batch) => {
+        const child = new Interior(this.lib, this.quality)
+        child.batch = batch
+        await child.build(local, house, true)
+        return child
+      })
+      return
+    }
     this.plan = plan
     this.fy = plan.floorY
     this.layouts.clear()
@@ -100,7 +110,7 @@ export class Interior {
       }
     }
     await Promise.all(jobs)
-    this.group.add(this.batch.toGroup('built-ins'))
+    if (!sectionOnly) this.group.add(this.batch.toGroup('built-ins'))
   }
 
   // ------------------------------------------------------------------ helpers

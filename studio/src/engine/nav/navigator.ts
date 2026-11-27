@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import type { Engine } from '../Engine'
+import { inRect, levelAtHeight, levelFloor, levelId, stairFlight } from '../house/levels'
+import { blockAt } from '../house/massing'
 import type { CameraView } from '../house/types'
 import type { Segment2 } from '../house/walls'
 
@@ -50,6 +52,7 @@ export class Navigator {
   readonly moveInput = new THREE.Vector2()
   private keys = new Set<string>()
   private walkTarget: THREE.Vector3 | null = null
+  private walkWaypoints: THREE.Vector3[] = []
   private tween: Tween | null = null
   private pointers = new Map<number, { x: number; y: number; sx: number; sy: number; t: number }>()
   private pinchDist = 0
@@ -83,6 +86,10 @@ export class Navigator {
     return this.engine.camera
   }
 
+  get floorLevel() {
+    return this.engine.plan ? levelAtHeight(this.engine.plan, this.feet.y) : undefined
+  }
+
   setBounds(box: THREE.Box3) {
     this.bounds = { minX: box.min.x - 40, maxX: box.max.x + 40, minZ: box.min.z - 40, maxZ: box.max.z + 40 }
   }
@@ -92,6 +99,8 @@ export class Navigator {
   setMode(mode: NavMode, animate = true) {
     if (mode === this.mode) return
     const prev = this.mode
+    this.walkTarget = null
+    this.walkWaypoints = []
     this.mode = mode
     const house = this.engine.house
     if (house) {
@@ -103,7 +112,7 @@ export class Navigator {
     if (mode === 'walk' && prev !== 'walk') {
       // start where the camera is, dropped to the ground
       const p = this.camera.position
-      const fh = this.floorHeight(p.x, p.z)
+      const fh = this.floorHeight(p.x, p.z, p.y - EYE)
       this.feet.set(p.x, fh, p.z)
       const dir = this.camera.getWorldDirection(new THREE.Vector3())
       this.yaw = Math.atan2(-dir.x, -dir.z)
@@ -133,9 +142,10 @@ export class Navigator {
     if (dollhouse && house) {
       const size = house.bounds.getSize(new THREE.Vector3())
       this.target.set(c.x, this.engine.plan?.floorY ?? 0.5, c.z)
-      this.radius = Math.max(size.x, size.z) * (this.camera.aspect < 1 ? 1.6 : 1.05)
+      const fit = this.camera.aspect < 1 ? (house.plan.levels ? Math.max(1.6, 1.18 / this.camera.aspect) : 1.6) : 1.05
+      this.radius = Math.max(size.x, size.z) * fit
       this.polar = 0.82
-      this.azimuth = 0.35
+      this.azimuth = house.plan.levels && house.plan.landscape.site ? THREE.MathUtils.degToRad(house.plan.landscape.site.downhill) - 0.38 : 0.35
     } else {
       const dir = this.camera.getWorldDirection(new THREE.Vector3())
       // aim at the house centre along the view direction
@@ -157,15 +167,21 @@ export class Navigator {
   }
 
   goToView(v: CameraView, animate = true) {
+    this.walkTarget = null
+    this.walkWaypoints = []
     const pos = new THREE.Vector3(...v.pos)
     const target = new THREE.Vector3(...v.target)
+    if (v.kind === 'orbit' && this.mode !== 'dollhouse' && this.engine.plan?.levels && this.camera.aspect < 0.9) {
+      const fit = Math.min(2.5, 1.18 / this.camera.aspect)
+      pos.sub(target).multiplyScalar(fit).add(target)
+    }
     const m = new THREE.Matrix4().lookAt(pos, target, new THREE.Vector3(0, 1, 0))
     const quat = new THREE.Quaternion().setFromRotationMatrix(m)
     const fov = v.fov ?? 50
     const finish = () => {
       if (v.kind === 'walk') {
         this.mode = 'walk'
-        this.feet.set(pos.x, this.floorHeight(pos.x, pos.z), pos.z)
+        this.feet.set(pos.x, this.floorHeight(pos.x, pos.z, pos.y - EYE), pos.z)
         const dir = new THREE.Vector3().subVectors(target, pos).normalize()
         this.yaw = Math.atan2(-dir.x, -dir.z)
         this.pitch = Math.asin(dir.y)
@@ -208,7 +224,7 @@ export class Navigator {
       const e = new THREE.Euler().setFromQuaternion(cam.quaternion, 'YXZ')
       this.yaw = e.y
       this.pitch = e.x
-      const fh = this.floorHeight(cam.position.x, cam.position.z)
+      const fh = this.floorHeight(cam.position.x, cam.position.z, cam.position.y - EYE)
       this.feet.set(cam.position.x, fh, cam.position.z)
       this.eyeY = THREE.MathUtils.clamp(cam.position.y - fh, 0.5, 3)
     } else {
@@ -234,8 +250,8 @@ export class Navigator {
 
   // ------------------------------------------------------------------ helpers
 
-  floorHeight(x: number, z: number) {
-    const h = this.engine.house?.floorAt(x, z)
+  floorHeight(x: number, z: number, nearY = this.feet.y) {
+    const h = this.engine.house?.floorAt(x, z, nearY)
     if (h !== null && h !== undefined) return h
     return this.engine.site?.heightAt(x, z) ?? 0
   }
@@ -263,16 +279,29 @@ export class Navigator {
   private get colliders(): Segment2[] {
     const h = this.engine.house
     const i = this.engine.interior
-    return [...(h?.colliders ?? []), ...(i?.colliders ?? [])]
+    const segments = [...(h?.colliders ?? []), ...(i?.colliders ?? [])]
+    return h?.plan.levels ? segments.filter(s => this.feet.y >= (s.bottom ?? -Infinity) && this.feet.y < (s.top ?? Infinity)) : segments
   }
 
   /** Move the walker by (dx, dz) with wall sliding and step limits. Returns true if it moved. */
   private walk(dx: number, dz: number): boolean {
+    if (!this.engine.plan?.levels) return this.walkStep(dx, dz)
+    const count = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.15))
+    let moved = false
+    for (let i = 0; i < count; i++) {
+      if (!this.walkStep(dx / count, dz / count)) break
+      moved = true
+    }
+    return moved
+  }
+
+  private walkStep(dx: number, dz: number): boolean {
     const p = this.feet
     let nx = p.x + dx
     let nz = p.z + dz
+    const colliders = this.colliders
     for (let it = 0; it < 3; it++) {
-      for (const s of this.colliders) {
+      for (const s of colliders) {
         const ex = s.bx - s.ax
         const ez = s.bz - s.az
         const L2 = ex * ex + ez * ez
@@ -293,7 +322,7 @@ export class Navigator {
     nx = THREE.MathUtils.clamp(nx, this.bounds.minX, this.bounds.maxX)
     nz = THREE.MathUtils.clamp(nz, this.bounds.minZ, this.bounds.maxZ)
     const fh = this.floorHeight(nx, nz)
-    if (fh - p.y > STEP) return false
+    if (fh - p.y > STEP || (this.engine.plan?.levels && p.y - fh > STEP)) return false
     const moved = Math.hypot(nx - p.x, nz - p.z) > 1e-5
     p.set(nx, p.y + (fh - p.y) * 0.5, nz)
     return moved
@@ -367,6 +396,7 @@ export class Navigator {
     const speed = this.keys.has('Shift') ? 3.2 : 1.5
     if (fx || fy) {
       this.walkTarget = null
+      this.walkWaypoints = []
       const sin = Math.sin(this.yaw)
       const cos = Math.cos(this.yaw)
       // forward is -z rotated by yaw
@@ -378,11 +408,15 @@ export class Navigator {
       const dx = to.x - this.feet.x
       const dz = to.z - this.feet.z
       const d = Math.hypot(dx, dz)
-      if (d < 0.05) this.walkTarget = null
+      if (d < 0.05) this.walkTarget = this.walkWaypoints.shift() ?? null
       else {
-        const step = Math.min(d, Math.max(0.9, d * 2.2) * dt)
+        const speed = Math.max(0.9, d * 2.2)
+        const step = Math.min(d, (this.engine.plan?.levels ? Math.min(3.2, speed) : speed) * dt)
         const moved = this.walk((dx / d) * step, (dz / d) * step)
-        if (!moved) this.walkTarget = null
+        if (!moved) {
+          this.walkTarget = null
+          this.walkWaypoints = []
+        }
       }
     } else {
       // settle on the floor
@@ -535,13 +569,14 @@ export class Navigator {
         const back = new THREE.Vector3(this.feet.x - to.x, 0, this.feet.z - to.z).normalize().multiplyScalar(0.55)
         to.add(back)
       }
-      this.walkTarget = to
+      this.walkWaypoints = this.stairRoute(to)
+      this.walkTarget = this.walkWaypoints.shift() ?? to
       this.onWalkTo?.(hit.point.clone())
     } else if (this.mode === 'dollhouse') {
       if (!hit) return
       // tap a floor -> walk in there, looking across the room
       const p = hit.point
-      this.feet.set(p.x, this.floorHeight(p.x, p.z), p.z)
+      this.feet.set(p.x, this.floorHeight(p.x, p.z, p.y), p.z)
       const c = this.engine.house?.bounds.getCenter(new THREE.Vector3()) ?? new THREE.Vector3()
       this.yaw = Math.atan2(-(c.x - p.x) || 0.001, -(c.z - p.z) || 0.001) + Math.PI
       this.pitch = -0.05
@@ -559,6 +594,33 @@ export class Navigator {
     } else {
       this.onTap?.(hit, e)
     }
+  }
+
+  /** Route a tap across visible stair landings, while ordinary floor taps still walk in a straight line. */
+  private stairRoute(to: THREE.Vector3): THREE.Vector3[] {
+    const plan = this.engine.house?.plan
+    if (!plan?.levels) return []
+    const fromLevel = levelAtHeight(plan, this.feet.y)
+    const toLevel = levelAtHeight(plan, this.floorHeight(to.x, to.z, to.y))
+    if (fromLevel === toLevel) return []
+    if (plan.stairs.some(s => s.between && inRect(stairFlight(s).rect, this.feet.x, this.feet.z))) return []
+    const routes = plan.stairs.flatMap(stair => {
+      const between = stair.between
+      if (!between) return []
+      const down = between.upper === fromLevel && between.lower === toLevel
+      if (!down && !(between.lower === fromLevel && between.upper === toLevel)) return []
+      const { dx, dz, end } = stairFlight(stair)
+      const [x, z] = stair.from
+      const top = new THREE.Vector3(x - dx * 0.35, levelFloor(plan, between.upper), z - dz * 0.35)
+      const bottom = new THREE.Vector3(end[0] + dx * 0.35, levelFloor(plan, between.lower), end[1] + dz * 0.35)
+      const lowerBlocks = plan.blocks.filter(b => levelId(plan, b.level) === between.lower)
+      const lowerEnd = down ? to : this.feet
+      const lowerBlock = blockAt(lowerBlocks, lowerEnd.x, lowerEnd.z)
+      if (lowerBlock && lowerBlock !== blockAt(lowerBlocks, bottom.x, bottom.z)) return []
+      return [{ start: down ? top : bottom, end: down ? bottom : top }]
+    })
+    const route = routes.sort((a, b) => a.start.distanceTo(this.feet) + a.end.distanceTo(to) - b.start.distanceTo(this.feet) - b.end.distanceTo(to))[0]
+    return route ? [route.start, route.end, to] : []
   }
 
   private keydown = (e: KeyboardEvent) => {

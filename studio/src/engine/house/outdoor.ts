@@ -2,29 +2,43 @@ import * as THREE from 'three'
 import { GeoBuilder, MeshBatch, V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
 import { rng } from '../materials/textures'
-import type { Deck, HomePlan, Porch, Side, Stair, Terrace } from './types'
+import { framePoint, levelFloor, sectionBatch, stairFlight, subtractRect } from './levels'
+import type { Block, Deck, HomePlan, Porch, Rect, Side, Stair, Terrace } from './types'
 import type { Segment2 } from './walls'
 
 const DARK = new THREE.MeshStandardMaterial({ color: '#1a1815', roughness: 1, name: 'underdeck' })
+const SPA_WATER = new THREE.MeshPhysicalMaterial({ color: '#32676a', metalness: 0.24, roughness: 0.17, clearcoat: 1, name: 'spa-water' })
 
 export interface OutdoorOutput {
   colliders: Segment2[]
   downlights: THREE.Vector3[]
   /** walkable surfaces: rect + height function */
-  walkables: { rect: [number, number, number, number]; height: (x: number, z: number) => number }[]
+  walkables: { rect: Rect; height: (x: number, z: number) => number; between?: Stair['between']; frame?: Block }[]
 }
 
 export function buildOutdoor(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch, roofBatch: MeshBatch): OutdoorOutput {
   const out: OutdoorOutput = { colliders: [], downlights: [], walkables: [] }
   const rand = rng(77)
-  for (const d of plan.decks) deck(d, lib, batch, rand, out)
-  for (const p of plan.porches) porch(plan, p, lib, batch, roofBatch, out)
-  for (const s of plan.stairs) stair(s, lib, batch, rand, out)
-  for (const t of plan.terraces) terrace(t, lib, batch, rand, out)
+  for (const d of plan.decks) deck(d, lib, batch, rand, out, !!plan.levels)
+  for (const p of plan.porches) {
+    const frame = plan.blocks.find(b => b.id === p.frame)
+    const start = out.downlights.length
+    porch(plan, p, lib, sectionBatch(batch, frame), sectionBatch(roofBatch, frame), out)
+    for (const light of out.downlights.slice(start)) {
+      const [x, z] = framePoint(frame, light.x, light.z)
+      light.set(x, light.y, z)
+    }
+  }
+  for (const s of plan.stairs) stair(s, s.between ? levelFloor(plan, s.between.lower) : 0, lib, batch, rand, out)
+  for (const t of plan.terraces) {
+    const frame = plan.blocks.find(b => b.id === t.frame)
+    terrace(t, lib, sectionBatch(batch, frame), rand)
+    out.walkables.push({ rect: t.rect, height: () => t.height ?? 0.045, frame })
+  }
   return out
 }
 
-function deck(d: Deck, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: OutdoorOutput) {
+function deck(d: Deck, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: OutdoorOutput, stacked: boolean) {
   const [x0, z0, x1, z1] = d.rect
   const h = d.height
   const boards = new GeoBuilder()
@@ -32,38 +46,64 @@ function deck(d: Deck, lib: MaterialLibrary, batch: MeshBatch, rand: () => numbe
   const gap = 0.006
   const th = 0.028
   const mat = lib.zone(d.zone ?? 'deck')
+  const board = (r: Rect) => {
+    for (const [a, c, b, e] of d.spa ? subtractRect(r, d.spa) : [r]) boards.box(a, h - th, c, b, h, e)
+  }
   if (d.boardsAlong === 'x') {
     for (let z = z0; z < z1 - 0.01; z += bw + gap) {
       boards.color = tone(rand)
       boards.uvOffset = [rand() * 9, rand() * 9]
       boards.uvRotate = true
-      boards.box(x0, h - th, z, x1, h, Math.min(z + bw, z1))
+      board([x0, z, x1, Math.min(z + bw, z1)])
     }
   } else {
     for (let x = x0; x < x1 - 0.01; x += bw + gap) {
       boards.color = tone(rand)
       boards.uvOffset = [rand() * 9, rand() * 9]
-      boards.box(x, h - th, z0, Math.min(x + bw, x1), h, z1)
+      board([x, z0, Math.min(x + bw, x1), z1])
     }
   }
   batch.add(mat, boards.build(true))
   // rim boards (fascia) and a dark recessed skirt underneath
   const rim = new GeoBuilder()
   rim.uvRotate = true
-  const rh = Math.min(0.28, h - 0.02)
+  const rh = d.supportY === undefined ? Math.min(0.28, h - 0.02) : 0.22
   rim.box(x0 - 0.03, h - rh, z1, x1 + 0.03, h - th, z1 + 0.03)
   rim.box(x0 - 0.03, h - rh, z0 - 0.03, x1 + 0.03, h - th, z0)
   rim.box(x0 - 0.03, h - rh, z0, x0, h - th, z1)
   rim.box(x1, h - rh, z0, x1 + 0.03, h - th, z1)
   batch.add(mat, rim.build(true))
-  if (h > 0.3) {
+  if (h > 0.3 && d.supportY === undefined) {
     const skirt = new GeoBuilder()
     skirt.box(x0 + 0.12, -0.05, z0 + 0.12, x1 - 0.12, h - rh, z1 - 0.12)
     batch.add(DARK, skirt.build())
   }
   out.walkables.push({ rect: d.rect, height: () => h })
   const steel = new GeoBuilder()
-  for (const s of d.rails ?? []) rail(steel, d.rect, s, h, out)
+  if (d.supportY !== undefined) {
+    const z = z0 + 0.32
+    for (const x of [x0 + 0.32, (x0 + x1) / 2, x1 - 0.32])
+      steel.box(x - 0.07, d.supportY, z - 0.07, x + 0.07, h - rh, z + 0.07)
+    steel.box(x0 + 0.24, h - rh - 0.14, z - 0.09, x1 - 0.24, h - rh, z + 0.09)
+  }
+  for (const s of d.rails ?? []) rail(steel, d.rect, s, h, d.railHeight ?? 0.98, out, stacked)
+  if (d.spa) {
+    const [a, c, b, e] = d.spa
+    const rim = new GeoBuilder()
+    for (const r of subtractRect([a - 0.045, c - 0.045, b + 0.045, e + 0.045], [a + 0.1, c + 0.1, b - 0.1, e - 0.1])) {
+      rim.box(r[0], h - 0.2, r[1], r[2], h + 0.08, r[3])
+    }
+    batch.add(lib.concrete, rim.build())
+    const water = new GeoBuilder()
+    water.quad(V3(a, h - 0.045, e), V3(b, h - 0.045, e), V3(b, h - 0.045, c), V3(a, h - 0.045, c))
+    batch.add(SPA_WATER, water.build())
+    const points = [[a, c], [b, c], [b, e], [a, e], [a, c]]
+    for (let i = 1; i < points.length; i++) {
+      const [ax, az] = points[i - 1]
+      const [bx, bz] = points[i]
+      out.colliders.push({ ax, az, bx, bz, bottom: h - 0.25, top: h + 0.8 })
+    }
+  }
   batch.add(lib.steel, steel.build())
 }
 
@@ -74,7 +114,7 @@ function tone(rand: () => number): [number, number, number] {
 }
 
 /** Horizontal slat railing along a deck side. */
-function rail(gb: GeoBuilder, rect: [number, number, number, number], s: Side, h: number, out: OutdoorOutput) {
+function rail(gb: GeoBuilder, rect: Rect, s: Side, h: number, height: number, out: OutdoorOutput, stacked: boolean) {
   const [x0, z0, x1, z1] = rect
   const inset = 0.04
   let a: THREE.Vector3
@@ -88,11 +128,11 @@ function rail(gb: GeoBuilder, rect: [number, number, number, number], s: Side, h
   const posts = Math.max(2, Math.round(len / 1.6) + 1)
   for (let i = 0; i < posts; i++) {
     const p = a.clone().addScaledVector(dir, (i / (posts - 1)) * len)
-    gb.beam(p, p.clone().setY(h + 0.98), 0.055, 0.055)
+    gb.beam(p, p.clone().setY(h + height), 0.055, 0.055)
   }
-  gb.beam(a.clone().setY(h + 0.98), b.clone().setY(h + 0.98), 0.06, 0.035)
-  for (let y = h + 0.12; y < h + 0.92; y += 0.095) gb.beam(a.clone().setY(y), b.clone().setY(y), 0.018, 0.045)
-  out.colliders.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z })
+  gb.beam(a.clone().setY(h + height), b.clone().setY(h + height), 0.06, 0.035)
+  for (let y = h + 0.12; y < h + height - 0.06; y += 0.095) gb.beam(a.clone().setY(y), b.clone().setY(y), 0.018, 0.045)
+  out.colliders.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z, bottom: stacked ? h - 0.25 : undefined, top: stacked ? h + height : undefined })
 }
 
 function porch(plan: HomePlan, p: Porch, lib: MaterialLibrary, batch: MeshBatch, roofBatch: MeshBatch, out: OutdoorOutput) {
@@ -151,20 +191,18 @@ function porch(plan: HomePlan, p: Porch, lib: MaterialLibrary, batch: MeshBatch,
     }
 }
 
-function stair(s: Stair, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: OutdoorOutput) {
+function stair(s: Stair, base: number, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: OutdoorOutput) {
   const n = s.steps
   const rh = s.rise / (n + 1)
-  const run = 0.3
-  const dirs: Record<Side, [number, number]> = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] }
-  const [dx, dz] = dirs[s.dir]
+  const { dx, dz, going: run, rect } = stairFlight(s)
   const [px, pz] = [-dz, dx] // perpendicular (left of descent direction)
   const [fx, fz] = s.from
   const treads = new GeoBuilder()
   const steel = new GeoBuilder()
-  const pt = (along: number, across: number, y: number) => V3(fx + dx * along + px * across, y, fz + dz * along + pz * across)
+  const pt = (along: number, across: number, y: number) => V3(fx + dx * along + px * across, base + y, fz + dz * along + pz * across)
   const half = s.width / 2
   for (let i = 1; i <= n; i++) {
-    const y = s.rise - i * rh
+    const y = base + s.rise - i * rh
     const a0 = (i - 1) * run
     const a1 = i * run + 0.02
     const corners = [pt(a0, -half, 0), pt(a1, -half, 0), pt(a1, half, 0), pt(a0, half, 0)]
@@ -172,16 +210,16 @@ function stair(s: Stair, lib: MaterialLibrary, batch: MeshBatch, rand: () => num
     const zs = corners.map(c => c.z)
     treads.color = tone(rand)
     treads.uvOffset = [rand() * 5, rand() * 5]
-    treads.box(Math.min(...xs), y - 0.035, Math.min(...zs), Math.max(...xs), y, Math.max(...zs))
+    treads.box(Math.min(...xs), y - (s.between ? rh + 0.015 : 0.035), Math.min(...zs), Math.max(...xs), y, Math.max(...zs))
   }
-  batch.add(lib.zone('deck'), treads.build(true))
+  batch.add(s.between ? lib.floor : lib.zone('deck'), treads.build(true))
   // stringers (steel plates) on both sides
   const totalRun = n * run + 0.02
   for (const side of [-1, 1]) {
     const c = side * (half + 0.01)
     const b0 = pt(0, c, s.rise - 0.04)
     const b1 = pt(totalRun, c, 0)
-    steel.beam(b0.clone().setY(b0.y - 0.12), b1.clone().setY(0.05), 0.014, 0.26)
+    steel.beam(b0.clone().setY(b0.y - 0.12), b1.clone().setY(base + 0.05), 0.014, 0.26)
   }
   // slat screen rails
   for (const side of s.rails ?? []) {
@@ -190,9 +228,9 @@ function stair(s: Stair, lib: MaterialLibrary, batch: MeshBatch, rand: () => num
     // posts at top and bottom
     const top0 = pt(0.05, c, s.rise)
     const bot0 = pt(totalRun - 0.05, c, 0)
-    steel.beam(top0, top0.clone().setY(s.rise + 0.98), 0.05, 0.05)
-    steel.beam(bot0, bot0.clone().setY(nose(totalRun - 0.05) + 0.98), 0.05, 0.05)
-    steel.beam(top0.clone().setY(s.rise + 0.98), bot0.clone().setY(nose(totalRun - 0.05) + 0.98), 0.05, 0.035)
+    steel.beam(top0, top0.clone().setY(base + s.rise + 0.98), 0.05, 0.05)
+    steel.beam(bot0, bot0.clone().setY(base + nose(totalRun - 0.05) + 0.98), 0.05, 0.05)
+    steel.beam(top0.clone().setY(base + s.rise + 0.98), bot0.clone().setY(base + nose(totalRun - 0.05) + 0.98), 0.05, 0.035)
     for (let y = 0.1; y < s.rise + 0.92; y += 0.095) {
       // along-range where nose + 0.06 <= y <= nose + 0.95 (nose falls linearly from rise to 0)
       const lo = Math.max(0.05, totalRun * (1 - (y - 0.06) / s.rise))
@@ -202,27 +240,21 @@ function stair(s: Stair, lib: MaterialLibrary, batch: MeshBatch, rand: () => num
     }
     const a = pt(0, c, 0)
     const b = pt(totalRun, c, 0)
-    out.colliders.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z })
+    out.colliders.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z, bottom: s.between ? base - 0.2 : undefined, top: s.between ? base + s.rise + 0.98 : undefined })
   }
   batch.add(lib.steel, steel.build())
-  const corners = [pt(0, -half, 0), pt(totalRun, half, 0)]
-  const rect: [number, number, number, number] = [
-    Math.min(corners[0].x, corners[1].x),
-    Math.min(corners[0].z, corners[1].z),
-    Math.max(corners[0].x, corners[1].x),
-    Math.max(corners[0].z, corners[1].z),
-  ]
   out.walkables.push({
-    rect,
+    rect: !s.between ? [rect[0] - (dx < 0 ? 0.02 : 0), rect[1] - (dz < 0 ? 0.02 : 0), rect[2] + (dx > 0 ? 0.02 : 0), rect[3] + (dz > 0 ? 0.02 : 0)] : rect,
+    between: s.between,
     height: (x, z) => {
       const along = (x - fx) * dx + (z - fz) * dz
       const i = Math.min(n, Math.max(0, Math.ceil(along / run)))
-      return s.rise - i * rh
+      return base + s.rise - i * rh
     },
   })
 }
 
-function terrace(t: Terrace, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: OutdoorOutput) {
+function terrace(t: Terrace, lib: MaterialLibrary, batch: MeshBatch, rand: () => number) {
   const [x0, z0, x1, z1] = t.rect
   const top = t.height ?? 0.045
   const gb = new GeoBuilder()
@@ -245,5 +277,4 @@ function terrace(t: Terrace, lib: MaterialLibrary, batch: MeshBatch, rand: () =>
     wall.box(x0 - 0.05, -0.2, z0, x1 + 0.05, top - 0.045, z1 + 0.05, ['top'])
     batch.add(lib.foundation, wall.build())
   }
-  out.walkables.push({ rect: t.rect, height: () => top })
 }

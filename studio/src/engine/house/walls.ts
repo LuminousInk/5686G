@@ -56,6 +56,7 @@ interface Piece {
 }
 
 const BACKER = new THREE.MeshStandardMaterial({ color: '#17130f', roughness: 1, name: 'backer' })
+const CENTER_SLIDER_TRAVEL = 0.48
 
 export interface WallOutput {
   colliders: Segment2[]
@@ -65,7 +66,7 @@ export interface WallOutput {
 }
 
 /** Builds exterior walls, cladding, openings for all blocks into `batch`. */
-export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch): WallOutput {
+export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: MeshBatch, stacked = false): WallOutput {
   const out: WallOutput = { colliders: [], sconces: [], lightsAt: [], doors: [] }
   const fy = plan.floorY
   const rand = rng(1234)
@@ -134,7 +135,7 @@ export function buildExteriorWalls(plan: HomePlan, lib: MaterialLibrary, batch: 
           const y0 = fy + (op.sill ?? 0)
           piece.holes.push({ u0, u1, y0, y1: y0 + op.height, op, openingIndex: plan.openings.indexOf(op) })
         }
-        buildPiece(piece, lib, batch, rand, out)
+        buildPiece(piece, lib, batch, rand, out, stacked)
       }
     }
     // corner trims on convex exterior corners
@@ -236,7 +237,7 @@ function vprism(gb: GeoBuilder, a: number, b: number, w0: number, w1: number, ya
   gb.hexa(bot, top, skipBack ? ['s0'] : [])
 }
 
-function buildPiece(p: Piece, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: WallOutput) {
+function buildPiece(p: Piece, lib: MaterialLibrary, batch: MeshBatch, rand: () => number, out: WallOutput, stacked: boolean) {
   const m = sideMatrix(p.f)
   const zoneMat = lib.zone(p.clad.zone)
   // structure (interior paint on both faces; the outer face is hidden by cladding)
@@ -247,14 +248,19 @@ function buildPiece(p: Piece, lib: MaterialLibrary, batch: MeshBatch, rand: () =
     const doorHoles = p.holes.filter(h => h.op.kind === 'slider' || h.op.kind === 'entry' || h.op.kind === 'door' || h.op.kind === 'garage')
     let u = p.u0
     for (const h of [...doorHoles].sort((x, y) => x.u0 - y.u0)) {
-      pushSeg(p.f, u, h.u0, out)
-      u = h.u1
+      const width = h.u1 - h.u0
+      const blocked = width * (0.5 - CENTER_SLIDER_TRAVEL / 4) + 0.03
+      const start = h.op.slide === 'center' ? h.u0 + blocked : h.op.slide === 'right' ? h.u0 + width * 0.55 : h.u0
+      const end = h.op.slide === 'center' ? h.u1 - blocked : h.u1
+      pushSeg(p.f, u, start, out)
+      u = end
     }
     pushSeg(p.f, u, p.u1, out)
     // foundation band, recessed behind the cladding
     const fb = new GeoBuilder()
     const yTop = p.cladBottom(0) + 0.03
-    vprism(fb, p.u0 - (p.ext0 ? 0 : 0), p.u1, -0.004, WALL_T, -0.3, -0.3, yTop, yTop, false)
+    const yBase = stacked ? yTop - 0.3 : Math.min(-0.3, yTop - 0.3)
+    vprism(fb, p.u0, p.u1, -0.004, WALL_T, yBase, yBase, yTop, yTop, false)
     batch.add(lib.foundation, applyMatrixKeepWinding(fb.build(), m))
   }
 
@@ -511,21 +517,41 @@ function buildOpening(p: Piece, h: Hole, lib: MaterialLibrary, batch: MeshBatch,
       break
     }
     case 'slider': {
-      // two leaves on two tracks; the right leaf is slid open behind the left one
       const half = (ix1 - ix0) / 2
       const lf = 0.05
+      const top = op.transom && op.transom < op.height - 0.3 ? y0 + op.transom : iy1
       const leaf = (a: number, b: number, wa: number, wb: number) => {
-        vprism(trim, a, a + lf, wa, wb, iy0, iy0, iy1, iy1, false)
-        vprism(trim, b - lf, b, wa, wb, iy0, iy0, iy1, iy1, false)
-        vprism(trim, a + lf, b - lf, wa, wb, iy1 - lf, iy1 - lf, iy1, iy1, false)
+        vprism(trim, a, a + lf, wa, wb, iy0, iy0, top, top, false)
+        vprism(trim, b - lf, b, wa, wb, iy0, iy0, top, top, false)
+        vprism(trim, a + lf, b - lf, wa, wb, top - lf, top - lf, top, top, false)
         vprism(trim, a + lf, b - lf, wa, wb, iy0, iy0, iy0 + lf * 1.4, iy0 + lf * 1.4, false)
-        pane(a + lf, b - lf, iy0 + lf * 1.4, iy1 - lf, (wa + wb) / 2)
+        pane(a + lf, b - lf, iy0 + lf * 1.4, top - lf, (wa + wb) / 2)
       }
-      leaf(ix0, ix0 + half + 0.02, 0.03, 0.07)
-      const open = h.op.id?.includes('open') ? 0.92 : 0
-      leaf(ix0 + half - 0.02 - open * half, ix1 - open * half, 0.08, 0.12)
-      // pull handle
-      steel.box(ix0 + half - 0.09, iy0 + 0.85, 0.0, ix0 + half - 0.075, iy0 + 1.25, 0.03)
+      if (op.slide === 'center') {
+        const quarter = half / 2
+        const travel = quarter * CENTER_SLIDER_TRAVEL
+        leaf(ix0, ix0 + quarter, 0.03, 0.07)
+        leaf(ix1 - quarter, ix1, 0.03, 0.07)
+        leaf(ix0 + quarter - travel, ix0 + half - travel, 0.08, 0.12)
+        leaf(ix1 - half + travel, ix1 - quarter + travel, 0.08, 0.12)
+        for (const handle of [ix0 + half - travel - 0.07, ix1 - half + travel + 0.07]) {
+          steel.box(handle - 0.008, iy0 + 0.85, 0, handle + 0.008, iy0 + 1.25, 0.03)
+        }
+      } else {
+        leaf(ix0, ix0 + half + 0.02, 0.03, 0.07)
+        const open = op.slide === 'right' || op.id?.includes('open') ? 0.92 : 0
+        leaf(ix0 + half - 0.02 - open * half, ix1 - open * half, 0.08, 0.12)
+        steel.box(ix0 + half - 0.09, iy0 + 0.85, 0.0, ix0 + half - 0.075, iy0 + 1.25, 0.03)
+      }
+      if (top < iy1) {
+        trim.box(ix0, top, w0, ix1, top + 0.035, w1)
+        const count = op.slide === 'center' ? 4 : 2
+        for (let i = 1; i < count; i++) {
+          const at = ix0 + (ix1 - ix0) * i / count
+          trim.box(at - 0.017, top, w0, at + 0.017, iy1, w1)
+        }
+        pane(ix0, ix1, top + 0.035, iy1)
+      }
       break
     }
     case 'door': {
