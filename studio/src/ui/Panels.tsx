@@ -3,8 +3,8 @@ import { TIME_PRESETS } from '../engine/env/environment'
 import { PLANS } from '../plans'
 import { feetInches } from './FloorPlan'
 import { Icon } from './icons'
-import { setState, useStore, getState, toast, encodeDesign } from './store'
-import { useState } from 'react'
+import { setState, useStore, toast } from './store'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Credits } from './Credits'
 
 const sf = (n: number) => n.toLocaleString('en-US')
@@ -67,12 +67,35 @@ function swatchStyle(o: FinishOption): React.CSSProperties {
   }
 }
 
+export function ZoneSwatches({ id, onFinish, compact }: { id: string; onFinish: (zone: string, opt: string) => void; compact?: boolean }) {
+  const current = useStore(s => s.finishes[s.planId][id])
+  return (
+    <div className={compact ? 'hotspot-swatches' : `swatches ${id === 'palette' ? 'swatches-wide' : ''}`}>
+      {ZONES[id].options.map(option => (
+        <button key={option.id} type="button" className={`swatch ${option.id === current ? 'is-on' : ''}`}
+          onClick={() => onFinish(id, option.id)} aria-pressed={option.id === current} aria-label={option.name} title={option.name}>
+          <span className="swatch-dot" style={swatchStyle(option)} />
+          {!compact && <span className="swatch-name">{option.name}</span>}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 /** Finishes, interior palette and light. */
-export function CustomizePanel({ onFinish, onTime }: { onFinish: (zone: string, opt: string) => void; onTime: (id: string) => void }) {
+export function CustomizePanel({ onFinish, onTime, initialZone }: { onFinish: (zone: string, opt: string) => void; onTime: (id: string) => void; initialZone?: string }) {
   const planId = useStore(s => s.planId)
   const finishes = useStore(s => s.finishes[s.planId])
   const time = useStore(s => s.time)
-  const [tab, setTab] = useState<'exterior' | 'interior' | 'light'>('exterior')
+  const [tab, setTab] = useState<'exterior' | 'interior' | 'light'>(initialZone && ZONES[initialZone].group === 'interior' ? 'interior' : 'exterior')
+  const body = useRef<HTMLDivElement>(null)
+  const initialSection = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    if (body.current && initialSection.current) {
+      body.current.scrollTop = initialSection.current.offsetTop
+      initialSection.current.focus({ preventScroll: true })
+    }
+  }, [])
   const plan = PLANS.find(p => p.id === planId)!
   const zones = plan.zones.filter(z => ZONES[z].group === tab)
   return (
@@ -93,32 +116,19 @@ export function CustomizePanel({ onFinish, onTime }: { onFinish: (zone: string, 
           </button>
         ))}
       </div>
-      <div className="custom-body">
+      <div className="custom-body" ref={body}>
         {tab !== 'light' &&
           zones.map(z => {
             const zone = ZONES[z]
             const cur = finishes[z] ?? plan.finishes[z]
             const curName = zone.options.find(o => o.id === cur)?.name
             return (
-              <section key={z} className="zone">
+              <section key={z} className="zone" data-finish-zone={z} ref={z === initialZone ? initialSection : undefined} tabIndex={z === initialZone ? -1 : undefined}>
                 <div className="zone-head">
                   <h3>{zone.label}</h3>
                   <span className="zone-value">{curName}</span>
                 </div>
-                <div className={`swatches ${z === 'palette' ? 'swatches-wide' : ''}`}>
-                  {zone.options.map(o => (
-                    <button
-                      key={o.id}
-                      className={`swatch ${o.id === cur ? 'is-on' : ''}`}
-                      onClick={() => onFinish(z, o.id)}
-                      aria-pressed={o.id === cur}
-                      title={o.name}
-                    >
-                      <span className="swatch-dot" style={swatchStyle(o)} />
-                      <span className="swatch-name">{o.name}</span>
-                    </button>
-                  ))}
-                </div>
+                <ZoneSwatches id={z} onFinish={onFinish} />
               </section>
             )
           })}
@@ -144,8 +154,7 @@ export function CustomizePanel({ onFinish, onTime }: { onFinish: (zone: string, 
   )
 }
 
-export function ShareSheet() {
-  const url = `${location.href.split('#')[0]}#${encodeDesign(getState())}`
+export function ShareSheet({ url }: { url: string }) {
   return (
     <aside className="sheet sheet-small" aria-label="Share">
       <header className="sheet-head">
@@ -157,7 +166,7 @@ export function ShareSheet() {
           <Icon.close />
         </button>
       </header>
-      <p className="note">The link opens this plan with your finishes and light.</p>
+      <p className="note">The link opens your camera view with the current finishes and light.</p>
       <div className="share-row">
         <input id="share-url" className="share-url" readOnly value={url} onFocus={e => e.currentTarget.select()} />
         <button

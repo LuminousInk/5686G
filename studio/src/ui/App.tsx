@@ -14,7 +14,9 @@ import { decodeDesign, encodeDesign, getState, planFor, setState, toast, useStor
 import { GALLERY_SHOTS, designView, galleryView, type GalleryCatalog, type GalleryImage } from './galleryShots'
 import { ZONES } from '../engine/materials/catalog'
 import { TIME_PRESETS } from '../engine/env/environment'
-import { isStudioRoute, type StudioLoad, type StudioTarget } from './routes'
+import { isStudioRoute, tourFromRoute, type StudioLoad, type StudioTarget } from './routes'
+import { TourControls, useTour } from './Tour'
+import { FinishHotspots, useFinishHotspots } from './FinishHotspots'
 import manifest from '../../public/gallery/gallery.json'
 import './styles.css'
 
@@ -55,6 +57,7 @@ declare global {
 
 let engine: Engine | null = null
 let nav: Navigator | null = null
+const cameraMoving = () => !!nav?.active
 
 // Schedule heavy work after the landing page has had a chance to paint and handle input.
 function afterPaint() {
@@ -92,8 +95,14 @@ export function App({ target, visible, requested, onLoad }: {
   const [editorModule, setEditorModule] = useState<typeof import('./Editor')>()
   const [photoModule, setPhotoModule] = useState<typeof import('./PhotoMode')>()
   const [you, setYou] = useState<{ x: number; z: number; yaw: number; level?: string } | null>(null)
+  const lastYou = useRef<typeof you>(null)
   const [openedLevel, setOpenedLevel] = useState<string>()
   const [viewId, setViewId] = useState<string | null>('hero')
+  const [shareUrl, setShareUrl] = useState('')
+  const [customizeZone, setCustomizeZone] = useState<string>()
+  const tour = useTour()
+  const tourTarget = useRef<StudioTarget | null>(null)
+  const [hotspots, toggleHotspots] = useFinishHotspots()
   const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
   const [portrait, setPortrait] = useState(() => window.innerHeight > window.innerWidth * 1.15)
   useEffect(() => {
@@ -164,21 +173,29 @@ export function App({ target, visible, requested, onLoad }: {
     const blockKeys = (event: KeyboardEvent) => {
       if (!latest.current.visible) event.stopImmediatePropagation()
     }
+    const stopTourForKey = (event: KeyboardEvent) => {
+      const onControls = (event.target as HTMLElement | null)?.closest?.('[data-tour-control]')
+      if (onControls && ['Tab', 'Enter', ' '].includes(event.key)) return
+      if (latest.current.visible) tour.stop()
+    }
     const trackScroll = () => { lastScroll.current = performance.now() }
     window.addEventListener('keydown', blockKeys)
+    window.addEventListener('keydown', stopTourForKey, true)
     window.addEventListener('scroll', trackScroll, { capture: true, passive: true })
     nav = new Navigator(engine, canvas)
     // Gallery stills hold the exact shot camera while exposure and shadows converge.
     if (params.get('gallery') === '1') nav.update = () => {}
     window.__nav = nav
-    engine.keepAlive = () => !!nav?.active
+    engine.keepAlive = cameraMoving
     nav.onModeChange = (m: NavMode) => {
       if (getState().mode !== 'plan' || m !== 'orbit') setState({ mode: m })
     }
     let hintTimer = 0
     nav.onInteract = () => {
+      const wasTouring = tour.stop()
       if (getState().sheet === 'plans' && matchMedia('(max-width: 899px)').matches) setState({ sheet: null })
-      if (nav?.mode === 'walk' && getState().walkHint && !hintTimer) hintTimer = window.setTimeout(() => setState({ walkHint: false }), 4500)
+      if (!wasTouring && nav?.mode === 'walk' && getState().walkHint && !hintTimer) hintTimer = window.setTimeout(() => setState({ walkHint: false }), 4500)
+      return wasTouring
     }
     let width = 0
     let height = 0
@@ -199,10 +216,15 @@ export function App({ target, visible, requested, onLoad }: {
       firstFrame.current?.()
       if (!latest.current.visible) return
       const now = performance.now()
-      if (now - last < 120 || !nav) return
+      if (!nav) return
+      const level = nav.mode === 'walk' ? nav.floorLevel : undefined
+      if (now - last < 120 && lastYou.current?.level === level) return
       last = now
-      if (nav.mode === 'walk') setYou({ x: engine!.camera.position.x, z: engine!.camera.position.z, yaw: nav.yaw, level: nav.floorLevel })
-      else setYou(null)
+      const next = readWalkPosition()
+      const previous = lastYou.current
+      if (next && previous && next.level === previous.level && Math.abs(next.x - previous.x) < 0.01 &&
+          Math.abs(next.z - previous.z) < 0.01 && Math.abs(next.yaw - previous.yaw) < 0.01) return
+      if (next || previous) setYou(lastYou.current = next)
     }
     setBooted(true)
     return () => {
@@ -210,6 +232,7 @@ export function App({ target, visible, requested, onLoad }: {
       fitToCanvas.current = null
       clearTimeout(hintTimer)
       window.removeEventListener('keydown', blockKeys)
+      window.removeEventListener('keydown', stopTourForKey, true)
       window.removeEventListener('scroll', trackScroll, true)
       nav?.dispose()
       engine?.dispose()
@@ -223,16 +246,19 @@ export function App({ target, visible, requested, onLoad }: {
     if (!booted) return
     const params = new URLSearchParams(location.search)
     reportedTarget.current = null
+    const touring = tourFromRoute(target.hash)
     const design = decodeDesign(target.hash)
-    const plan = params.get('plan')
-    const time = params.get('time')
-    const view = params.get('view')
+    const plan = !touring && !design ? params.get('plan') : null
+    const time = !touring && !design ? params.get('time') : null
+    const view = !touring && !design ? params.get('view') : null
     setState({
+      pose: undefined,
       ...design,
       ...(plan && planById(plan) ? { planId: plan, sheet: null } : {}),
       ...(time ? { time } : {}),
       ...(view ? { viewId: view } : {}),
       ...(params.get('sheet') === 'none' || !isStudioRoute('', location.search) ? { sheet: null } : {}),
+      ...(touring ? { planId: touring.id, viewId: touring.tour![0].view, sheet: null } : {}),
       editing: false,
       photo: null,
     })
@@ -261,6 +287,7 @@ export function App({ target, visible, requested, onLoad }: {
       const s = getState()
       const p = planFor(planId)
       const start = designView(p, s.viewId) ?? p.views[0]
+      tour.stop()
       currentEngine.paused = true
       currentEngine.stop()
       const progress = (p: number, label: string) => {
@@ -290,10 +317,13 @@ export function App({ target, visible, requested, onLoad }: {
         if (cancelled) return
         fitToCanvas.current?.()
         currentNav.setBounds(currentEngine.house!.bounds)
-        if (currentNav.mode === 'dollhouse') currentNav.setMode('orbit', false)
-        currentNav.goToView(start, false)
-        setViewId(start.id)
-        setState({ mode: start.kind === 'walk' ? 'walk' : 'orbit' })
+        if (s.pose) currentNav.goToPose(s.pose)
+        else {
+          if (currentNav.mode === 'dollhouse') currentNav.setMode('orbit', false)
+          currentNav.goToView(start, false)
+        }
+        setViewId(s.pose ? null : start.id)
+        setState({ mode: currentNav.mode })
         await waitForPage()
         if (cancelled) return
         progress(1, 'Preparing the first view')
@@ -334,7 +364,6 @@ export function App({ target, visible, requested, onLoad }: {
   useEffect(() => {
     if (!engine || !nav) return
     if (visible) fitToCanvas.current?.()
-    nav.enabled = visible
     if (!visible && !firstFrame.current) {
       engine.paused = true
       engine.stop()
@@ -344,26 +373,51 @@ export function App({ target, visible, requested, onLoad }: {
     }
   }, [visible, booted])
 
+  useEffect(() => {
+    if (nav) nav.enabled = visible && mode !== 'plan'
+  }, [visible, booted, mode])
+
+  useEffect(() => {
+    if (!visible) {
+      tourTarget.current = null
+      tour.stop()
+      return
+    }
+    if (loading || appliedTarget !== target || tourTarget.current === target || !nav || location.hash !== target.hash) return
+    if (tourFromRoute(target.hash)?.id !== planId || !plan.tour?.length) return
+    tourTarget.current = target
+    startTour()
+  }, [visible, target, appliedTarget, loading, planId])
+
+  const startTour = () => {
+    if (!nav || !plan.tour?.length || loading) return
+    if (nav.mode === 'dollhouse') nav.setMode('orbit', false)
+    setState({ sheet: null, mode: 'orbit', editing: false, photo: null, walkHint: false })
+    tour.start(plan, nav, setViewId)
+  }
+
   const pickPlan = (id: string) => {
     setState({ sheet: matchMedia('(max-width: 899px)').matches ? null : getState().sheet === 'plans' ? 'plans' : null })
     if (id === getState().planId) {
       setState({ sheet: null })
       return
     }
-    setState({ planId: id, mode: 'orbit', editing: false, viewId: null })
+    setState({ planId: id, mode: 'orbit', editing: false, viewId: null, pose: undefined })
   }
 
   const stepPlan = (d: number) => {
     const i = PLANS.findIndex(p => p.id === planId)
     const next = PLANS[(i + d + PLANS.length) % PLANS.length]
-    setState({ planId: next.id, mode: 'orbit', editing: false, viewId: null, sheet: getState().sheet === 'plans' ? 'plans' : null })
+    setState({ planId: next.id, mode: 'orbit', editing: false, viewId: null, pose: undefined, sheet: getState().sheet === 'plans' ? 'plans' : null })
   }
 
   const setMode = (m: UiMode, level?: string) => {
     if (!nav || !engine) return
     setState({ viewId: null })
     if (m === 'plan') {
+      nav.interruptTween()
       setOpenedLevel(level)
+      setYou(lastYou.current = readWalkPosition())
       setState({ mode: 'plan', sheet: null })
       return
     }
@@ -389,6 +443,20 @@ export function App({ target, visible, requested, onLoad }: {
     nav.goToView(v)
     setViewId(id)
     setState({ mode: v.kind === 'walk' ? 'walk' : 'orbit', viewId: v.id })
+  }
+
+  const share = () => {
+    if (sheet === 'share') {
+      setState({ sheet: null })
+      return
+    }
+    const preset = designView(plan, viewId)
+    const named = preset && nav?.atView(preset) ? preset.id : plan.views.find(view => nav?.atView(view))?.id ?? null
+    const url = new URL(location.href)
+    for (const key of ['plan', 'time', 'view']) url.searchParams.delete(key)
+    url.hash = encodeDesign({ ...getState(), viewId: named, pose: named ? undefined : nav?.capturePose() })
+    setShareUrl(url.href)
+    setState({ sheet: 'share' })
   }
 
   const onFinish = (zone: string, opt: string) => {
@@ -430,9 +498,15 @@ export function App({ target, visible, requested, onLoad }: {
   const exteriorViews = plan.views.filter(v => v.kind === 'orbit' && !v.id.startsWith('test'))
   const walkViews = plan.views.filter(v => v.kind === 'walk')
   const chips = mode === 'walk' ? walkViews : exteriorViews
+  const touring = !!tour.state
 
   return (
-    <div className={`app mode-${mode} ${sheet ? `has-${sheet}` : ''} ${editing && editorModule ? 'is-editing' : ''}`}>
+    <div className={`app mode-${mode} ${sheet ? `has-${sheet}` : ''} ${editing && editorModule ? 'is-editing' : ''}`}
+      onPointerDownCapture={e => {
+        const target = e.target as Element
+        if (target !== canvasRef.current && !target.closest('[data-tour-control]')) tour.stop()
+      }}
+      onWheelCapture={e => { if (e.target !== canvasRef.current) tour.stop() }}>
       <canvas ref={canvasRef} className="stage" />
 
       {visible && <div className="hud">
@@ -462,15 +536,19 @@ export function App({ target, visible, requested, onLoad }: {
         </header>
 
         <nav className="actions" aria-label="Tools">
+          {!!plan.tour?.length && <button className="btn btn-tour glass" type="button" onClick={touring ? tour.stop : startTour}
+            disabled={!!loading || editing || takingPhoto} aria-pressed={touring} data-tour-control><Icon.play /> Tour</button>}
           <button className="icon-btn" onClick={() => {
             loaded.current = null
             setState({ editing: !editing, sheet: null })
           }} aria-label="Edit plan" aria-pressed={editing}>
             <Icon.pencil />
           </button>
-          <button className="icon-btn" onClick={() => setState({ sheet: sheet === 'share' ? null : 'share' })} aria-label="Share design">
+          <button className="icon-btn" onClick={share} aria-label="Share design">
             <Icon.link />
           </button>
+          <button className="icon-btn" type="button" onClick={toggleHotspots} aria-label="Finish hotspots" title="Finish hotspots"
+            aria-pressed={hotspots} disabled={mode === 'plan' || editing || takingPhoto || !!loading}><Icon.hotspot /></button>
           <button
             className="icon-btn"
             onClick={() => setState({ photo: { state: 'rendering', samples: 0 }, sheet: null })}
@@ -494,8 +572,14 @@ export function App({ target, visible, requested, onLoad }: {
           </button>
         </nav>
 
+        {engine && hotspots && !loading && !sheet && !editing && !takingPhoto && mode !== 'plan' && !touring &&
+          <FinishHotspots key={mode} engine={engine} isMoving={cameraMoving} onFinish={onFinish} onCustomize={zone => {
+            setCustomizeZone(zone)
+            setState({ sheet: 'customize' })
+          }} />}
+
         {mode === 'walk' && (plan.levels && plan.levels.length > 1 ? (
-          <FloorPlan className="minimap" plan={plan} you={you} compact onOpen={level => setMode('plan', level)} />
+          <FloorPlan key={you?.level} className="minimap" plan={plan} you={you} compact onOpen={level => setMode('plan', level)} />
         ) : (
           <button className="minimap" onClick={() => setMode('plan')} aria-label="Open floor plan">
             <FloorPlan plan={plan} you={you} compact />
@@ -503,7 +587,8 @@ export function App({ target, visible, requested, onLoad }: {
         ))}
 
         <div className="bottom">
-          {mode !== 'plan' && chips.length > 0 && (
+          {tour.state && plan.tour && <TourControls stops={plan.tour} {...tour.state} jump={tour.jump} togglePause={tour.togglePause} end={tour.stop} />}
+          {!touring && mode !== 'plan' && chips.length > 0 && (
             <div className="chips" role="list">
               {chips.map(v => (
                 <button key={v.id} role="listitem" className={`chip-btn ${viewId === v.id ? 'is-on' : ''}`} onClick={() => goView(v.id)}>
@@ -522,22 +607,25 @@ export function App({ target, visible, requested, onLoad }: {
                   ['plan', 'Floor plan', Icon.plan],
                 ] as const
               ).map(([m, label, I]) => (
-                <button key={m} role="tab" aria-selected={mode === m} className={`mode ${mode === m ? 'is-on' : ''}`} onClick={() => setMode(m)}>
+                <button key={m} role="tab" aria-label={label} aria-selected={mode === m} className={`mode ${mode === m ? 'is-on' : ''}`} onClick={() => setMode(m)}>
                   <I />
                   <span>{label}</span>
                 </button>
               ))}
             </div>
-            <button className={`btn btn-style ${sheet === 'customize' ? 'is-on' : ''}`} onClick={() => setState({ sheet: sheet === 'customize' ? null : 'customize' })}>
+            <button className={`btn btn-style ${sheet === 'customize' ? 'is-on' : ''}`} onClick={() => {
+              setCustomizeZone(undefined)
+              setState({ sheet: sheet === 'customize' ? null : 'customize' })
+            }}>
               <Icon.palette />
               <span>Style</span>
             </button>
           </div>
         </div>
 
-        {mode === 'walk' && touch && <div className="joy-wrap"><Joystick onMove={(x, y) => { if (nav && engine) { nav.moveInput.set(x, y); engine.invalidate() } }} /></div>}
+        {mode === 'walk' && touch && !touring && <div className="joy-wrap"><Joystick onMove={(x, y) => { if (nav && engine) { nav.moveInput.set(x, y); engine.invalidate() } }} /></div>}
 
-        {mode === 'walk' && walkHint && (
+        {mode === 'walk' && walkHint && !touring && (
           <div className="hint" role="status">
             <p>{touch ? 'Drag to look around · Tap the floor to walk · Stick to move' : 'Drag to look around · Click the floor to walk · W A S D to move'}</p>
             <button className="btn btn-ghost" onClick={() => setState({ walkHint: false })}>Got it</button>
@@ -552,18 +640,18 @@ export function App({ target, visible, requested, onLoad }: {
                 <h2>{plan.name}</h2>
                 <PlanFacts id={planId} />
               </div>
-              <button className="icon-btn" onClick={() => setMode('orbit')} aria-label="Close floor plan">
+              <button className="icon-btn" onClick={() => setState({ mode: nav?.mode ?? 'orbit' })} aria-label="Close floor plan">
                 <Icon.close />
               </button>
             </div>
-            <FloorPlan className="plan-big" plan={plan} you={plan.levels ? you : null} initialLevel={openedLevel} onRoom={roomWalk} rotate={portrait && plan.facts.width > plan.facts.depth * 1.15} />
+            <FloorPlan className="plan-big" plan={plan} you={you} initialLevel={openedLevel} onRoom={roomWalk} rotate={portrait && plan.facts.width > plan.facts.depth * 1.15} />
             <p className="note center">Tap a room to stand in it.</p>
           </div>
         )}
 
         {sheet === 'plans' && <PlanSheet onPick={pickPlan} />}
-        {sheet === 'customize' && <CustomizePanel onFinish={onFinish} onTime={onTime} />}
-        {sheet === 'share' && <ShareSheet />}
+        {sheet === 'customize' && <CustomizePanel initialZone={customizeZone} onFinish={onFinish} onTime={onTime} />}
+        {sheet === 'share' && <ShareSheet url={shareUrl} />}
         {sheet === 'help' && <HelpSheet />}
         {editing && engine && editorModule && <editorModule.Editor engine={engine} plan={plan} onClose={() => setState({ editing: false })} />}
         {photo && engine && photoModule && <photoModule.PhotoMode engine={engine} />}
@@ -593,6 +681,15 @@ export function App({ target, visible, requested, onLoad }: {
       </div>}
     </div>
   )
+}
+
+const walkDirection = new THREE.Vector3()
+
+function readWalkPosition() {
+  if (!engine || nav?.mode !== 'walk') return null
+  const { x, z } = engine.camera.position
+  const direction = engine.camera.getWorldDirection(walkDirection)
+  return { x, z, yaw: Math.atan2(-direction.x, -direction.z), level: nav.floorLevel }
 }
 
 export { THREE }

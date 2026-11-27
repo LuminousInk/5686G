@@ -8,12 +8,14 @@ import { modelsForEntry } from '../engine/models'
 import { PLANS, planById } from '../plans'
 import catalog from '../../public/gallery/gallery.json'
 import { availableComparisons, GALLERY_SHOTS, galleryView, type GalleryImage } from './galleryShots'
-import { homeFromRoute, homeRoute, isStudioRoute } from './routes'
+import { homeFromRoute, homeRoute, isStudioRoute, tourFromRoute, tourRoute } from './routes'
 import { aspenCustom } from '../plans/aspenCustom'
 import { planProblems } from '../plans/validate'
 import { feetInches, planGeometry } from './FloorPlan'
 import { MIN_BLOCK, moveBlockEdge } from './planEdits'
 import { decodeDesign, encodeDesign, getState, type AppState } from './store'
+import { decodePose, encodePose } from './sharePose'
+import type { CameraPose } from '../engine/nav/pose'
 
 describe('share codes', () => {
   it('round-trip the plan, the light and every finish option', () => {
@@ -47,9 +49,47 @@ describe('share codes', () => {
   it('ignores hashes that are not share codes', () => {
     for (const h of ['', '#', '#hero', '#c-', '#c-99-0', '#c-0-x']) expect(decodeDesign(h)).toBeNull()
   })
+
+  it.each(['walk', 'orbit', 'dollhouse'] as const)('keeps the exact spot in a plain hash for %s mode', mode => {
+    const pose: CameraPose = { mode, pos: [-9.3102, -1.231, 0.0009], target: [5.6121, 2.1, -43.232], fov: 62.153 }
+    const code = encodeDesign({ ...getState(), planId: 'aspen-custom', time: 'dusk', viewId: null, pose })
+    expect(code).toMatch(/^[a-z0-9-]+$/)
+    expect(isStudioRoute('#' + code, '')).toBe(true)
+    expect(decodeDesign('#' + code)).toMatchObject({
+      planId: 'aspen-custom', time: 'dusk', viewId: null,
+      pose: { mode, pos: [-9.31, -1.231, 0.001], target: [5.612, 2.1, -43.232], fov: 62.15 },
+    })
+  })
+
+  it('drops unusable poses and keeps the rest of a legacy design', () => {
+    const pose: CameraPose = { mode: 'walk', pos: [1, 2, 3], target: [1, 2, 3], fov: 60 }
+    expect(encodePose(pose)).toBeUndefined()
+    expect(encodePose({ ...pose, pos: [0, 0, 0], fov: Infinity })).toBeUndefined()
+    for (const bad of ['a-0-0-0-1-2-3-700', 'w-0-0-0-1-2-3', 'w-0-0-0-0-0-0-700', 'o-zzzzz-0-0-1-2-3-700']) {
+      expect(decodePose(bad)).toBeUndefined()
+      expect(decodeDesign(`#c-0-0-p-${bad}`)).toMatchObject({ planId: 'cedar-ridge', pose: undefined })
+    }
+  })
 })
 
 describe('website entry points', () => {
+  it('resolves each tour from a plain plan hash and includes all the planned spaces', () => {
+    for (const plan of PLANS) {
+      const hash = tourRoute(plan.id)
+      expect(isStudioRoute(hash, '')).toBe(true)
+      expect(tourFromRoute(hash)).toBe(plan)
+      const stops = plan.tour!
+      const views = stops.map(stop => plan.views.find(view => view.id === stop.view)!)
+      expect(views.every(Boolean)).toBe(true)
+      expect(views[0].kind).toBe('orbit')
+      expect(views.at(-1)?.id).toBe('ocean')
+      expect(views.some(view => plan.rooms.some(room => room.id === view.room && room.type === 'kitchen'))).toBe(true)
+      expect(views.some(view => plan.rooms.some(room => room.id === view.room && room.type === 'primary'))).toBe(true)
+      if (plan.id === 'aspen-custom') expect(views.some(view => plan.rooms.some(room => room.id === view.room && room.level === 'lower'))).toBe(true)
+    }
+    expect(isStudioRoute('#tour-unknown', '')).toBe(false)
+    expect(isStudioRoute('#tour-cedar-ridge?time=day', '')).toBe(false)
+  })
   it('opens the landing without a hash and uses only plain studio hashes', () => {
     for (const hash of ['', '#home', '#gallery', '#/studio', '#studio?view=great']) {
       expect(isStudioRoute(hash, '')).toBe(false)

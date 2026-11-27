@@ -5,6 +5,7 @@ import { ZONES } from '../engine/materials/catalog'
 import { feetInches, FloorPlan } from './FloorPlan'
 import { Icon } from './icons'
 import { GalleryGrid, images, imageSrc } from './SiteGallery'
+import { tourRoute } from './routes'
 
 const descriptions: Record<string, string> = {
   'cedar-ridge': 'Natural cedar, charcoal steel and a solar roof frame a single-level home built around its garden. The great room opens to a terraced patio and rock garden, with the kitchen and dining room at one end and a quieter primary suite at the other.',
@@ -115,7 +116,12 @@ export function HomePage({ plan, walkThrough, onDesign }: {
               <p className="site-kicker">{plan.style}</p>
               <h1 id="site-title">{plan.name}</h1>
             </div>
-            {walkThrough}
+            <div className="site-home-ctas">
+              {walkThrough}
+              {!!plan.tour?.length && <a className="site-cta site-tour-cta" href={tourRoute(plan.id)} onClick={onDesign}>
+                <Icon.play /> Take the tour
+              </a>}
+            </div>
           </div>
         </div>
         <figure className="site-home-render">

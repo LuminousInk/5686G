@@ -192,6 +192,12 @@ export interface CameraView {
   room?: string
 }
 
+export interface TourStop {
+  view: string
+  title: string
+  caption: string
+}
+
 export interface LandscapeSpec {
   /** rock garden berms: center, radii, height */
   berms?: { x: number; z: number; rx: number; rz: number; h: number; rot?: number; seed?: number }[]
@@ -263,6 +269,7 @@ export interface HomePlan {
   terraces: Terrace[]
   landscape: LandscapeSpec
   views: CameraView[]
+  tour?: TourStop[]
   /** default finish selections (zone -> option id) */
   finishes: Record<string, string>
   /** finish zones offered for this plan, in UI order */

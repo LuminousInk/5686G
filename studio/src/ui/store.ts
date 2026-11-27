@@ -4,7 +4,9 @@ import { TIME_PRESETS } from '../engine/env/environment'
 import { PLANS, planById } from '../plans'
 import type { HomePlan } from '../engine/house/types'
 import { designView } from './galleryShots'
-import { designCode } from './routes'
+import { shareCode } from './routes'
+import { decodePose, encodePose } from './sharePose'
+import type { CameraPose } from '../engine/nav/pose'
 
 const STORE_KEY = 'cuby-studio-edits-v1'
 function loadCustom(): Record<string, HomePlan> {
@@ -36,6 +38,7 @@ export interface AppState {
   /** progress of the current load; `error` is set when it failed (shown with a Try again button) */
   loading: { p: number; label: string; error?: string } | null
   viewId: string | null
+  pose?: CameraPose
   toast: string | null
   photo: null | { state: 'rendering' | 'done'; samples: number; url?: string }
   editing: boolean
@@ -91,7 +94,7 @@ export function toast(msg: string) {
 
 // ------------------------------------------------------------------ share codes
 // Artifact hosts only pass a plain "#name" hash (letters, digits, hyphens). Encode the design as
-// #c-<plan>-<time>-<option per zone ...>[-v-<view id>]
+// #c-<plan>-<time>-<option per zone ...>[-v-<view id> | -p-<pose>]
 
 export function encodeDesign(s: AppState = state): string {
   const pi = PLANS.findIndex(p => p.id === s.planId)
@@ -100,11 +103,13 @@ export function encodeDesign(s: AppState = state): string {
   const f = s.finishes[plan.id] ?? plan.finishes
   const parts = plan.zones.map(z => Math.max(0, ZONES[z].options.findIndex(o => o.id === f[z])))
   const base = ['c', pi, ti, ...parts].join('-')
-  return s.viewId ? `${base}-v-${s.viewId}` : base
+  const pose = s.pose && encodePose(s.pose)
+  if (s.viewId) return `${base}-v-${s.viewId}`
+  return pose ? `${base}-p-${pose}` : base
 }
 
 export function decodeDesign(hash: string): Partial<AppState> | null {
-  const m = designCode(hash)
+  const m = shareCode(hash)
   if (!m) return null
   const plan = PLANS[Number(m[1])]
   if (!plan) return null
@@ -116,7 +121,7 @@ export function decodeDesign(hash: string): Partial<AppState> | null {
     if (o) f[z] = o.id
   })
   const viewId = m[4] && designView(plan, m[4]) ? m[4] : null
-  return { planId: plan.id, time, finishes: { ...state.finishes, [plan.id]: f }, sheet: null, viewId }
+  return { planId: plan.id, time, finishes: { ...state.finishes, [plan.id]: f }, sheet: null, viewId, pose: m[5] ? decodePose(m[5]) : undefined }
 }
 
 export function currentPlan(): HomePlan {
