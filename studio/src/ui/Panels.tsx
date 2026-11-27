@@ -201,24 +201,27 @@ export function ShareSheet({ url }: { url: string }) {
           <Icon.close />
         </button>
       </header>
-      <p className="note">The link opens your camera view with the current finishes and light.</p>
-      <div className="share-row">
-        <input id="share-url" className="share-url" readOnly value={url} onFocus={e => e.currentTarget.select()} />
-        <button
-          className="btn"
-          onClick={() => {
-            navigator.clipboard
-              ?.writeText(url)
-              .then(() => toast('Link copied'))
-              .catch(() => {
-                const el = document.getElementById('share-url') as HTMLInputElement | null
-                el?.select()
-                toast('Press Copy on your keyboard to copy the selected link')
-              })
-          }}
-        >
-          <Icon.copy /> Copy
-        </button>
+      <div className="sheet-body">
+        <p className="note">The link opens your camera view with the current finishes and light.</p>
+        <div className="share-row">
+          <textarea id="share-url" className="share-url" aria-label="Share link" rows={3} readOnly spellCheck={false}
+            value={url} onFocus={e => e.currentTarget.select()} />
+          <button
+            className="btn"
+            onClick={() => {
+              navigator.clipboard
+                ?.writeText(url)
+                .then(() => toast('Link copied'))
+                .catch(() => {
+                  const el = document.getElementById('share-url') as HTMLTextAreaElement | null
+                  el?.select()
+                  toast('Press Copy on your keyboard to copy the selected link')
+                })
+            }}
+          >
+            <Icon.copy /> Copy
+          </button>
+        </div>
       </div>
     </aside>
   )
@@ -237,22 +240,24 @@ export function HelpSheet() {
           <Icon.close />
         </button>
       </header>
-      <dl className="help">
-        <dt>Outside</dt>
-        <dd>{touch ? 'Drag to circle the house and tilt up or down. Pinch to zoom. Two fingers to slide.' : 'Drag to circle and tilt. Scroll to zoom. Right-drag or Shift-drag to slide.'}</dd>
-        <dt>Walk</dt>
-        <dd>{touch ? 'Drag to look around, up and down. Tap the floor to walk there. Use the stick to walk, or pinch to step forward.' : 'Drag to look around. Click the floor to walk there. W A S D or the arrow keys walk, Shift runs.'}</dd>
-        <dt>Dollhouse</dt>
-        <dd>{touch ? 'Tap a room to walk in. Double-tap to frame it.' : 'Click a room to walk in. Double-click to frame it.'}</dd>
-        <dt>Floor plan</dt>
-        <dd>Tap a room to stand in it. Sizes are interior dimensions in feet.</dd>
-      </dl>
-      <p className="note">Hold still for a moment and the picture sharpens: shadows soften and edges clean up.</p>
-      <p><a className="studio-help-home" href="#home">Back to Cuby Studio <Icon.diagonal /></a></p>
-      <details className="credits">
-        <summary>Credits</summary>
-        <div className="note"><Credits /></div>
-      </details>
+      <div className="sheet-body">
+        <dl className="help">
+          <dt>Outside</dt>
+          <dd>{touch ? 'Drag to circle the house and tilt up or down. Pinch to zoom. Two fingers to slide.' : 'Drag to circle and tilt. Scroll to zoom. Right-drag or Shift-drag to slide.'}</dd>
+          <dt>Walk</dt>
+          <dd>{touch ? 'Drag to look around, up and down. Tap the floor to walk there. Use the stick to walk, or pinch to step forward.' : 'Drag to look around. Click the floor to walk there. W A S D or the arrow keys walk, Shift runs.'}</dd>
+          <dt>Dollhouse</dt>
+          <dd>{touch ? 'Tap a room to walk in. Double-tap to frame it.' : 'Click a room to walk in. Double-click to frame it.'}</dd>
+          <dt>Floor plan</dt>
+          <dd>Tap a room to stand in it. Sizes are interior dimensions in feet.</dd>
+        </dl>
+        <p className="note">Hold still for a moment and the picture sharpens: shadows soften and edges clean up.</p>
+        <p><a className="studio-help-home" href="#home">Back to Cuby Studio <Icon.diagonal /></a></p>
+        <details className="credits">
+          <summary>Credits</summary>
+          <div className="note"><Credits /></div>
+        </details>
+      </div>
     </aside>
   )
 }
