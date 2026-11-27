@@ -116,6 +116,6 @@ export const coastalModern: HomePlan = {
     { id: 'kitchen', label: 'Kitchen', kind: 'walk', pos: [-1.8, 2.0, -4.6], target: [1.5, 1.4, -9.5], fov: 66, room: 'kitchen' },
     { id: 'primary', label: 'Primary', kind: 'walk', pos: [-6.0, 2.0, -6.6], target: [-9.0, 1.4, -9.2], fov: 66, room: 'primary' },
   ],
-  finishes: { coastal: 'chalk', cedar: 'natural-cedar', roof: 'slate', trim: 'black', door: 'cedar', palette: 'light', walls: 'warm-white' },
+  finishes: { coastal: 'chalk', cedar: 'natural-cedar', roof: 'slate', trim: 'black', door: 'cedar', palette: 'light', walls: 'fog' },
   zones: ['coastal', 'cedar', 'roof', 'trim', 'door', 'palette', 'walls'],
 }

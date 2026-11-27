@@ -140,6 +140,6 @@ export const aspenCustom: HomePlan = {
     { id: 'great', label: 'Great room', kind: 'walk', pos: [3.8, 2.25, -6.0], target: [-3.6, 1.9, -12.4], fov: 66, room: 'great' },
     { id: 'deckwalk', label: 'On the deck', kind: 'walk', pos: [6.5, 2.2, -19.5], target: [-1, 2.0, -11], fov: 62 },
   ],
-  finishes: { cedar: 'natural-cedar', panel: 'charcoal', roof: 'charcoal', trim: 'black', door: 'black', deck: 'ipe', palette: 'light', walls: 'warm-white' },
+  finishes: { cedar: 'natural-cedar', panel: 'charcoal', roof: 'charcoal', trim: 'black', door: 'black', deck: 'ipe', palette: 'light', walls: 'greige' },
   zones: ['cedar', 'panel', 'roof', 'trim', 'door', 'deck', 'palette', 'walls'],
 }
