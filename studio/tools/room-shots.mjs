@@ -17,14 +17,39 @@ const errs = []
 page.on('pageerror', e => errs.push(e.message))
 await page.goto(`${base}?plan=${id}&time=${process.env.TIME ?? 'golden'}&quality=${process.env.Q ?? 'low'}&frames=4&sheet=none&ui=0`)
 await page.waitForFunction(() => window.__ready === true, null, { timeout: 400000 })
-const rooms = await page.evaluate(() => window.__engine.plan.rooms.filter(r => !['closet', 'laundry', 'garage'].includes(r.type)).map(r => ({ id: r.id, type: r.type, rect: r.rect })))
-const fy = await page.evaluate(() => window.__engine.plan.floorY)
+const rooms = await page.evaluate(() => {
+  const plan = window.__engine.plan
+  return plan.rooms.filter(r => !['closet', 'laundry', 'garage'].includes(r.type)).map(r => {
+    const [x0, z0, x1, z1] = r.rect
+    const level = plan.levels?.find(l => l.id === (r.level ?? plan.levels[0]?.id))
+    const fy = plan.floorY + (level?.offset ?? 0)
+    const frame = plan.blocks.find(b => b.id === r.frame)
+    const view = plan.views.find(v => v.kind === 'walk' && v.room === r.id)
+    if (view && (frame || level?.offset)) {
+      return { id: r.id, type: r.type, pos: view.pos, target: view.target, fov: view.fov ?? 75 }
+    }
+    const point = (x, y, z) => {
+      if (!frame?.yaw) return [x, y, z]
+      const cx = (frame.rect[0] + frame.rect[2]) / 2
+      const cz = (frame.rect[1] + frame.rect[3]) / 2
+      const c = Math.cos(frame.yaw)
+      const s = Math.sin(frame.yaw)
+      return [cx + (x - cx) * c + (z - cz) * s, y, cz - (x - cx) * s + (z - cz) * c]
+    }
+    let pos = point(x0 + 0.5, fy + 1.55, z1 - 0.5)
+    let target = point(x1 - 0.3, fy + 0.95, z0 + 0.3)
+    if (r.type === 'kitchen' && frame && Math.abs(x0 - frame.rect[0]) < 0.01) {
+      // View the wall run from the passage so the camera clears the fridge.
+      const z = (z0 + z1) / 2
+      pos = point(x1 + 0.5, fy + 1.55, z)
+      target = point(x0 + 0.25, fy + 0.95, z)
+    }
+    return { id: r.id, type: r.type, pos, target, fov: 75 }
+  })
+})
 for (const r of rooms) {
   if (only.length && !only.includes(r.id)) continue
-  const [x0, z0, x1, z1] = r.rect
-  const pos = [x0 + 0.5, fy + 1.55, z1 - 0.5]
-  const target = [x1 - 0.3, fy + 0.95, z0 + 0.3]
-  await page.evaluate(([pos, target]) => window.__nav.goToView({ id: 'review', label: 'review', kind: 'walk', pos, target, fov: 75 }, false), [pos, target])
+  await page.evaluate(({ pos, target, fov }) => window.__nav.goToView({ id: 'review', label: 'review', kind: 'walk', pos, target, fov }, false), r)
   await page.waitForTimeout(800)
   await page.waitForFunction(() => window.__engine.pipeline.converged, null, { timeout: 60000 }).catch(() => {})
   await page.screenshot({ path: `${out}_${id}_${r.id}.png` })
