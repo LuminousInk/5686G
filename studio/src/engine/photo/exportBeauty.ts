@@ -5,8 +5,10 @@ import { buildingSections, framePoint } from '../house/levels'
 import { ceilingAt, roofHeightAt, roofThickness, sideIntervals, sidePoint, WALL_T } from '../house/massing'
 import type { HomePlan } from '../house/types'
 import { roomVolumes } from '../env/roomVolumes'
+import { rng } from '../materials/textures'
 import { anchoredExposure, interiorExposureWeight, roomExposureEV } from '../render/exposureAnchors'
-import { expandImpostors, expandShaderInstances } from './bake'
+import { coastalTreeVariant, leavesReady, makeVariant, treeInstances, type TreePlacement } from '../site/trees'
+import { expandShaderInstances } from './bake'
 
 type Vec3 = [number, number, number]
 
@@ -111,10 +113,21 @@ export function beautyMaterial(source: THREE.Material, bevel = false, tint?: THR
   return out
 }
 
-function captureRenderTarget(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) {
+function captureRenderTarget(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget, encodeColor = false) {
   const { width, height } = target
   const pixels = new Uint8Array(width * height * 4)
   renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels)
+  if (encodeColor) {
+    // Impostors are rendered into a linear byte buffer. glTF base color images are sRGB.
+    const srgb = Uint8Array.from({ length: 256 }, (_, i) => Math.round(255 * THREE.ColorManagement.workingToColorSpace(
+      new THREE.Color().setScalar(i / 255), THREE.SRGBColorSpace,
+    ).r))
+    for (let i = 0; i < pixels.length; i += 4) {
+      pixels[i] = srgb[pixels[i]]
+      pixels[i + 1] = srgb[pixels[i + 1]]
+      pixels[i + 2] = srgb[pixels[i + 2]]
+    }
+  }
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
@@ -125,8 +138,205 @@ function captureRenderTarget(renderer: THREE.WebGLRenderer, target: THREE.WebGLR
   }
   context.putImageData(image, 0, 0)
   const map = new THREE.CanvasTexture(canvas)
-  map.colorSpace = target.texture.colorSpace
+  map.colorSpace = encodeColor ? THREE.SRGBColorSpace : target.texture.colorSpace
   return map
+}
+
+/** Allocate most of the atlas to the lot and foreground, keeping monotonically ordered UVs out to the horizon. */
+export function groundAtlasAxis(min: number, max: number, center: number) {
+  const project = (value: number) => {
+    const offset = value - center
+    const distance = Math.abs(offset)
+    return Math.sign(offset) * (Math.min(distance, 52) + 2.4 * Math.log1p(Math.max(0, distance - 52) / 7))
+  }
+  const start = project(min)
+  const span = project(max) - start || 1
+  return (value: number) => (project(value) - start) / span
+}
+
+/** Run the canyon's existing blend on its triangles in UV space, with no lighting or tone mapping. */
+export function canyonBakeShader(source: Surface, renderer: THREE.WebGLRenderer, eye: THREE.Vector3) {
+  const sections = '// Beauty atlas section'
+  const shader = {
+    uniforms: { bakeEye: { value: eye } },
+    vertexShader: '#include <common>\n#include <color_vertex>\n#include <worldpos_vertex>',
+    fragmentShader: ['#include <common>', '#include <color_fragment>', '#include <normal_fragment_maps>', ''].join(`\n${sections}\n`),
+  } as unknown as Parameters<Surface['onBeforeCompile']>[0]
+  source.onBeforeCompile(shader, renderer)
+  const [declarations, albedo, normal] = shader.fragmentShader.split(sections)
+  // The runtime applies the blended normal's XZ components in view space. Store those components
+  // in the atlas's tangent space, whose U and V axes follow world X and Z.
+  const detail = normal?.split('vec3 oriented =')[0]
+  if (!albedo?.includes('diffuseColor.rgb = mix(groundColor') || !detail?.includes('vec2 bump =')) {
+    throw new Error('The canyon shader no longer supplies the terrain atlas blend')
+  }
+  return {
+    uniforms: shader.uniforms,
+    vertexShader: /* glsl */`
+      attribute vec4 groundCover;
+      attribute float curvature;
+      attribute vec3 color;
+      varying vec3 vGroundNormal, vColor, vCoastalWorld;
+      varying vec4 vGroundCover;
+      varying float vCurvature;
+      void main() {
+        vGroundCover = groundCover;
+        vGroundNormal = normal;
+        vColor = color;
+        vCurvature = curvature;
+        vCoastalWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+        gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */`
+      ${declarations}
+      uniform vec3 bakeEye;
+      varying vec3 vColor;
+      void main() {
+        vec4 diffuseColor = vec4(1.0);
+        ${albedo.replace('#include <color_fragment>', '').replaceAll('cameraPosition', 'bakeEye')}
+        #ifdef BAKE_NORMAL
+          vec3 atlasNormal = vec3(0.0, 0.0, 1.0);
+          ${detail.replace('#include <normal_fragment_maps>', '')}
+            atlasNormal = normalize(vec3(bump, 1.0));
+          }
+          gl_FragColor = vec4(atlasNormal * 0.5 + 0.5, 1.0);
+        #else
+          gl_FragColor = sRGBTransferOETF(diffuseColor);
+        #endif
+      }
+    `,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+    depthTest: false,
+  }
+}
+
+function bakeCanyon(renderer: THREE.WebGLRenderer, mesh: THREE.Mesh<THREE.BufferGeometry, Surface>, eye: THREE.Vector3) {
+  const source = mesh.geometry.getAttribute('position')
+  const world = new THREE.Vector3()
+  const bounds = new THREE.Box3()
+  for (let i = 0; i < source.count; i++) bounds.expandByPoint(world.fromBufferAttribute(source, i).applyMatrix4(mesh.matrixWorld))
+  const projectX = groundAtlasAxis(bounds.min.x, bounds.max.x, eye.x)
+  const projectZ = groundAtlasAxis(bounds.min.z, bounds.max.z, eye.z)
+  const uv = new THREE.Float32BufferAttribute(new Float32Array(source.count * 2), 2)
+  for (let i = 0; i < source.count; i++) {
+    world.fromBufferAttribute(source, i).applyMatrix4(mesh.matrixWorld)
+    uv.setXY(i, projectX(world.x), projectZ(world.z))
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setIndex(mesh.geometry.index)
+  for (const name of ['position', 'normal', 'color', 'groundCover', 'curvature']) {
+    geometry.setAttribute(name, mesh.geometry.getAttribute(name))
+  }
+  geometry.setAttribute('uv', uv)
+  const shader = canyonBakeShader(mesh.material, renderer, eye)
+  const scene = new THREE.Scene()
+  const baker = new THREE.Mesh(geometry, new THREE.ShaderMaterial(shader))
+  baker.matrixAutoUpdate = false
+  baker.matrix.copy(mesh.matrixWorld)
+  baker.frustumCulled = false
+  scene.add(baker)
+  const camera = new THREE.Camera()
+  const size = Math.min(4096, renderer.capabilities.maxTextureSize)
+  const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false })
+  const previous = renderer.getRenderTarget()
+  const clear = renderer.getClearColor(new THREE.Color())
+  const alpha = renderer.getClearAlpha()
+  let map: THREE.Texture | undefined
+  try {
+    renderer.setRenderTarget(target)
+    renderer.setClearColor(0x000000, 0)
+    renderer.render(scene, camera)
+    map = captureRenderTarget(renderer, target)
+    map.colorSpace = THREE.SRGBColorSpace
+    renderer.setClearColor(new THREE.Color().setRGB(0.5, 0.5, 1), 1)
+    baker.material.defines.BAKE_NORMAL = 1
+    baker.material.needsUpdate = true
+    renderer.render(scene, camera)
+    const normalMap = captureRenderTarget(renderer, target)
+    // Drop the bake inputs so glTF sees the atlas as the sole base color source.
+    for (const name of ['color', 'groundCover', 'curvature']) geometry.deleteAttribute(name)
+    return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+      name: 'Canyon terrain splat', map, normalMap, roughness: 0.94, alphaTest: 0.5,
+    }))
+  } catch (error) {
+    geometry.dispose()
+    map?.dispose()
+    throw error
+  } finally {
+    renderer.setRenderTarget(previous)
+    renderer.setClearColor(clear, alpha)
+    target.dispose()
+    baker.material.dispose()
+  }
+}
+
+const forestKinds = ['live-oak', 'canary-pine', 'sycamore', 'live-oak', 'stone-pine'] as const
+const meshTreeRadius = 100
+
+/** The app's card attributes carry placement and a per-group seeded tint, even when some groups are empty. */
+export function beautyForestSeed(tone: THREE.BufferAttribute | THREE.InterleavedBufferAttribute) {
+  return [5, ...forestKinds.map((_, i) => i + 9)].find(seed => {
+    const random = rng(seed)
+    return tone.getX(0) === Math.fround(0.76 + random() * 0.40) &&
+      tone.getY(0) === Math.fround(0.78 + random() * 0.39)
+  })
+}
+
+export function beautyForestPlacements(geometry: THREE.InstancedBufferGeometry, matrix: THREE.Matrix4, eye: THREE.Vector3) {
+  const points = geometry.getAttribute('iPos')
+  const near: TreePlacement[] = []
+  const far: number[] = []
+  const world = new THREE.Vector3()
+  for (let i = 0; i < geometry.instanceCount; i++) {
+    const x = points.getX(i), y = points.getY(i), z = points.getZ(i)
+    world.set(x, y, z).applyMatrix4(matrix)
+    if (Math.hypot(world.x - eye.x, world.z - eye.z) <= meshTreeRadius) {
+      const yaw = 2 * Math.PI * rng(i + 77)()
+      near.push({ x, y: y + 0.3, z, height: points.getW(i), yaw })
+    } else {
+      far.push(i)
+    }
+  }
+  return { near, far }
+}
+
+function forestCards(source: THREE.InstancedBufferGeometry, indices: number[], eye: THREE.Vector3, aspect: number) {
+  const points = source.getAttribute('iPos')
+  const tones = source.getAttribute('iTone')
+  const positions: number[] = [], normals: number[] = [], uv: number[] = [], colors: number[] = [], triangles: number[] = []
+  const face = new THREE.Vector3(), normal = new THREE.Vector3()
+  for (const i of indices) {
+    const x = points.getX(i), y = points.getY(i), z = points.getZ(i), h = points.getW(i)
+    const w = h * aspect * (0.83 + 0.34 * tones.getZ(i))
+    face.set(eye.x - x, 0, eye.z - z).normalize()
+    const red = tones.getX(i), green = (red + tones.getY(i)) * 0.53, blue = tones.getY(i) * 0.82
+    const base = positions.length / 3
+    // Interpolate the app's upward, rounded canopy normals over the card, including its center.
+    for (const v of [0, 0.5, 1]) {
+      for (const u of [0, 0.5, 1]) {
+        positions.push(x + face.z * (u - 0.5) * w, y + h * v, z - face.x * (u - 0.5) * w)
+        const cx = u * 2 - 1, cy = (v - 0.58) * 2
+        const forward = Math.max(0.10, 0.67 - (cx * cx + cy * cy) * 0.52)
+        normal.set(face.z * cx * 0.94 + face.x * forward, 0.77 + cy * 0.84, -face.x * cx * 0.94 + face.z * forward).normalize()
+        normals.push(...normal.toArray())
+        uv.push(u, v)
+        colors.push(Math.min(1, red), Math.min(1, green), blue)
+      }
+    }
+    for (const offset of [0, 1, 3, 4]) {
+      const a = base + offset
+      triangles.push(a, a + 1, a + 4, a, a + 4, a + 3)
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  geometry.setIndex(triangles)
+  return geometry
 }
 
 export async function exportBeauty(engine: Engine, options: { target?: Vec3; useExposureAnchor?: boolean } = {}) {
@@ -179,11 +389,15 @@ export async function exportBeauty(engine: Engine, options: { target?: Vec3; use
   })
   temporary.push(ocean)
   const materialFor = (material: THREE.Material, mesh: THREE.Mesh, bevel: boolean, tint?: THREE.Color) => {
-    const key = [material.id, mesh.name === 'Coastal canyon', bevel, tint?.toArray().join(',')].join(':')
+    const leaf = material.customProgramCacheKey().startsWith('leaf-wind-') || /coastal-scrub|Scanned garden shrubs|palm crowns/i.test(
+      `${material.customProgramCacheKey()} ${mesh.name}`,
+    )
+    const key = [material.id, leaf, bevel, tint?.toArray().join(',')].join(':')
     let out = mats.get(key)
     if (!out) {
       out = beautyMaterial(mesh.name === 'Pacific Ocean' ? ocean : material, bevel, tint)
-      if (mesh.name === 'Coastal canyon') out.userData.beautyCanyon = true
+      if (leaf) out.userData.beautyFoliage = true
+      if (mesh.name === 'Distant forest cards') out.userData.beautyForestCard = true
       if (mesh.name === 'Pacific Ocean') out.userData.beautyOcean = true
       mats.set(key, out)
     }
@@ -229,12 +443,21 @@ export async function exportBeauty(engine: Engine, options: { target?: Vec3; use
       const bevel = !isSite && !/foliage|linen|fabric|rug|art|glass|bedding|shade|lamp:/i.test(
         Array.isArray(mesh.material) ? '' : mesh.material.name,
       )
+      if (isSite && mesh.name === 'Coastal canyon' && mesh.material instanceof THREE.MeshStandardMaterial) {
+        const canyon = bakeCanyon(engine.renderer, mesh as THREE.Mesh<THREE.BufferGeometry, Surface>, position)
+        canyon.name = mesh.name
+        temporary.push(canyon.geometry, canyon.material, canyon.material.map!, canyon.material.normalMap!)
+        add(canyon, mesh.matrixWorld, false)
+        return
+      }
       if (mesh instanceof THREE.InstancedMesh) {
         for (let i = 0; i < mesh.count; i++) {
           mesh.getMatrixAt(i, instanceMatrix)
           worldMatrix.multiplyMatrices(mesh.matrixWorld, instanceMatrix)
           instancePosition.setFromMatrixPosition(worldMatrix)
-          const range = /grass|scrub/i.test(mesh.name) ? 82 : 180
+          // Preserve the app's coarse hillside scrub behind the house. Fine grass and
+          // garden scrub can still stop once their blades and leaf cards become subpixel.
+          const range = mesh.name === 'Distant coastal scrub' ? 230 : /grass|scrub/i.test(mesh.name) ? 82 : 180
           if (isSite && Math.hypot(position.x - instancePosition.x, position.z - instancePosition.z) > range) continue
           if (mesh.instanceColor) {
             mesh.getColorAt(i, tint)
@@ -250,12 +473,38 @@ export async function exportBeauty(engine: Engine, options: { target?: Vec3; use
       }
       if (mesh.geometry instanceof THREE.InstancedBufferGeometry) {
         if (mesh.name === 'forest') {
-          const fallback = expandImpostors(mesh, camera, mesh.userData.aspect)
-          if (!fallback) return
-          const mat = fallback.material as Surface
-          mat.map = captureRenderTarget(engine.renderer, mesh.userData.target)
-          temporary.push(mat.map)
-          mesh = fallback
+          const geometry = mesh.geometry
+          if (!geometry.instanceCount) return
+          const seed = beautyForestSeed(geometry.getAttribute('iTone'))
+          const { near, far } = beautyForestPlacements(geometry, mesh.matrixWorld, position)
+          if (near.length && seed !== undefined) {
+            const variant = seed === 5
+              ? makeVariant('Pine Large', 4417, engine.quality.treeDetail, 'pine')
+              : coastalTreeVariant(forestKinds[seed - 9], 36 + (seed - 9) * 18, 0.45)
+            const trees = treeInstances(variant, near, true)
+            temporary.push(variant.branches, variant.leaves)
+            treeTextures.push(leavesReady(variant.leafKind))
+            for (const part of trees.children as THREE.InstancedMesh[]) {
+              part.name = 'Hillside trees'
+              part.applyMatrix4(mesh.matrixWorld)
+              part.updateMatrixWorld(true)
+              collect(part, true)
+              part.dispose()
+            }
+          }
+          const indices = seed === undefined ? Array.from({ length: geometry.instanceCount }, (_, i) => i) : far
+          if (!indices.length) return
+          const localEye = position.clone().applyMatrix4(mesh.matrixWorld.clone().invert())
+          const cards = forestCards(geometry, indices, localEye, mesh.userData.aspect)
+          const map = captureRenderTarget(engine.renderer, mesh.userData.target, true)
+          const material = (mesh.material as Surface).clone()
+          material.vertexColors = true
+          material.map = map
+          const fallback = new THREE.Mesh(cards, material)
+          fallback.name = 'Distant forest cards'
+          temporary.push(cards, material, map)
+          add(fallback, mesh.matrixWorld, false)
+          return
         } else if (mesh.geometry.hasAttribute('iRot')) {
           const base = new THREE.Color('#635b30')
           const tip = new THREE.Color('#a69357')
@@ -275,10 +524,12 @@ export async function exportBeauty(engine: Engine, options: { target?: Vec3; use
     })
   }
 
+  const treeTextures: (Promise<void> | undefined)[] = []
   try {
     collect(house.group, false)
     if (interior) collect(interior.group, false)
     if (site) collect(site.group, true)
+    await Promise.all(treeTextures)
     const glb = await new GLTFExporter().parseAsync(root, { binary: true }) as ArrayBuffer
     return { glb, sky: world, meta }
   } finally {

@@ -33,9 +33,10 @@ preset and finishes. Repeat `--finish ZONE=OPTION` for overrides. `BASE` changes
 | Camera | Level 360° equirectangular view with `--pano`. A still can set `--focus` in metres and `--f-stop`. |
 | CPU | 4 threads. Set `--threads` to share the machine with a bake. |
 
-Use `--size WIDTHxHEIGHT` and `--samples N` for test renders. Panoramas require a 2:1 aspect ratio. Use `--size 4096x2048` for a 4K panorama.
+Use `--size 800x450 --samples 8 --threads 2` for short lighting tests on a shared machine. Panoramas require a 2:1 aspect ratio. Use `--size 4096x2048` for a 4K panorama.
 `--ev` sets an offset in stops from the calibrated exposure. `--white-balance` takes Kelvin.
-`--bevel-scale` multiplies the 4 mm edge radius. Script output includes export time, Blender scene
+`--bevel-scale` multiplies the 4 mm edge radius. `--haze` scales exterior aerial perspective (default 1, 0 turns it off).
+Script output includes export time, Blender scene
 setup time, and Cycles time, including denoising and image encoding.
 
 Keep one export and reuse it when tuning lighting or changing resolution:
@@ -79,12 +80,21 @@ practicals, and portals inside eligible exterior openings. It calculates bounce 
 sampling and Open Image Denoise, then applies AgX. The daylight interior grade adds sky fill, a softer
 contrast curve, and a preset-specific offset from the app's exposure to keep recesses readable.
 Daylight windows use a shorter photographic exposure for camera rays through the glass. A wider
-sun angle softens indoor shadows. Daylight exteriors use depth-based aerial perspective on distant terrain.
+sun angle softens indoor shadows, and short-range occlusion grounds cabinets and furniture at the floor.
+Exterior skies keep the oriented HDRI, with camera-only exposure and color calibration per preset.
+Day, golden and dusk renders use depth-based aerial perspective with the coastal shader's distance
+falloff and a tint sampled from the HDRI horizon.
 
 The GLB carries color and art maps, normals, roughness and metalness, AO, emissive materials, and
 transmission. Cycles computes occlusion from the geometry. The importer adds a small normal bevel to
 hard surfaces seen by the camera, models single-sided glazing as thin dielectric reflection and straight-through
-transmission, and gives the sheer weave diffuse transmission. Foliage uses its existing opacity masks.
-The canyon uses its mesh colors and scanned normals with offline ground variation. Vegetation freezes
-for the exposure, and far trees retain the app's cutout cards. Models, layout and available finish choices
-come from the loaded app.
+transmission, and gives the sheer weave diffuse transmission. Foliage retains its opacity masks and
+passes diffuse light through the leaves. The export bakes the canyon shader's six scanned ground blends
+into color and normal atlases up to 4096 px, with most texels reserved for terrain around the camera.
+The atlases use the terrain's existing slope, cover, curvature, drainage and turf masks. Within 100 m
+of the camera, planted trees and reconstructed forest trees use their shared EZ-Tree meshes and leaf
+and bark maps. Farther forest cards retain the app's tints and rounded canopy normals for Cycles lighting.
+Exterior soil and gravel paths get additional shallow surface relief, with short-range contact shading
+where the soil meets plants and hardscape.
+Models, layout and available finish choices come from the loaded app. The atlases and forest meshes are generated
+during capture and live only in the exported GLB.

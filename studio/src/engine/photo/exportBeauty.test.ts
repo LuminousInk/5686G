@@ -2,7 +2,11 @@ import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { cedarRidge } from '../../plans/cedarRidge'
 import type { Block, HomePlan } from '../house/types'
-import { beautyMaterial, beautyOpenings } from './exportBeauty'
+import { rng } from '../materials/textures'
+import { canyonMaterial, type CoastalMaps } from '../site/groundMaterials'
+import { Hillside } from '../site/hillside'
+import { CoastalSky } from '../site/ocean'
+import { beautyForestPlacements, beautyForestSeed, beautyMaterial, beautyOpenings, canyonBakeShader, groundAtlasAxis } from './exportBeauty'
 
 describe('beauty export materials', () => {
   it('preserves mapped PBR inputs and leaves the live lightmap alone', () => {
@@ -81,5 +85,50 @@ describe('beauty export light portals', () => {
       ],
     }
     expect(beautyOpenings(plan)).toMatchObject([{ inward: [1, 0, 0], width: 0.89 }])
+  })
+})
+
+describe('beauty export terrain atlas', () => {
+  it('spends most of the resolution near the camera without folding distant triangles', () => {
+    const uv = groundAtlasAxis(-1500, 1600, -10)
+    expect(uv(-1500)).toBe(0)
+    expect(uv(1600)).toBe(1)
+    expect(uv(42) - uv(-62)).toBeGreaterThan(0.8)
+    const points = [-1500, -950, -62, -10, 42, 128, 760, 1600].map(uv)
+    expect(points.every((value, i) => !i || value > points[i - 1])).toBe(true)
+  })
+
+  it.each([false, true])('reuses the live terrain colors and normal blend (low tier %s)', low => {
+    const scan = { color: new THREE.Texture(), normal: new THREE.Texture() }
+    const maps: CoastalMaps = { grass: scan, soil: scan, gravel: scan, rock: scan, bark: scan, lawn: scan }
+    const eye = new THREE.Vector3(0, 2, 5)
+    const source = canyonMaterial(new Hillside(cedarRidge, cedarRidge.landscape.site!), new CoastalSky(), maps, [-2, -2, 2, 2], low)
+    const shader = canyonBakeShader(source, {} as THREE.WebGLRenderer, eye)
+    expect(shader.uniforms.bakeEye.value).toBe(eye)
+    expect(shader.uniforms.lawnColor.value).toBe(scan.color)
+    expect(shader.uniforms.lawnDetail.value).toBe(scan.normal)
+    expect(shader.fragmentShader).toContain('diffuseColor.rgb = mix(groundColor')
+    expect(shader.fragmentShader).toContain('atlasNormal = normalize(vec3(bump, 1.0))')
+    expect(shader.fragmentShader).not.toContain('viewMatrix')
+  })
+})
+
+describe('beauty export forest', () => {
+  it('identifies the tree variant from the card tint even when other variants are missing', () => {
+    for (const seed of [5, 9, 10, 11, 12, 13]) {
+      const random = rng(seed)
+      const tone = new THREE.Float32BufferAttribute([0.76 + random() * 0.40, 0.78 + random() * 0.39, random()], 3)
+      expect(beautyForestSeed(tone)).toBe(seed)
+    }
+    expect(beautyForestSeed(new THREE.Float32BufferAttribute([1, 1, 0], 3))).toBeUndefined()
+  })
+
+  it('keeps one representation per tree and restores the real tree base height', () => {
+    const cards = new THREE.InstancedBufferGeometry()
+    cards.setAttribute('iPos', new THREE.InstancedBufferAttribute(new Float32Array([99, 4, 0, 12, 100, 5, 0, 6]), 4))
+    cards.instanceCount = 2
+    const forest = beautyForestPlacements(cards, new THREE.Matrix4().makeTranslation(1, 0, 0), new THREE.Vector3(0, 80, 0))
+    expect(forest.far).toEqual([1])
+    expect(forest.near).toMatchObject([{ x: 99, y: 4.3, z: 0, height: 12 }])
   })
 })
