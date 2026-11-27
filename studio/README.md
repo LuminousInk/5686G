@@ -135,9 +135,8 @@ floors), so after furniture changes nothing warns you: re-bake by hand.
 
 - `src/engine/interior/modern.ts` is a procedural modern furniture kit: platform bed, nightstand, lamps, dining
   table and chairs, bar stool, sideboard, media console + TV, wardrobe, sofa, area rug. `FURNITURE_FOOTPRINTS`
-  lists each piece's footprint for layout. Also used: Wayfair models (GlamVelvetSofa, SheenChair,
-  SheenWoodLeatherSofa, CC BY 4.0) and Poly Haven models (modern_wooden_cabinet, wooden_display_shelves_01,
-  desk_lamp_arm_01).
+  lists each piece's footprint for layout. The asset bundle also includes Wayfair models (GlamVelvetSofa and
+  SheenChair, CC BY 4.0) and Poly Haven furniture and styling props (CC0).
 - `src/engine/interior/interior.ts` lays out rooms with door keep-out zones and walkways, a focal point (the
   sofa faces a media wall), tall pieces only on windowless walls, beds that slide along the wall to fit, and a
   view-facing seating group for glass-walled great rooms. Big pieces get colliders.
@@ -177,9 +176,10 @@ rules out, and how the app avoids it:
 ## Assets and licences
 
 Skies, textures and models: Poly Haven, CC0. Trees: ez-tree (MIT, vendored). Font: Chakra Petch (OFL).
-GlamVelvetSofa, SheenChair, SheenWoodLeatherSofa: Wayfair LLC, via the Khronos glTF Sample Assets
+GlamVelvetSofa and SheenChair: Wayfair LLC, via the Khronos glTF Sample Assets
 (https://github.com/KhronosGroup/glTF-Sample-Assets), CC BY 4.0.
-Furniture from Objaverse (https://huggingface.co/datasets/allenai/objaverse, Sketchfab uploads), CC BY 4.0:
+Bundled furniture and fixtures from Objaverse (https://huggingface.co/datasets/allenai/objaverse, Sketchfab uploads),
+CC BY 4.0. The help sheet reads the attributions from `tools/objaverse.json`:
 
 - bar_stool_wood: "Barstool Round" by TabbieCat (https://sketchfab.com/3d-models/barstool-round-b221ad482e084c449408c229cab380d6)
 - bed_dark_headboard: "Bed" by dearsindy (https://sketchfab.com/3d-models/bed-8926f6be27704713980076253a78e057)

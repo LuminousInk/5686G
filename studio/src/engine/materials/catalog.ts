@@ -37,9 +37,9 @@ const paint = (id: string, name: string, swatch: string, roughness = 0.5, metaln
   ({ id, name, swatch, params: { color: swatch, roughness, metalness, tex: null } })
 const paintedBoards = (id: string, name: string, swatch: string, roughness = 0.62): FinishOption =>
   ({ id, name, swatch, params: { color: swatch, roughness, metalness: 0, tex: null, variation: 0.12 } })
-// flat interior emulsion: matte, no sheen
-const wallPaint = (id: string, name: string, swatch: string): FinishOption =>
-  ({ id, name, swatch, params: { color: swatch, roughness: 0.9, metalness: 0, tex: null } })
+// Interior matte paint options retain the same share-code IDs.
+const wallPaint = (id: string, name: string, swatch: string, map?: 'limewash'): FinishOption =>
+  ({ id, name, swatch, params: { color: swatch, roughness: map ? 0.94 : 0.9, metalness: 0, tex: null, map } })
 
 export const ZONES: Record<string, FinishZone> = {
   cedar: {
@@ -174,7 +174,7 @@ export const ZONES: Record<string, FinishZone> = {
     group: 'interior',
     options: [
       { id: 'light', name: 'Light Oak & Limestone', swatch: '#D5B997', params: { color: '#ffffff', roughness: 0.5 } },
-      { id: 'walnut', name: 'Walnut & Travertine', swatch: '#744D35', params: { color: '#ffffff', roughness: 0.5 } },
+      { id: 'walnut', name: 'Honey Oak & Travertine', swatch: '#744D35', params: { color: '#ffffff', roughness: 0.5 } },
       { id: 'ash', name: 'Ash & Slate', swatch: '#77736E', params: { color: '#ffffff', roughness: 0.5 } },
     ],
   },
@@ -183,14 +183,14 @@ export const ZONES: Record<string, FinishZone> = {
     label: 'Interior walls',
     group: 'interior',
     options: [
-      wallPaint('warm-white', 'Warm white', '#ECE7DE'),
-      wallPaint('greige', 'Greige', '#D5CCBE'),
-      wallPaint('sage', 'Sage', '#B7C1AB'),
-      wallPaint('clay', 'Clay', '#CFB19C'),
-      wallPaint('fog', 'Fog blue', '#C2CAD0'),
+      wallPaint('warm-white', 'Warm white', '#F1EBE1', 'limewash'),
+      wallPaint('greige', 'Greige', '#D9CEC0', 'limewash'),
+      wallPaint('sage', 'Sage', '#DDDCCD', 'limewash'),
+      wallPaint('clay', 'Clay', '#E5D3C1', 'limewash'),
+      wallPaint('fog', 'Fog blue', '#E6E7E3', 'limewash'),
       wallPaint('charcoal', 'Charcoal', '#4B4C4A'),
       // mottled plaster: near-white blotch map tinted by the colour, a touch rougher than flat paint
-      { id: 'limewash', name: 'Limewash', swatch: '#E2DACB', params: { color: '#E2DACB', roughness: 0.95, metalness: 0, tex: null, map: 'limewash' } },
+      wallPaint('limewash', 'Limewash', '#E3D8C8', 'limewash'),
     ],
   },
 }
@@ -209,24 +209,24 @@ export interface InteriorPalette {
 
 export const PALETTES: Record<string, InteriorPalette> = {
   light: {
-    floor: { tex: 'laminate_floor_02', color: '#FFF6EC', roughness: 0.55 },
-    cabinet: { tex: 'white_oak_veneer', color: '#FFF4E6', roughness: 0.6 },
-    counter: { color: '#E9E3D6', roughness: 0.35, speckle: '#CFC6B4' },
+    floor: { tex: 'laminate_floor_02', color: '#FFF1DD', roughness: 0.57 },
+    cabinet: { tex: 'white_oak_veneer', color: '#F1D2AD', roughness: 0.62 },
+    counter: { color: '#F3ECE0', roughness: 0.5, speckle: '#D9CFBD' },
     ceilingWood: { color: '#FFE9D2' },
-    fabric: '#E6E0D4',
-    fabric2: '#B9AE9C',
-    rug: '#D9D1C3',
-    metal: { color: '#C9C3B8', roughness: 0.28, metalness: 1 },
+    fabric: '#EEE3D1',
+    fabric2: '#A49379',
+    rug: '#C6AD8C',
+    metal: { color: '#BA8D53', roughness: 0.39, metalness: 0.72 },
     stone: '#E9E3D6',
   },
   walnut: {
-    floor: { tex: 'wood_floor', color: '#A98266', roughness: 0.5 },
-    cabinet: { tex: 'natural_walnut_veneer', color: '#C79A7B', roughness: 0.55 },
-    counter: { color: '#D8C7B0', roughness: 0.4, speckle: '#B9A184' },
-    ceilingWood: { color: '#D9A982' },
-    fabric: '#CDBBA3',
-    fabric2: '#6E5443',
-    rug: '#B9A48A',
+    floor: { tex: 'laminate_floor_02', color: '#E8CDA9', roughness: 0.6 },
+    cabinet: { tex: 'white_oak_veneer', color: '#CBA57F', roughness: 0.62 },
+    counter: { color: '#E9E0D0', roughness: 0.51, speckle: '#CDBDA7' },
+    ceilingWood: { color: '#E9CAA9' },
+    fabric: '#E5D9C9',
+    fabric2: '#837459',
+    rug: '#B9A07F',
     metal: { color: '#B08D57', roughness: 0.3, metalness: 1 },
     stone: '#D8C7B0',
   },

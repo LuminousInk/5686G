@@ -12,11 +12,12 @@ import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { NodeIO } from '@gltf-transform/core'
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
-import { dedup, prune, weld, simplify, textureCompress, reorder, flatten, join, metalRough, unpartition, getBounds } from '@gltf-transform/functions'
+import { dedup, prune, weld, simplify, textureCompress, reorder, metalRough, unpartition, getBounds } from '@gltf-transform/functions'
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const RAW = path.join(ROOT, '.cache', 'raw')
+const objaverse = JSON.parse(fs.readFileSync(path.join(ROOT, 'tools', 'objaverse.json'), 'utf8'))
 const OUT = path.join(ROOT, 'public', 'assets')
 const args = process.argv.slice(2)
 const steps = args.filter(a => a.startsWith('--')).map(a => a.slice(2))
@@ -45,22 +46,22 @@ const MODELS = {
   GlamVelvetSofa: { tris: 12000, tex: 1024 },
   SheenChair: { tris: 12000, tex: 1024 },
   // Objaverse (Sketchfab, CC BY 4.0; authors in tools/objaverse.json, fetched by tools/fetch_objaverse.py)
-  sofa_beige: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
-  sectional_grey: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
-  sideboard_midcentury: { loTex: 512, tris: 20000, tex: 1024, objaverse: true },
-  dining_table_oak: { loTex: 512, tris: 10000, tex: 1024, objaverse: true },
-  dining_chair_bentwood: { tris: 10000, tex: 512, objaverse: true, error: 0.003 },
-  bar_stool_wood: { tris: 6000, tex: 512, objaverse: true },
-  fridge_steel: { tris: 6000, tex: 1024, objaverse: true },
-  kitchen_faucet: { tris: 6000, tex: 512, objaverse: true, error: 0.003 },
-  bed_upholstered_white: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
-  bed_dark_headboard: { loTex: 512, tris: 30000, tex: 1024, objaverse: true },
-  dresser_tall: { tris: 15000, tex: 1024, objaverse: true },
-  vanity_floating: { tris: 15000, tex: 1024, objaverse: true },
-  toilet_modern: { tris: 15000, tex: 512, objaverse: true },
-  shower_black: { tris: 12000, tex: 512, objaverse: true, error: 0.02 },
-  towel_bar: { tris: 6000, tex: 512, objaverse: true, error: 0.003 },
-  desk_lamp_black: { tris: 12000, tex: 512, objaverse: true },
+  sofa_beige: { loTex: 512, tris: 30000, tex: 1024 },
+  sectional_grey: { loTex: 512, tris: 30000, tex: 1024 },
+  sideboard_midcentury: { loTex: 512, tris: 20000, tex: 1024 },
+  dining_table_oak: { loTex: 512, tris: 10000, tex: 1024 },
+  dining_chair_bentwood: { tris: 10000, tex: 512, error: 0.003 },
+  bar_stool_wood: { tris: 6000, tex: 512 },
+  fridge_steel: { tris: 6000, tex: 1024 },
+  kitchen_faucet: { tris: 6000, tex: 512, error: 0.003 },
+  bed_upholstered_white: { loTex: 512, tris: 30000, tex: 1024 },
+  bed_dark_headboard: { loTex: 512, tris: 30000, tex: 1024 },
+  dresser_tall: { tris: 15000, tex: 1024 },
+  vanity_floating: { tris: 15000, tex: 1024 },
+  toilet_modern: { tris: 15000, tex: 512 },
+  shower_black: { tris: 12000, tex: 512, error: 0.02 },
+  towel_bar: { tris: 6000, tex: 512, error: 0.003 },
+  desk_lamp_black: { tris: 12000, tex: 512 },
 }
 
 const log = (...a) => console.log(...a)
@@ -171,7 +172,7 @@ async function models() {
     const before = triCount(doc)
     const ratio = Math.min(1, cfg.tris / before)
     // Sketchfab exports often use the old specular-glossiness workflow, which three.js no longer reads
-    if (cfg.objaverse) {
+    if (Object.hasOwn(objaverse, id)) {
       await doc.transform(metalRough(), unpartition())
       dropGroundPlanes(doc, id)
     }

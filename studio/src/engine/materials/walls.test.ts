@@ -19,7 +19,12 @@ describe('interior walls finish zone', () => {
     expect(zone.label).toBe('Interior walls')
     const ids = zone.options.map(o => o.id)
     expect(new Set(ids).size).toBe(ids.length)
-    expect(ids).toContain('warm-white')
+    expect(ids).toEqual(['warm-white', 'greige', 'sage', 'clay', 'fog', 'charcoal', 'limewash'])
+    for (const plan of PLANS) {
+      const finish = zone.options.find(o => o.id === plan.finishes.walls)
+      expect(finish?.params.map, plan.id).toBe('limewash')
+      expect(finish?.params.roughness, plan.id).toBeGreaterThanOrEqual(0.9)
+    }
     for (const o of zone.options) {
       expect(o.swatch).toMatch(HEX)
       expect(o.params.color).toMatch(HEX)

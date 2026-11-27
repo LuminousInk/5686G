@@ -200,6 +200,35 @@ export function limewashTexture(size = 512, tile = 1.5): THREE.CanvasTexture {
   return tex
 }
 
+/** Tonal limestone with occasional soft veins. Tile grout is baked into the floor colour, at a real scale. */
+export function limestoneTexture(tile = 0.72, grout = false): THREE.CanvasTexture {
+  const size = 384
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const image = ctx.createImageData(size, size)
+  const broad = noiseField(size, 4, 152, 3)
+  const grain = noiseField(size, 3, 407, 19)
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x
+      const band = Math.sin((x + 2 * y) * 2 * Math.PI / size + broad[i] * 5.9)
+      const vein = Math.pow(1 - Math.abs(band), 9)
+      const joints = grout && Math.min(x, y, size - 1 - x, size - 1 - y) <= 1
+      const color = joints ? 173 : 242 + (broad[i] - 0.5) * 31 + (grain[i] - 0.5) * 15 - vein * 9
+      const pixel = i * 4
+      image.data[pixel] = image.data[pixel + 1] = image.data[pixel + 2] = color
+      image.data[pixel + 3] = 255
+    }
+  }
+  ctx.putImageData(image, 0, 0)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.repeat.setScalar(1 / tile)
+  return tex
+}
+
 /** Monocrystalline solar cell pattern (6 x 10 cells per panel), sRGB albedo. */
 export function solarTexture(): THREE.CanvasTexture {
   const w = 384

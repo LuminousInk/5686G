@@ -136,6 +136,20 @@ export function fridgeFronts(edge: 1 | -1 = -1): Front[] {
   return [drawer(0, FRONT_Y0, w, FREEZER_H), door(0, y1, w, TALL_TOP - y1, edge, true)]
 }
 
+/** Oak housing around a freestanding fridge, with a vent gap below the upper doors. */
+export function fridgeSurround(lib: MaterialLibrary, h: number, w = 0.91, d = 0.78): THREE.Group {
+  const b = new MeshBatch()
+  const overhead = 1.84
+  const jamb = 0.019
+  for (const side of [-1, 1]) {
+    box(b, lib.cabinet, side * (w - jamb) / 2, jamb, 0, h, -d / 2, d / 2, 0.002)
+    box(b, lib.cabinet, side * w / 4, w / 2 - REVEAL, overhead + REVEAL, h - overhead - 2 * REVEAL,
+      d / 2 - FRONT_T, d / 2, 0.002)
+  }
+  box(b, lib.cabinet, 0, w - 2 * jamb, overhead, h - overhead, -d / 2, d / 2 - FRONT_T - 0.003)
+  return b.toGroup('fridge-surround')
+}
+
 /** Oven tower: a drawer under the oven and a handleless push-to-open door above it. */
 export function ovenTowerFronts(): Front[] {
   const w = TALL_W - REVEAL
@@ -156,9 +170,9 @@ function barPull(b: MeshBatch, mat: THREE.Material, p: Pull, frontZ: number, fac
   }
 }
 
-function addFronts(b: MeshBatch, lib: MaterialLibrary, fronts: Front[], frontZ: number, face: 1 | -1) {
+function addFronts(b: MeshBatch, lib: MaterialLibrary, fronts: Front[], frontZ: number, face: 1 | -1, finish = lib.cabinet) {
   for (const f of fronts) {
-    box(b, lib.cabinet, f.x, f.w, f.y0, f.h, frontZ, frontZ - face * FRONT_T, 0.002)
+    box(b, finish, f.x, f.w, f.y0, f.h, frontZ, frontZ - face * FRONT_T, 0.002)
     if (f.pull) barPull(b, lib.blackMetal, f.pull, frontZ, face)
   }
 }
@@ -168,19 +182,19 @@ function addFronts(b: MeshBatch, lib: MaterialLibrary, fronts: Front[], frontZ: 
  * (pointing along `face`): a black toe kick set back under the fronts, the carcass, and a thin black backer
  * directly behind the fronts that every reveal looks onto.
  */
-function carcass(b: MeshBatch, lib: MaterialLibrary, w: number, top: number, backZ: number, frontZ: number, face: 1 | -1, backToe = 0) {
+function carcass(b: MeshBatch, lib: MaterialLibrary, w: number, top: number, backZ: number, frontZ: number, face: 1 | -1, backToe = 0, finish = lib.cabinet) {
   const inner = frontZ - face * FRONT_T
   box(b, lib.blackMetal, 0, w, 0, TOE_H, backZ + face * backToe, frontZ - face * TOE_SETBACK)
-  box(b, lib.cabinet, 0, w, TOE_H, top - TOE_H, backZ, inner - face * BACKER_T, 0.003)
+  box(b, finish, 0, w, TOE_H, top - TOE_H, backZ, inner - face * BACKER_T, 0.003)
   box(b, lib.blackMetal, 0, w - 0.002, TOE_H, top - TOE_H, inner - face * BACKER_T, inner)
 }
 
 /** Base run `w` wide and `d` deep (to the face of the fronts) with its stone top and upstand. */
-export function baseCabinets(lib: MaterialLibrary, w: number, d = 0.62, backsplash = BACKSPLASH_H): THREE.Group {
+export function baseCabinets(lib: MaterialLibrary, w: number, d = 0.62, backsplash = BACKSPLASH_H, finish = lib.cabinet): THREE.Group {
   const b = new MeshBatch()
   const frontZ = d / 2
-  carcass(b, lib, w - 0.006, COUNTER_TOP - COUNTER_T, -d / 2, frontZ, 1)
-  addFronts(b, lib, baseFronts(w), frontZ, 1)
+  carcass(b, lib, w - 0.006, COUNTER_TOP - COUNTER_T, -d / 2, frontZ, 1, 0, finish)
+  addFronts(b, lib, baseFronts(w), frontZ, 1, finish)
   // 40 mm top overhanging the fronts by 20 mm, and a slim upstand of the same stone up to the shelves
   box(b, lib.counter, 0, w, COUNTER_TOP - COUNTER_T, COUNTER_T, -d / 2, frontZ + 0.02, 0.004, 2)
   if (backsplash > 0) box(b, lib.counter, 0, w, COUNTER_TOP, backsplash, -d / 2, -d / 2 + 0.015, 0.002)
@@ -188,9 +202,9 @@ export function baseCabinets(lib: MaterialLibrary, w: number, d = 0.62, backspla
 }
 
 /** A 30 mm floating oak shelf (its bracket is hidden in the slab) with a warm LED profile under the front edge. */
-export function openShelf(lib: MaterialLibrary, w: number, d = 0.28): THREE.Group {
+export function openShelf(lib: MaterialLibrary, w: number, d = 0.28, light = lib.lamp('strip', '#ffd9a8', 6)): THREE.Group {
   const b = new MeshBatch()
-  box(b, lib.lamp('strip', '#ffd9a8', 6), 0, w - 0.06, 0, SHELF_LED, d / 2 - 0.045, d / 2 - 0.03)
+  box(b, light, 0, w - 0.06, 0, SHELF_LED, d / 2 - 0.045, d / 2 - 0.03)
   box(b, lib.cabinet, 0, w, SHELF_LED, SHELF_T, -d / 2, d / 2, 0.002)
   return b.toGroup('kitchen-shelf')
 }
@@ -263,16 +277,16 @@ export function rangeHood(lib: MaterialLibrary, w = 0.9, h = 0.78, d = 0.54): TH
  * Island `w` x `d` with a waterfall counter. Its cabinet faces the run (-z) with drawer stacks; the stool side (+z)
  * keeps a knee-space overhang under the counter.
  */
-export function kitchenIsland(lib: MaterialLibrary, w: number, d = 1, withSink = false): THREE.Group {
+export function kitchenIsland(lib: MaterialLibrary, w: number, d = 1, withSink = false, finish = lib.cabinet): THREE.Group {
   const b = new MeshBatch()
   const top = ISLAND_TOP - COUNTER_T
   const cw = w - 2 * WATERFALL_T
   const frontZ = -d / 2 + 0.03
-  carcass(b, lib, cw, withSink ? top - 0.125 : top, d / 2 - KNEE, frontZ, -1, 0.05)
-  addFronts(b, lib, islandFronts(cw), frontZ, -1)
+  carcass(b, lib, cw, withSink ? top - 0.125 : top, d / 2 - KNEE, frontZ, -1, 0.05, finish)
+  addFronts(b, lib, islandFronts(cw), frontZ, -1, finish)
   if (withSink) {
     // Cap the opening above the recessed carcass at the seating side.
-    box(b, lib.cabinet, 0, cw, top - 0.125, 0.125, d / 2 - KNEE - 0.019, d / 2 - KNEE)
+    box(b, finish, 0, cw, top - 0.125, 0.125, d / 2 - KNEE - 0.019, d / 2 - KNEE)
     islandSink(b, lib, w, d, top)
   } else {
     box(b, lib.counter, 0, w, top, COUNTER_T, -d / 2, d / 2, 0.004, 2)
