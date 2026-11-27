@@ -37,6 +37,11 @@ node tools/csp-preview.mjs             # serves dist/ under a strict CSP like th
 node tools/bake.mjs                    # baked interior lightmaps (see below; needs the Blender venv)
 ```
 
+Agents (optional): `tools/oc-agent.sh` runs a coding agent on an OpenCode Go model in its own git worktree;
+`tools/gemini-agent.sh` does the same with the Gemini CLI (shell allowlist in `tools/gemini-policy.toml`), and
+`tools/gemini-ask.mjs` makes one-shot Gemini calls (text + images) for batch jobs such as rating asset thumbnails,
+which suits a free-tier key far better than an agent loop.
+
 ## Controls
 
 | Mode | Touch | Mouse / keyboard |
@@ -87,6 +92,13 @@ furniture, the floor plan labels and the light probe. See `src/plans/cedarRidge.
 - Real geometry for details people look at: individual boards, standing seams, window frames set into the
   wall, gutters, downspouts, slat railings, solar cells.
 - An interior light probe (captured after the sun lights the rooms) gives warm bounce light indoors.
+- Camera-style exposure indoors (`render/meter.ts`): the HDR frame is reduced to 32 x 32 log luminance, read back
+  without stalling, and a trimmed, center-weighted average sets the exposure, with a guard against extreme
+  blowouts. Readings are taken while the camera moves and once when it stops, with 10% hysteresis, so a still view
+  converges and stops rendering. Outside, each time of day keeps its tuned exposure.
+- Roof tops face the sun, so on their own they never reach the shadow map; an invisible shadow-only plane inside
+  each roof slab (`SHADOW_ONLY` in `house/roofs.ts`) blocks the sun, which otherwise leaked in along wall/ceiling
+  joints at a low sun.
 - A path-traced photo mode (three-gpu-pathtracer) with the full HDRI for stills.
 
 ### Baked lighting
@@ -132,7 +144,15 @@ floors), so after furniture changes nothing warns you: re-bake by hand.
 - Interior doors read as doors: palette wood leaf, lever handles and hinges, swinging into the larger room,
   with a collider.
 - An "Interior walls" finish zone with seven options (warm white, greige, sage, clay, fog blue, charcoal,
-  limewash).
+  limewash); each home has its own default. Interior paint is evenly matte (no roughness noise: glossy patches
+  mirrored the windows as blotches once lightmaps took over the diffuse light).
+- Photoreal furniture and fixtures from Objaverse (Sketchfab uploads, CC BY 4.0; `tools/objaverse.json` lists
+  authors, `tools/fetch_objaverse.py` downloads them, `build_assets.mjs` converts spec-gloss materials and drops
+  shadow-catcher discs). They were picked from 1,722 CC0 / CC BY candidates rated by a Gemini swarm, then checked
+  by hand from four-view renders. `MODEL_YAW` in `models.ts` turns the ones whose front is not +z, and `placeModel`
+  sizes by footprint (`width`, `depth`, `height`, or width and depth together).
+- Kitchens are built from `interior/kitchenParts.ts`: slab doors and drawer stacks with 3 mm reveals and pulls, toe
+  kick, oven tower, induction hob, hood, floating shelves, island with a waterfall top.
 
 ### Editor (v1)
 

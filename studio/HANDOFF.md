@@ -77,7 +77,24 @@ parent's provider variables cannot pin it to Anthropic's API.)
    - Only a plain `#name` hash survives, so share codes look like `#c-<plan>-<time>-<option per zone>`.
    - Downloads are blocked, so photo mode shows the image to long-press or right-click.
 
+## Session 2 (Variant A) in short
+- Exposure is metered from the rendered frame (`render/meter.ts`); white rooms no longer blow out and baked rooms by
+  day are no longer murky. Roof shadow-only planes stop sun leaks along wall/ceiling joints.
+- Furniture: 20 Objaverse models (CC BY 4.0, credits in README and the in-app help sheet), real kitchen cabinetry
+  (`kitchenParts.ts`), bath fixtures (vanity, toilet, rain shower, towel bar), per-home wall colours.
+- Doors: `house/doors.test.ts` checks every door, slider and garage opening of every plan against what the builders
+  report building; exterior side doors got solid leaves.
+- GitHub: pushed to `claude/opencode-console-setup-wa7xho` and mirrored to `cuby-studio-variant-a`.
+- Agents: OpenCode Go hits a 5-hour usage cap after roughly one big task; the free Gemini key has small per-model
+  daily quotas (Gemini 3 Flash ran out after one CLI session). Use `tools/gemini-ask.mjs` one-shot calls for batch
+  vision jobs (rating thumbnails, reviewing screenshots) across gemini-3-flash-preview, gemini-3.5-flash-lite and
+  gemini-3.1-flash-lite, each of which has its own quota.
+
 ## Gotchas
+- Never rebuild `dist/` while `tools/bake.mjs` runs: the page it drives loads code-split chunks by hashed name, and a
+  rebuild deletes them (the export fails with "Failed to fetch dynamically imported module").
+- Interior materials must not carry noise roughness maps: once a lightmap replaces the IBL diffuse, glossy patches
+  mirror the windows and read as blotches.
 - The Artifact host has a strict CSP that `vite preview` lacks. The first 3D publish failed on the user's phone with
   "Could not load this home" because WebAssembly (the meshopt decoder) and `fetch()` of `data:` URLs (inline model
   buffers and textures) were refused. Models are now plain glTF JSON decoded in JS, with external textures.
