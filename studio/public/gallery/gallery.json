@@ -41,38 +41,6 @@
       "baths": 3.5
     }
   ],
-  "comparisons": [
-    {
-      "before": "cedar-ridge-golden",
-      "after": "cedar-charred",
-      "beforeLabel": "Natural Cedar",
-      "afterLabel": "Charred Cedar"
-    },
-    {
-      "before": "coastal-modern-golden",
-      "after": "coastal-weathered",
-      "beforeLabel": "Chalk · Golden hour",
-      "afterLabel": "Weathered Cedar · Afternoon"
-    },
-    {
-      "before": "modern-farmhouse-golden",
-      "after": "farmhouse-sage",
-      "beforeLabel": "Arctic White · Golden hour",
-      "afterLabel": "Sage · Afternoon"
-    },
-    {
-      "before": "woodland-modern-golden",
-      "after": "woodland-garden-day",
-      "beforeLabel": "Golden hour",
-      "afterLabel": "Afternoon"
-    },
-    {
-      "before": "aspen-custom-golden",
-      "after": "aspen-walkout-dusk",
-      "beforeLabel": "Golden hour",
-      "afterLabel": "Dusk"
-    }
-  ],
   "images": [
     {
       "id": "cedar-ridge-golden",
@@ -150,7 +118,7 @@
       "home": "Woodland Modern",
       "kind": "interior",
       "space": "Primary bedroom",
-      "style": "Walnut & Travertine · Sage",
+      "style": "Honey Oak & Travertine · Sage",
       "light": "Golden hour",
       "share": "#c-2-0-0-0-0-0-1-1-2-v-woodland-primary"
     },
@@ -240,7 +208,7 @@
       "home": "Cedar Ridge",
       "kind": "interior",
       "space": "Kitchen",
-      "style": "Walnut & Travertine · Limewash",
+      "style": "Honey Oak & Travertine · Limewash",
       "light": "Golden hour",
       "share": "#c-0-0-0-0-0-0-0-0-0-1-6-v-cedar-kitchen"
     },
@@ -260,7 +228,7 @@
       "home": "Woodland Modern",
       "kind": "interior",
       "space": "Great room",
-      "style": "Walnut & Travertine · Limewash",
+      "style": "Honey Oak & Travertine · Limewash",
       "light": "Golden hour",
       "share": "#c-2-0-0-0-0-0-1-1-6-v-woodland-great-room"
     },
@@ -270,7 +238,7 @@
       "home": "Aspen Custom",
       "kind": "interior",
       "space": "Great room",
-      "style": "Walnut & Travertine · Greige",
+      "style": "Honey Oak & Travertine · Greige",
       "light": "Golden hour",
       "share": "#c-3-0-0-0-0-0-1-1-1-1-v-aspen-great-room"
     },
@@ -293,6 +261,58 @@
       "style": "Light Oak & Limestone · Limewash",
       "light": "Golden hour",
       "share": "#c-0-0-0-0-0-0-0-0-0-0-6-v-cedar-primary-bath"
+    },
+    {
+      "id": "woodland-garden-day",
+      "plan": "woodland-modern",
+      "home": "Woodland Modern",
+      "kind": "exterior",
+      "space": "Garden elevation",
+      "style": "Natural Cedar · Charcoal",
+      "light": "Afternoon",
+      "share": "#c-2-1-0-0-0-0-1-1-2-v-woodland-modern-golden"
+    },
+    {
+      "id": "aspen-walkout-dusk",
+      "plan": "aspen-custom",
+      "home": "Aspen Custom",
+      "kind": "exterior",
+      "space": "Walkout elevation",
+      "style": "Natural Cedar · Charcoal",
+      "light": "Dusk",
+      "share": "#c-3-2-0-0-0-0-1-1-0-1-v-aspen-custom-golden"
+    }
+  ],
+  "comparisons": [
+    {
+      "before": "cedar-ridge-golden",
+      "after": "cedar-charred",
+      "beforeLabel": "Natural Cedar",
+      "afterLabel": "Charred Cedar"
+    },
+    {
+      "before": "coastal-modern-golden",
+      "after": "coastal-weathered",
+      "beforeLabel": "Chalk · Golden hour",
+      "afterLabel": "Weathered Cedar · Afternoon"
+    },
+    {
+      "before": "modern-farmhouse-golden",
+      "after": "farmhouse-sage",
+      "beforeLabel": "Arctic White · Golden hour",
+      "afterLabel": "Sage · Afternoon"
+    },
+    {
+      "before": "woodland-modern-golden",
+      "after": "woodland-garden-day",
+      "beforeLabel": "Golden hour",
+      "afterLabel": "Afternoon"
+    },
+    {
+      "before": "aspen-custom-golden",
+      "after": "aspen-walkout-dusk",
+      "beforeLabel": "Golden hour",
+      "afterLabel": "Dusk"
     }
   ]
 }
