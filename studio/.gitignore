@@ -10,3 +10,4 @@ dist-test
 # Cycles writes each render into a temporary folder next to its output
 public/gallery/.cycles-*/
 public/pano/.cycles-*/
+dist-cyc
