@@ -19,6 +19,9 @@ interface BeautyOpening {
   height: number
 }
 
+type BeautyFixture = { kind: 'pendant'; position: Vec3; size: number } |
+  { kind: 'shade'; position: Vec3; size: number; top: number }
+
 export interface BeautyMeta {
   plan: string
   preset: string
@@ -30,6 +33,41 @@ export interface BeautyMeta {
   sun: { direction: Vec3; color: Vec3; intensity: number; radius: number }
   openings: BeautyOpening[]
   lamps: { position: Vec3; color: Vec3; intensity: number; target?: Vec3; angle?: number; penumbra?: number }[]
+  fixtures?: BeautyFixture[]
+}
+
+const pendants = new Set(['dome-shade', 'pendant_dome', 'modern_ceiling_lamp_01', 'pendant'])
+const shades = new Map([
+  ['floor_lamp_tripod', 0.24], ['floorLamp', 0.20],
+  ['table_lamp_ceramic', 0.17], ['table_lamp_white', 0.15], ['tableLamp', 0.18],
+])
+
+/** Export the light outlets of fitted fixtures, in metres, for the golden-hour Cycles pass. */
+export function beautyFixtures(root: THREE.Object3D): BeautyFixture[] {
+  const fixtures: BeautyFixture[] = []
+  const bounds = new THREE.Box3()
+  const center = new THREE.Vector3()
+  const extent = new THREE.Vector3()
+  function visit(object: THREE.Object3D) {
+    if (!object.visible) return
+    const pendant = pendants.has(object.name)
+    const shadeHeight = shades.get(object.name)
+    if (!pendant && shadeHeight === undefined) {
+      object.children.forEach(visit)
+      return
+    }
+    bounds.setFromObject(object, true)
+    if (bounds.isEmpty()) return
+    bounds.getCenter(center)
+    bounds.getSize(extent)
+    const size = THREE.MathUtils.clamp(Math.min(extent.x, extent.z), 0.12, 0.38)
+    const y = shadeHeight === undefined ? bounds.min.y : bounds.max.y - shadeHeight
+    const position: Vec3 = [center.x, y - 0.065, center.z]
+    fixtures.push(pendant ? { kind: 'pendant', position, size }
+      : { kind: 'shade', position, size, top: bounds.max.y + 0.065 })
+  }
+  visit(root)
+  return fixtures
 }
 
 export function beautyOpenings(home: HomePlan): BeautyOpening[] {
@@ -379,6 +417,7 @@ export async function exportBeauty(engine: Engine, options: { target?: Vec3; use
       }]
     }),
   }
+  if (interior && meta.interior && meta.preset === 'golden') meta.fixtures = beautyFixtures(interior.group)
 
   const root = new THREE.Scene()
   const mats = new Map<string, Surface>()

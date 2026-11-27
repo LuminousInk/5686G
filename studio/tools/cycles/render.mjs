@@ -12,7 +12,7 @@ const script = fileURLToPath(new URL('./render.py', import.meta.url))
 const timeout = 420_000
 const times = ['golden', 'day', 'dusk', 'night']
 const browserArgs = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
-const numericFlags = ['samples', 'threads', 'focus', 'f-stop', 'ev', 'white-balance', 'bevel-scale', 'haze']
+const numericFlags = ['samples', 'threads', 'focus', 'f-stop', 'ev', 'window-ev', 'shift-y', 'white-balance', 'bevel-scale', 'haze']
 const renderFlags = {
   ...Object.fromEntries(numericFlags.map(name => [name, { type: 'string' }])),
   size: { type: 'string' },
@@ -209,7 +209,8 @@ async function main() {
   if (values.help) {
     console.log('Usage: node tools/cycles/render.mjs SHOT | --plan ID [--view ID | --pose "x,y,z;tx,ty,tz;fov"] | --from PREFIX')
     console.log('Options: --out FILE --size WxH --samples N --pano --time PRESET --finish ZONE=OPTION (repeatable)')
-    console.log('         --focus METRES --f-stop N --ev STOPS --white-balance K --threads N --bevel-scale N --haze N')
+    console.log('         --focus METRES --f-stop N --shift-y FRACTION --ev STOPS --window-ev STOPS --white-balance K')
+    console.log('         --threads N --bevel-scale N --haze N')
     console.log('         --export-only PREFIX --save-export PREFIX --quality medium|high')
     return
   }

@@ -36,9 +36,92 @@ EXTERIOR_SKY = {
     "day": (0.68, 1.28, (0.96, 1.0, 1.06)),
     "dusk": (0.56, 1.30, (1.28, 1.03, 0.89)),
 }
+DAYLIGHT = {"day", "golden"}
+PRACTICAL_COLOR = (1.0, 0.67, 0.40)
 
 
-def lighting(scene, prefix, meta):
+def window_exposure(scene, openings, stops):
+    """Apply one exposure per opening, including the gaps in open sliders."""
+    if stops == 0 or not openings:
+        return
+    material = bpy.data.materials.new("Window exposure filter")
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    ray = nodes.new("ShaderNodeLightPath")
+    attenuation = nodes.new("ShaderNodeMath")
+    attenuation.operation = "MULTIPLY_ADD"
+    attenuation.inputs[1].default_value = 2 ** stops - 1
+    attenuation.inputs[2].default_value = 1
+    links.new(ray.outputs["Is Camera Ray"], attenuation.inputs[0])
+    transparent = nodes.new("ShaderNodeBsdfTransparent")
+    links.new(attenuation.outputs[0], transparent.inputs["Color"])
+    links.new(transparent.outputs[0], nodes["Material Output"].inputs["Surface"])
+    up = Vector((0, 0, 1))
+    for opening in openings:
+        inward = xyz(opening["inward"])
+        # Portal positions sit just inside the wall. Set the filter beyond the
+        # glass and frames so their interior-facing reflections keep full exposure.
+        center = xyz(opening["position"]) - inward * 0.20
+        right = inward.cross(up) * (opening["width"] / 2 + 0.055)
+        top = up * (opening["height"] / 2 + 0.055)
+        mesh = bpy.data.meshes.new("Window exposure filter")
+        mesh.from_pydata([center - right - top, center + right - top,
+                          center + right + top, center - right + top], [], [(0, 1, 2, 3)])
+        mesh.materials.append(material)
+        scene.collection.objects.link(bpy.data.objects.new(mesh.name, mesh))
+
+
+def golden_practicals(scene, fixtures):
+    for fixture in fixtures:
+        position = fixture["position"]
+        if fixture["kind"] == "pendant":
+            pendant = light(scene, "Pendant pool", "AREA", position)
+            pendant.data.shape = "DISK"
+            pendant.data.size = fixture["size"]
+            pendant.data.energy = 2.7
+            pendant.data.color = PRACTICAL_COLOR
+            pendant.visible_glossy = False
+            continue
+        # Light emerges above and below an open shade, while its fabric glows.
+        gain = min(1.0, fixture["size"] / 0.32)
+        for y, power in ((position[1], 4.5), (fixture["top"], 3.2)):
+            lamp = light(scene, "Shade spill", "POINT", (position[0], y, position[2]))
+            lamp.data.energy = power * gain
+            lamp.data.color = PRACTICAL_COLOR
+            lamp.data.shadow_soft_size = fixture["size"] * 0.35
+            lamp.visible_glossy = False
+
+
+def dome_diffusers(scene):
+    # The fitted bronze dome exports a metal shell. Recess a luminous disc
+    # into its opening, where a bulb and reflector would be seen from below.
+    domes = [obj for obj in scene.objects
+             if obj.type == "MESH" and obj.name.startswith("lamp_body_ceiling_lamp_metal_")]
+    if not domes:
+        return
+    material = bpy.data.materials.new("Pendant diffuser")
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    glow = nodes.new("ShaderNodeEmission")
+    glow.inputs["Color"].default_value = (*PRACTICAL_COLOR, 1)
+    glow.inputs["Strength"].default_value = 0.75
+    links.new(glow.outputs[0], nodes["Material Output"].inputs["Surface"])
+    for dome in domes:
+        corners = [dome.matrix_world @ Vector(corner) for corner in dome.bound_box]
+        low = Vector(tuple(min(corner[i] for corner in corners) for i in range(3)))
+        high = Vector(tuple(max(corner[i] for corner in corners) for i in range(3)))
+        x, y, _ = (low + high) / 2
+        radius = 0.35 * min(high.x - low.x, high.y - low.y)
+        vertices = [(x + radius * math.cos(a), y - radius * math.sin(a), low.z + 0.005)
+                    for a in (math.tau * i / 32 for i in range(32))]
+        mesh = bpy.data.meshes.new("Pendant diffuser")
+        mesh.from_pydata(vertices, [], [tuple(range(len(vertices)))])
+        mesh.materials.append(material)
+        diffuser = bpy.data.objects.new(mesh.name, mesh)
+        # The calibrated area light supplies the pool of light below the shade.
+        diffuser.visible_diffuse = diffuser.visible_shadow = False
+        scene.collection.objects.link(diffuser)
+
+
+def lighting(scene, prefix, meta, window_ev):
     w, h = (meta["sky"][k] for k in ("width", "height"))
     pixels = np.fromfile(Path(f"{prefix}.sky.f32"), dtype="<f4").reshape(h, w, 3)
     rgba = np.ones((h, w, 4), dtype=np.float32)
@@ -53,12 +136,12 @@ def lighting(scene, prefix, meta):
     env.interpolation = "Linear"
     # The exported world has the app's environment intensity baked in. The preset
     # can independently scale the visible background (including through window panes).
-    daylight = meta["preset"] in {"day", "golden"}
+    daylight = meta["preset"] in DAYLIGHT
     interior_daylight = meta["interior"] and daylight
-    fill = (1.4 if interior_daylight else 1.12) if daylight else 1.0
+    fill = (1.25 if interior_daylight else 1.12) if daylight else 1.0
     background = nodes["Background"]
     background.inputs["Strength"].default_value = fill
-    strength = meta["backgroundScale"] * (0.85 if interior_daylight else 1.0)
+    strength = meta["backgroundScale"] * (0.48 if interior_daylight else 1.0)
     color = env.outputs["Color"]
     sky_grade = EXTERIOR_SKY.get(meta["preset"]) if not meta["interior"] else None
     if sky_grade:
@@ -90,8 +173,8 @@ def lighting(scene, prefix, meta):
     solar = meta["sun"]
     if solar["intensity"] > 0:
         sun = light(scene, "Sun", "SUN")
-        sun.data.energy = solar["intensity"]
-        sun.data.color = solar["color"]
+        sun.data.energy = solar["intensity"] * (0.82 if interior_daylight else 1.0)
+        sun.data.color = tuple(0.85 * channel + 0.15 for channel in solar["color"]) if interior_daylight else solar["color"]
         spread = 1.85 if interior_daylight else 1.25 if daylight else 1.0
         sun.data.angle = math.radians(max(0.53, 2 * solar["radius"] * spread))
         aim(sun, -xyz(solar["direction"]))
@@ -104,6 +187,11 @@ def lighting(scene, prefix, meta):
             portal.data.size = opening["width"]
             portal.data.size_y = opening["height"]
             aim(portal, xyz(opening["inward"]))
+    if interior_daylight:
+        window_exposure(scene, meta["openings"], window_ev)
+    if meta["interior"] and meta["preset"] == "golden":
+        golden_practicals(scene, meta.get("fixtures", []))
+        dome_diffusers(scene)
 
     practical_gain = 1.13 if not meta["interior"] and meta["preset"] == "dusk" else 1
     for lamp in meta["lamps"]:
@@ -126,21 +214,11 @@ def connect(links, source, socket):
         socket.default_value = source.default_value
 
 
-def thin_glass(nodes, links, surface, shader, window_exposure):
+def thin_glass(nodes, links, surface, shader):
     # The app models windows as single faces. A thin, parallel pane sends the
     # transmitted ray straight through, while retaining dielectric Fresnel reflections.
     clear = nodes.new("ShaderNodeBsdfTransparent")
-    tint = (0.975, 0.987, 0.98)
-    clear.inputs["Color"].default_value = (*tint, 1)
-    if window_exposure < 1:
-        # Reproduce a bracketed interior photograph. A camera ray through the
-        # glazing sees a shorter exterior exposure while daylight keeps its energy.
-        ray = nodes.new("ShaderNodeLightPath")
-        dual = nodes.new("ShaderNodeMixRGB")
-        dual.inputs[1].default_value = (*tint, 1)
-        dual.inputs[2].default_value = (*(c * window_exposure for c in tint), 1)
-        links.new(ray.outputs["Is Camera Ray"], dual.inputs[0])
-        links.new(dual.outputs[0], clear.inputs["Color"])
+    clear.inputs["Color"].default_value = (0.975, 0.987, 0.98, 1)
     glossy = nodes.new("ShaderNodeBsdfAnisotropic")
     connect(links, shader.inputs["Roughness"], glossy.inputs["Roughness"])
     facing = nodes.new("ShaderNodeLayerWeight")
@@ -245,6 +323,75 @@ def surface_relief(nodes, links, shader, scale, distance, strength, variation):
     links.new(multiply.outputs[0], base)
 
 
+def finish_detail(nodes, links, shader, name, interior):
+    plaster = name in {"zone:walls", "ceiling"}
+    if interior:
+        noise_detail(nodes, links, shader, 125 if plaster else 68, 0.0016 if plaster else 0.001,
+                     0.24 if plaster else 0.19)
+        # Vary roughness over a larger area than the pores. Keep the imported maps.
+        noise = nodes.new("ShaderNodeTexNoise")
+        noise.inputs["Scale"].default_value = 7 if plaster else 12
+        links.new(nodes.new("ShaderNodeTexCoord").outputs["Object"], noise.inputs["Vector"])
+        variation = 0.28 if plaster else 0.38
+    else:
+        noise = noise_detail(nodes, links, shader, 85 if plaster else 28, 0.0015 if plaster else 0.0007, 0.16)
+        variation = 0.17
+    gain = nodes.new("ShaderNodeMath")
+    gain.operation = "MULTIPLY_ADD"
+    gain.inputs[1].default_value = variation
+    gain.inputs[2].default_value = 1 - variation / 2
+    links.new(noise.outputs["Fac"], gain.inputs[0])
+    scale = nodes.new("ShaderNodeMath")
+    scale.operation = "MULTIPLY"
+    scale.use_clamp = interior
+    roughness = shader.inputs["Roughness"]
+    connect(links, roughness, scale.inputs[0])
+    links.new(gain.outputs[0], scale.inputs[1])
+    links.new(scale.outputs[0], roughness)
+
+
+def cloth_sheen(nodes, links, shader):
+    weight = shader.inputs["Sheen Weight"]
+    if weight.is_linked or weight.default_value > 0:
+        return
+    weight.default_value = 0.25
+    shader.inputs["Sheen Roughness"].default_value = 0.78
+    connect(links, shader.inputs["Base Color"], shader.inputs["Sheen Tint"])
+
+
+def ocean_through_window(nodes, links, surface, shader):
+    # At these low viewing angles the physical surface is almost entirely a
+    # reflection of the bright HDRI horizon. Keep some blue water scatter in
+    # the photographed view. The scene still uses the physical ocean for GI.
+    water = nodes.new("ShaderNodeBsdfDiffuse")
+    connect(links, shader.inputs["Base Color"], water.inputs["Color"])
+    connect(links, shader.inputs["Normal"], water.inputs["Normal"])
+    reflection = nodes.new("ShaderNodeBsdfAnisotropic")
+    reflection.inputs["Color"].default_value = (0.13, 0.25, 0.34, 1)
+    connect(links, shader.inputs["Roughness"], reflection.inputs["Roughness"])
+    connect(links, shader.inputs["Normal"], reflection.inputs["Normal"])
+    visible = nodes.new("ShaderNodeMixShader")
+    visible.inputs[0].default_value = 0.55
+    links.new(water.outputs[0], visible.inputs[1])
+    links.new(reflection.outputs[0], visible.inputs[2])
+    ray = nodes.new("ShaderNodeLightPath")
+    mix = nodes.new("ShaderNodeMixShader")
+    links.new(ray.outputs["Is Camera Ray"], mix.inputs[0])
+    links.new(shader.outputs[0], mix.inputs[1])
+    links.new(visible.outputs[0], mix.inputs[2])
+    links.new(mix.outputs[0], surface)
+
+
+PRACTICAL_EMISSION = {
+    "interior:diffuser": 1.60,
+    "modern_ceiling_globe": 1.35,
+    "Plastico": 1.35,  # Linear dining pendant diffuser.
+    "interior:linen-shade": 0.25,
+    "Lamp_Shade_Outside": 0.25,
+    "ceramic shade": 0.28,
+}
+
+
 def camera_bevel(nodes, links, shader, radius):
     # Round edges in the photograph. Secondary rays keep the imported material
     # so diffuse bounces do not repeatedly trace the short bevel intersections.
@@ -270,9 +417,14 @@ def camera_bevel(nodes, links, shader, radius):
         links.new(mix.outputs[0], socket)
 
 def materials(bevel_scale, meta):
-    daylight_interior = meta["interior"] and meta["preset"] in {"day", "golden"}
+    daylight_interior = meta["interior"] and meta["preset"] in DAYLIGHT
+    golden = meta["interior"] and meta["preset"] == "golden"
     gravel = {mat for obj in bpy.data.objects if obj.type == "MESH" and obj.name.partition(".")[0] == "Decomposed granite paths"
               for mat in obj.data.materials}
+    ceramic_shades = {
+        mat for obj in bpy.data.objects if obj.type == "MESH" and obj.name.startswith("Cylinder003_fabric002_")
+        for mat in obj.data.materials
+    } if golden else set()
     for mat in bpy.data.materials:
         if mat.node_tree is None:
             continue
@@ -284,7 +436,7 @@ def materials(bevel_scale, meta):
         surface = output.inputs["Surface"]
         name = mat.name.partition(".")[0]
         if mat.get("beautyThinGlass"):
-            thin_glass(nodes, links, surface, shader, 0.45 if daylight_interior and name == "glass" else 1)
+            thin_glass(nodes, links, surface, shader)
         elif mat.get("beautySheer"):
             sheer_fabric(nodes, links, surface, shader)
         elif mat.get("beautyFoliage") or mat.get("beautyForestCard"):
@@ -300,34 +452,31 @@ def materials(bevel_scale, meta):
             links.new(multiply.outputs[0], base)
         if mat.get("beautyOcean"):
             noise_detail(nodes, links, shader, 0.7, 0.18, 0.4)
+            if daylight_interior:
+                ocean_through_window(nodes, links, surface, shader)
         if not meta["interior"] and name == "Canyon terrain splat":
             surface_relief(nodes, links, shader, 5.2, 0.032, 0.35, 0.23)
             contact_shadows(nodes, links, shader, 0.32, 0.28)
         if not meta["interior"] and mat in gravel:
             surface_relief(nodes, links, shader, 18, 0.013, 0.48, 0.38)
-        # Scans supply the grain; low-amplitude variation breaks up an otherwise uniform gloss.
         if daylight_interior and name in {"floor", "cabinet"}:
-            contact_shadows(nodes, links, shader, 0.16 if name == "floor" else 0.085)
-        if name in {"floor", "ceilingWood", "cabinet", "counter", "zone:walls"}:
-            plaster = name == "zone:walls"
-            noise = noise_detail(nodes, links, shader, 85 if plaster else 28, 0.0015 if plaster else 0.0007, 0.16)
-            gain = nodes.new("ShaderNodeMath")
-            gain.operation = "MULTIPLY_ADD"
-            gain.inputs[1].default_value = 0.17
-            gain.inputs[2].default_value = 0.915
-            links.new(noise.outputs["Fac"], gain.inputs[0])
-            scale = nodes.new("ShaderNodeMath")
-            scale.operation = "MULTIPLY"
-            roughness = shader.inputs["Roughness"]
-            connect(links, roughness, scale.inputs[0])
-            links.new(gain.outputs[0], scale.inputs[1])
-            links.new(scale.outputs[0], roughness)
+            contact_shadows(nodes, links, shader, 0.18 if name == "floor" else 0.085, 0.25)
+        if name in {"floor", "ceilingWood", "cabinet", "counter", "zone:walls"} or meta["interior"] and name == "ceiling":
+            finish_detail(nodes, links, shader, name, meta["interior"])
+        if meta["interior"] and any(word in name.lower() for word in (
+            "fabric", "linen", "bedding", "duvet", "upholstery", "velvet", "rug", "cushion", "tela_",
+        )):
+            cloth_sheen(nodes, links, shader)
+        emission = PRACTICAL_EMISSION.get("ceramic shade" if mat in ceramic_shades else name)
+        if golden and emission:
+            shader.inputs["Emission Color"].default_value = (*PRACTICAL_COLOR, 1)
+            shader.inputs["Emission Strength"].default_value = emission
         radius = mat.get("beautyBevel", 0) * bevel_scale
         if radius:
             camera_bevel(nodes, links, shader, radius)
 
 
-def camera(scene, view, args):
+def camera(scene, view, args, interior, width, height):
     cam = bpy.data.cameras.new("Studio camera")
     obj = bpy.data.objects.new("Studio camera", cam)
     scene.collection.objects.link(obj)
@@ -343,7 +492,15 @@ def camera(scene, view, args):
         cam.panorama_type = "EQUIRECTANGULAR"
     else:
         cam.sensor_fit = "VERTICAL"
+        if interior:
+            cam.sensor_height = 36 * height / width
         cam.lens = cam.sensor_height / (2 * math.tan(math.radians(view["fov"]) / 2))
+        # Shift the frame down to favor furniture and floor while keeping the
+        # perspective center level. Custom pitched cameras keep their framing.
+        if args.shift_y is not None:
+            cam.shift_y = args.shift_y
+        elif interior and abs(direction.z) < 1e-5:
+            cam.shift_y = -0.055
         if args.focus:
             cam.dof.use_dof = True
             cam.dof.focus_distance = args.focus
@@ -438,6 +595,8 @@ def main():
     parser.add_argument("--focus", type=float, help="focus distance in metres")
     parser.add_argument("--f-stop", type=float, default=5.6)
     parser.add_argument("--ev", type=float, default=0, help="additional exposure in stops")
+    parser.add_argument("--window-ev", type=float, default=-1.65, help="daylight interior window exposure in stops")
+    parser.add_argument("--shift-y", type=float, help="still camera shift, as a fraction of frame height")
     parser.add_argument("--white-balance", type=float, help="white balance in Kelvin")
     parser.add_argument("--bevel-scale", type=float, default=1)
     parser.add_argument("--haze", type=float, default=1, help="exterior aerial perspective multiplier")
@@ -445,8 +604,8 @@ def main():
     args = parser.parse_args()
     width, height = args.size or ((2560, 1280) if args.pano else (1600, 900))
     samples = args.samples if args.samples is not None else (6 if args.pano else 12)
-    if args.pano and (width != height * 2 or args.focus):
-        parser.error("panoramas require a 2:1 size and use fixed focus")
+    if args.pano and (width != height * 2 or args.focus or args.shift_y is not None):
+        parser.error("panoramas require a 2:1 size, fixed focus and no lens shift")
     positive = (samples, args.threads, args.f_stop)
     if args.white_balance is not None:
         positive += (args.white_balance,)
@@ -456,12 +615,17 @@ def main():
         parser.error("samples, threads, focus, f-stop and white balance must be positive")
     if not math.isfinite(args.ev) or any(not math.isfinite(n) or n < 0 for n in (args.bevel_scale, args.haze)):
         parser.error("exposure must be finite, and bevel scale and haze must be finite and nonnegative")
+    if not math.isfinite(args.window_ev) or args.window_ev > 0:
+        parser.error("window exposure must be finite and at most zero")
+    if args.shift_y is not None and (not math.isfinite(args.shift_y) or abs(args.shift_y) > 1):
+        parser.error("lens shift must be between -1 and 1")
     formats = {".webp": "WEBP", ".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG"}
     if args.out.suffix.lower() not in formats:
         parser.error("output must be .webp, .png or .jpg")
 
     start = monotonic()
     meta = json.loads(Path(f"{args.prefix}.json").read_text())
+    interior_daylight = meta["interior"] and meta["preset"] in DAYLIGHT
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
@@ -477,8 +641,8 @@ def main():
     cycles.denoiser = "OPENIMAGEDENOISE"
     cycles.denoising_use_gpu = False
     cycles.denoising_input_passes = "RGB_ALBEDO_NORMAL"
-    cycles.max_bounces = 8
-    cycles.diffuse_bounces = 4
+    cycles.max_bounces = 9 if interior_daylight else 8
+    cycles.diffuse_bounces = 6 if interior_daylight else 4
     cycles.glossy_bounces = 3
     cycles.transmission_bounces = 5
     cycles.transparent_max_bounces = 12
@@ -492,14 +656,15 @@ def main():
     finally:
         bpy.app.debug_value = 0
     materials(args.bevel_scale, meta)
-    sky = lighting(scene, args.prefix, meta)
-    camera(scene, meta["camera"], args)
+    sky = lighting(scene, args.prefix, meta, args.window_ev)
+    camera(scene, meta["camera"], args, meta["interior"], width, height)
     if args.haze and not meta["interior"] and meta["preset"] in EXTERIOR_SKY:
         aerial_perspective(scene, meta, sky, args.haze, args.pano)
     view = scene.view_settings
     view.view_transform = "AgX"
-    view.look = "AgX - Medium Low Contrast" if meta["interior"] else "None"
-    room_bias = {"golden": 2.6, "day": 3.0}.get(meta["preset"], 0) if meta["interior"] else 0
+    view.look = ("AgX - Medium High Contrast" if meta["preset"] == "golden" else
+                 "AgX - Medium Low Contrast") if meta["interior"] else "None"
+    room_bias = {"golden": 2.6, "day": 3.0}.get(meta["preset"], 0) if interior_daylight else 0
     exterior_bias = 0.38 if not meta["interior"] and meta["preset"] == "day" else 0
     view.exposure = math.log2(max(0.001, meta["exposure"])) + room_bias + exterior_bias + args.ev
     view.use_white_balance = True

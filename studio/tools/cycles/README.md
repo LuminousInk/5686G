@@ -30,11 +30,16 @@ preset and finishes. Repeat `--finish ZONE=OPTION` for overrides. `BASE` changes
 | Still size / sample cap | 1600×900 / 12 samples |
 | Panorama size / sample cap | 2560×1280 / 6 samples |
 | Output | WebP at quality 93. A `.png` or `.jpg` path also works. |
-| Camera | Level 360° equirectangular view with `--pano`. A still can set `--focus` in metres and `--f-stop`. |
+| Camera | Level 360° equirectangular view with `--pano`. Interior gallery stills use eye-level cameras and 24–28 mm full-frame-equivalent lenses at 16:9. |
 | CPU | 4 threads. Set `--threads` to share the machine with a bake. |
 
 Use `--size 800x450 --samples 8 --threads 2` for short lighting tests on a shared machine. Panoramas require a 2:1 aspect ratio. Use `--size 4096x2048` for a 4K panorama.
-`--ev` sets an offset in stops from the calibrated exposure. `--white-balance` takes Kelvin.
+`--ev` sets an offset in stops from the calibrated exposure. `--window-ev` sets a separate camera exposure
+through daylight interior openings (default −1.65 stops, 0 disables the opening filter).
+`--white-balance` takes Kelvin. For stills, `--focus` takes metres and `--f-stop` controls the aperture.
+`--shift-y` moves the still frame by a fraction of its height. By default, a level interior still shifts down
+by 5.5% to hold more of the furniture and floor in frame. The studio share view uses the same eye height,
+heading and lens at 16:9 with a centered viewport.
 `--bevel-scale` multiplies the 4 mm edge radius. `--haze` scales exterior aerial perspective (default 1, 0 turns it off).
 Script output includes export time, Blender scene
 setup time, and Cycles time, including denoising and image encoding.
@@ -42,9 +47,10 @@ setup time, and Cycles time, including denoising and image encoding.
 Keep one export and reuse it when tuning lighting or changing resolution:
 
 ```sh
-node tools/cycles/render.mjs woodland-primary --export-only shots/cycles/woodland
-node tools/cycles/render.mjs --from shots/cycles/woodland --size 800x450 --samples 12 --ev 0.25
-node tools/cycles/render.mjs --from shots/cycles/woodland --out shots/cycles/woodland-primary.webp
+BASE=http://localhost:4209/ node tools/cycles/render.mjs woodland-primary --export-only shots/look/woodland
+node tools/cycles/render.mjs --from shots/look/woodland --size 800x450 --samples 8 --threads 2 \
+  --window-ev=-1.25 --out shots/look/woodland-test.webp
+node tools/cycles/render.mjs --from shots/look/woodland --threads 2 --out shots/look/woodland-primary.webp
 ```
 
 `--save-export PREFIX` saves the same three intermediates during a render. Keep the GLB, sky floats and
@@ -62,25 +68,36 @@ The standalone driver writes under `shots/cycles/` by default. Build again to in
 
 ## Sample panoramas
 
-The two 2560×1280 WebPs under `public/pano/` use eye-height positions within the rooms.
+The published stops keep their registered heights and headings. These commands reproduce two of the views
+for review under `shots/look/`.
 
 ```sh
 node tools/cycles/render.mjs cedar-great-room --pose='-1.4,2.25,-5.35;1.95,2.25,-0.5;63;walk' \
-  --pano --samples 4 --out public/pano/cedar-great-room.webp
+  --pano --samples 4 --out shots/look/cedar-great-room-pano.webp
 node tools/cycles/render.mjs coastal-kitchen --pose='1.55,1.93,-6.85;-0.3,1.93,-9.45;62;walk' \
-  --pano --samples 6 --out public/pano/coastal-kitchen.webp
+  --pano --samples 6 --out shots/look/coastal-kitchen-pano.webp
 ```
 
 ## Lighting and material translation
 
 The offline capture waits for the app's assets and uses its exposure anchors without warming the
 WebGL pipeline. The live hook can also capture an already rendered view, including its metered exposure.
-Cycles lights the exported geometry with the app's oriented sun-free HDRI, a separate sun, dusk and night
-practicals, and portals inside eligible exterior openings. It calculates bounce light with adaptive
-sampling and Open Image Denoise, then applies AgX. The daylight interior grade adds sky fill, a softer
-contrast curve, and a preset-specific offset from the app's exposure to keep recesses readable.
-Daylight windows use a shorter photographic exposure for camera rays through the glass. A wider
-sun angle softens indoor shadows, and short-range occlusion grounds cabinets and furniture at the floor.
+Cycles lights the exported geometry with the app's oriented sun-free HDRI, a separate sun and portals
+inside eligible exterior openings. On golden-hour interiors, the export locates pendants and shades for
+warm pools of light and Cycles brightens their diffusers. The wider sun angle softens the key and six
+diffuse bounces carry sky fill into shadow. Short-range occlusion grounds furniture and cabinets at the
+floor. Open Image Denoise and the AgX highlight roll-off retain detail on sunlit surfaces. Golden hour
+uses AgX Medium High Contrast, and day uses Medium Low Contrast.
+
+In Cycles, fitted bronze domes use a recessed luminous disc to show the warm fixture opening.
+
+The daylight interior world uses separate strengths for visible sky and lighting. A camera-only exposure
+filter spans each eligible exterior opening, so open and glazed sections of a slider share the same
+exposure. Glass keeps its dielectric reflections and passes daylight independently of the filter.
+The ocean adds a blue scattering component in the photographed view to retain color at the shallow
+angles where it reflects the bright horizon.
+Interior plaster and timber have shallow normal detail and roughness variation over their
+existing scans. Upholstery and linen retain their imported sheen or get a soft sheen when the source has none.
 Exterior skies keep the oriented HDRI, with camera-only exposure and color calibration per preset.
 Day, golden and dusk renders use depth-based aerial perspective with the coastal shader's distance
 falloff and a tint sampled from the HDRI horizon.
