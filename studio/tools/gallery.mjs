@@ -13,6 +13,12 @@ const height = 900
 const frames = Number(process.env.FRAMES ?? 12)
 if (!Number.isInteger(frames) || frames < 1) throw new Error('FRAMES must be a positive integer')
 
+// Reuse the elevation's camera and finishes, taking only the time from the lighting reference.
+const comparisonShots = [
+  { id: 'woodland-garden-day', camera: 'woodland-modern-golden', lighting: 'woodland-day' },
+  { id: 'aspen-walkout-dusk', camera: 'aspen-custom-golden', lighting: 'aspen-dusk' },
+]
+
 const args = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
 async function withPage(run) {
   const browser = await chromium.launch({ args })
@@ -63,6 +69,16 @@ const catalog = await withPage(async page => {
   await page.waitForFunction(() => !!window.__gallery)
   return page.evaluate(() => window.__gallery)
 })
+for (const { id, camera, lighting } of comparisonShots) {
+  const source = catalog.images.find(image => image.id === camera)
+  const light = catalog.images.find(image => image.id === lighting)
+  if (!source || !light) throw new Error(`Missing comparison source for ${id}`)
+  const time = light.share.split('-')[2]
+  catalog.images.push({
+    ...source, id, light: light.light,
+    share: source.share.replace(/^(#c-\d+-)\d+/, (_, prefix) => prefix + time),
+  })
+}
 const ids = process.argv.slice(2)
 for (const id of ids) if (!catalog.images.some(image => image.id === id)) throw new Error(`Unknown gallery image: ${id}`)
 await mkdir(out, { recursive: true })

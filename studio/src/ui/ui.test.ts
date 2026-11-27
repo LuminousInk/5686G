@@ -7,8 +7,8 @@ import { AssetPriority, AssetQueue, TextureBank } from '../engine/materials/text
 import { modelsForEntry } from '../engine/models'
 import { PLANS, planById } from '../plans'
 import catalog from '../../public/gallery/gallery.json'
-import { GALLERY_SHOTS, galleryView } from './galleryShots'
-import { isStudioRoute } from './routes'
+import { availableComparisons, GALLERY_SHOTS, galleryView, type GalleryImage } from './galleryShots'
+import { homeFromRoute, homeRoute, isStudioRoute } from './routes'
 import { aspenCustom } from '../plans/aspenCustom'
 import { planProblems } from '../plans/validate'
 import { feetInches, planGeometry } from './FloorPlan'
@@ -61,21 +61,62 @@ describe('website entry points', () => {
     expect(isStudioRoute('#home', '?plan=cedar-ridge')).toBe(false)
   })
 
+  it('resolves a plain hash for every home with a walkthrough from its gallery', () => {
+    for (const plan of PLANS) {
+      const hash = homeRoute(plan.id)
+      expect(hash).toMatch(/^#home-[a-z-]+$/)
+      expect(homeFromRoute(hash)).toBe(plan)
+      expect(isStudioRoute(hash, '?plan=cedar-ridge')).toBe(false)
+      const walk = catalog.images.find(image => image.plan === plan.id && image.kind === 'interior')
+      expect(decodeDesign(walk!.share)?.planId).toBe(plan.id)
+      expect(galleryView(plan, decodeDesign(walk!.share)!.viewId!)?.kind).toBe('walk')
+    }
+    for (const hash of ['#home', '#home-unknown', '#/home-cedar-ridge', '#home-cedar-ridge?view=great']) {
+      expect(homeFromRoute(hash)).toBeUndefined()
+    }
+  })
+
   it('matches each published caption and share code to its camera and design', () => {
     expect(catalog.homes).toEqual(PLANS.map(({ id, name, style, facts: { area, beds, baths } }) => ({
       id, name, style, area, beds, baths,
     })))
-    expect(catalog.images.map(image => image.id)).toEqual(GALLERY_SHOTS.map(shot => shot.id))
-    for (const [i, image] of catalog.images.entries()) {
+    const shotIds = GALLERY_SHOTS.map(shot => shot.id)
+    expect(catalog.images.filter(image => shotIds.includes(image.id)).map(image => image.id)).toEqual(shotIds)
+    for (const image of catalog.images) {
       const plan = planById(image.plan)!
-      const shot = GALLERY_SHOTS[i]
-      const view = galleryView(plan, image.id)!
       const decoded = decodeDesign(image.share)!
+      const view = galleryView(plan, decoded.viewId!)!
+      const shot = GALLERY_SHOTS.find(shot => shot.id === image.id)
       expect(isStudioRoute(image.share, '')).toBe(true)
-      expect(decoded).toMatchObject({ planId: plan.id, viewId: view.id, time: shot.time ?? 'golden' })
-      expect(decoded.finishes![plan.id]).toEqual({ ...plan.finishes, ...shot.finishes })
+      expect(decoded.planId).toBe(plan.id)
+      if (shot) {
+        expect(decoded).toMatchObject({ viewId: shot.id, time: shot.time ?? 'golden' })
+        expect(decoded.finishes![plan.id]).toEqual({ ...plan.finishes, ...shot.finishes })
+      } else {
+        expect(catalog.comparisons.some(pair => pair.after === image.id && pair.before === view.id)).toBe(true)
+      }
       expect(view.pos[1]).toEqual(view.target[1])
       expect(image.kind).toBe(view.kind === 'walk' ? 'interior' : 'exterior')
+    }
+  })
+
+  it('shows ready comparisons and skips pairs with a missing image', () => {
+    const published = catalog.images.filter((image): image is GalleryImage => image.kind === 'exterior' || image.kind === 'interior')
+    const pairs = availableComparisons(catalog.comparisons, published, new Set())
+    expect(pairs.length).toBeGreaterThanOrEqual(3)
+    expect(pairs.map(({ after }) => after.id)).toEqual(
+      catalog.comparisons.filter(pair => published.some(image => image.id === pair.after)).map(pair => pair.after),
+    )
+    const [first, ...rest] = pairs
+    expect(availableComparisons(catalog.comparisons, published, new Set([first.after.id]))).toEqual(rest)
+    expect(availableComparisons(catalog.comparisons, [], new Set())).toEqual([])
+    for (const { before, after } of pairs) {
+      const plan = planById(before.plan)!
+      const firstDesign = decodeDesign(before.share)!
+      const secondDesign = decodeDesign(after.share)!
+      const { pos, target, fov } = galleryView(plan, firstDesign.viewId!)!
+      expect(galleryView(plan, secondDesign.viewId!)).toMatchObject({ pos, target, fov })
+      expect([firstDesign.time, firstDesign.finishes]).not.toEqual([secondDesign.time, secondDesign.finishes])
     }
   })
 })

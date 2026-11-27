@@ -15,6 +15,23 @@ export interface GalleryImage {
 export interface GalleryCatalog {
   homes: { id: string; name: string; style: string; area: number; beds: number; baths: number }[]
   images: GalleryImage[]
+  comparisons: GalleryPair[]
+}
+
+export interface GalleryPair {
+  before: string
+  after: string
+  beforeLabel: string
+  afterLabel: string
+}
+
+export function availableComparisons(pairs: GalleryPair[], images: GalleryImage[], missing: ReadonlySet<string>) {
+  const byId = new Map(images.filter(image => !missing.has(image.id)).map(image => [image.id, image]))
+  return pairs.flatMap(pair => {
+    const before = byId.get(pair.before)
+    const after = byId.get(pair.after)
+    return before && after && before.plan === after.plan ? [{ ...pair, before, after }] : []
+  })
 }
 
 interface Shot {
