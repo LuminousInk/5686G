@@ -94,6 +94,8 @@ export class LightmapBinding {
       console.info('lightmap using live lighting', this.status)
     }
     if (!['golden', 'day'].includes(preset.id)) return live('preset uses live lighting')
+    // Designer drafts are never baked offline: skip the lightmap request instead of waiting for a 404.
+    if (house.plan.liveLighting) return live('design draft uses live lighting')
     this.status = { ...context, state: 'pending', reason: 'checking bake' }
     const base = `./assets/lightmaps/${plan}-${preset.id}`
     let meta: LightmapMeta
