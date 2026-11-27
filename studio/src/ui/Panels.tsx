@@ -4,7 +4,8 @@ import { PLANS } from '../plans'
 import { feetInches } from './FloorPlan'
 import { Icon } from './icons'
 import { setState, useStore, toast } from './store'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react'
+import type { FloorLevel } from '../engine/house/types'
 import { Credits } from './Credits'
 
 const sf = (n: number) => n.toLocaleString('en-US')
@@ -67,18 +68,52 @@ function swatchStyle(o: FinishOption): React.CSSProperties {
   }
 }
 
+export const FrameFinishSurface = createContext<((x: number, y: number) => void) | null>(null)
+
+export function DollhouseControls({ cutaway, level, levels, onCutaway, onLevel }: {
+  cutaway: boolean
+  level?: string
+  levels?: readonly FloorLevel[]
+  onCutaway: (cutaway: boolean) => void
+  onLevel: (level: string) => void
+}) {
+  return (
+    <div className="dollhouse-controls" aria-label="Dollhouse options">
+      {levels && levels.length > 1 && (
+        <select className="dollhouse-level glass" aria-label="Dollhouse level" value={level ?? levels[0].id} onChange={e => onLevel(e.target.value)}>
+          {levels.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
+      )}
+      <div className="dollhouse-walls glass" role="group" aria-label="Dollhouse walls">
+        <button type="button" aria-pressed={!cutaway} onClick={() => onCutaway(false)}>Full</button>
+        <button type="button" aria-pressed={cutaway} onClick={() => onCutaway(true)}>Cutaway</button>
+      </div>
+    </div>
+  )
+}
+
 export function ZoneSwatches({ id, onFinish, compact }: { id: string; onFinish: (zone: string, opt: string) => void; compact?: boolean }) {
   const current = useStore(s => s.finishes[s.planId][id])
+  const frame = useContext(FrameFinishSurface)
   return (
-    <div className={compact ? 'hotspot-swatches' : `swatches ${id === 'palette' ? 'swatches-wide' : ''}`}>
-      {ZONES[id].options.map(option => (
-        <button key={option.id} type="button" className={`swatch ${option.id === current ? 'is-on' : ''}`}
-          onClick={() => onFinish(id, option.id)} aria-pressed={option.id === current} aria-label={option.name} title={option.name}>
-          <span className="swatch-dot" style={swatchStyle(option)} />
-          {!compact && <span className="swatch-name">{option.name}</span>}
-        </button>
-      ))}
-    </div>
+    <>
+      <div className={compact ? 'hotspot-swatches' : `swatches ${id === 'palette' ? 'swatches-wide' : ''}`}>
+        {ZONES[id].options.map(option => (
+          <button key={option.id} type="button" className={`swatch ${option.id === current ? 'is-on' : ''}`}
+            onClick={() => onFinish(id, option.id)} aria-pressed={option.id === current} aria-label={option.name} title={option.name}>
+            <span className="swatch-dot" style={swatchStyle(option)} />
+            {!compact && <span className="swatch-name">{option.name}</span>}
+          </button>
+        ))}
+      </div>
+      {compact && frame && (
+        <button type="button" className="hotspot-customize" onClick={e => {
+          const pin = e.currentTarget.closest('.hotspot-layer')?.querySelector('.hotspot-pin[aria-expanded="true"]')
+          const rect = pin?.getBoundingClientRect()
+          if (rect) frame(rect.x + rect.width / 2, rect.y + rect.height / 2)
+        }}>Frame surface <Icon.diagonal /></button>
+      )}
+    </>
   )
 }
 
@@ -208,7 +243,7 @@ export function HelpSheet() {
         <dt>Walk</dt>
         <dd>{touch ? 'Drag to look around, up and down. Tap the floor to walk there. Use the stick to walk, or pinch to step forward.' : 'Drag to look around. Click the floor to walk there. W A S D or the arrow keys walk, Shift runs.'}</dd>
         <dt>Dollhouse</dt>
-        <dd>The roof lifts off. Tap a room to walk into it.</dd>
+        <dd>{touch ? 'Tap a room to walk in. Double-tap to frame it.' : 'Click a room to walk in. Double-click to frame it.'}</dd>
         <dt>Floor plan</dt>
         <dd>Tap a room to stand in it. Sizes are interior dimensions in feet.</dd>
       </dl>

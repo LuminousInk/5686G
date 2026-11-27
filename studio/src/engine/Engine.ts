@@ -292,7 +292,10 @@ export class Engine {
   async refreshLightmap() {
     if (!this.house || !this.plan) return
     await this.lightmap.apply(this.house, this.interior?.group ?? null, this.site, this.sky.preset, this.quality.tier === 'low')
-    if (this.house) this.probes.prepareMaterials(this.house, this.interior?.group ?? null, this.lib)
+    if (this.house) {
+      this.probes.prepareMaterials(this.house, this.interior?.group ?? null, this.lib)
+      this.house.cutaway.syncBindings()
+    }
     this.pipeline.resetMotion()
   }
 
@@ -300,6 +303,7 @@ export class Engine {
     const seq = ++this.timeSeq
     const preset = TIME_PRESETS.find(t => t.id === id) ?? TIME_PRESETS[0]
     this.lightmap.clear('time of day changed')
+    this.house?.cutaway.syncBindings()
     if (!await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35) || seq !== this.timeSeq) return
     this.pipeline.exposure = this.sky.exposure
     this.pipeline.setLook(preset)
@@ -327,6 +331,16 @@ export class Engine {
       if (inRect(b.rect, x, z, 0.1) && p.y >= y && p.y < y + (plan.levels ? roofHeightAt(b, x, z) : 4.5)) return true
     }
     return false
+  }
+
+  setDollhouseSection(floor: number | undefined, cut: boolean, target: THREE.Vector3) {
+    const house = this.house
+    if (!house) return
+    if (house.cutaway.update(floor, cut, this.camera.position, target)) {
+      this.sky.sun.shadow.needsUpdate = true
+      this.invalidate()
+    }
+    if (this.interior) house.cutaway.syncFurniture(this.interior.group, floor)
   }
 
   setDollhouse(on: boolean) {

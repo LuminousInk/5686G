@@ -26,6 +26,7 @@ export async function buildInteriorLevels(
     const [x, z] = framePoint(section.frame, 0, 0)
     child.group.position.set(x, 0, z)
     child.group.rotation.y = section.frame?.yaw ?? 0
+    child.group.userData.cutawayFloor = floor
     interior.group.add(child.group)
     interior.colliders.push(...sectionColliders(child.colliders, section, !!plan.levels))
     interior.lightSpots.push(...child.lightSpots.map(p => child.group.localToWorld(p)))

@@ -1,8 +1,9 @@
+import CameraControls from 'camera-controls'
 import * as THREE from 'three'
 import type { Engine } from '../Engine'
-import { inRect, levelAtHeight, levelFloor, levelId, stairFlight } from '../house/levels'
-import { blockAt } from '../house/massing'
-import type { CameraView } from '../house/types'
+import { framePoint, inRect, levelAtHeight, levelFloor, levelId, stairFlight } from '../house/levels'
+import { blockAt, roofHeightAt, roofThickness } from '../house/massing'
+import type { CameraView, RoomDef } from '../house/types'
 import type { Segment2 } from '../house/walls'
 import type { CameraPose, NavMode } from './pose'
 
@@ -11,6 +12,10 @@ export type { NavMode } from './pose'
 const EYE = 1.62
 const RADIUS = 0.24
 const STEP = 0.5
+const DOUBLE_TAP_MS = 320
+const ORBIT_SMOOTH = 0.24
+const { ACTION } = CameraControls
+CameraControls.install({ THREE })
 
 interface Tween {
   t: number
@@ -38,12 +43,23 @@ export class Navigator {
   mode: NavMode = 'orbit'
   // orbit state
   readonly target = new THREE.Vector3(0, 2, 0)
-  radius = 18
-  private maxRadius = 120
-  azimuth = 0
-  polar = 1.35
-  private vAz = 0
-  private vPol = 0
+  private readonly orbit: CameraControls
+  private orbitPending = false
+  private orbitUpdated = false
+  private orbitRested = false
+  private orbitFov?: number
+  private orbitArrival?: () => void
+  private readonly orbitScratch = new THREE.Vector3()
+  private dollyScale = 1
+  private readonly orbitBounds = new THREE.Box3()
+  private lastWheel = -Infinity
+  private viewLevel?: string
+  private cutWalls = true
+  private cutawaySuspended = false
+  private cutawayAt = -Infinity
+  private sectionHouse?: Engine['house']
+  private lastTap?: { x: number; y: number; room?: RoomDef; timer: ReturnType<typeof setTimeout> }
+  private readonly removeHook?: () => void
   // walk state
   readonly feet = new THREE.Vector3()
   yaw = 0
@@ -69,7 +85,7 @@ export class Navigator {
   onInteract?: () => boolean | void
   /** tap in orbit mode (for selection in the editor) */
   onTap?: (hit: THREE.Intersection | null, ev: PointerEvent) => void
-  enabled = true
+  private inputEnabled = true
   private bounds = { minX: -60, maxX: 60, minZ: -60, maxZ: 60 }
 
   constructor(
@@ -80,11 +96,28 @@ export class Navigator {
     dom.addEventListener('pointermove', this.move)
     dom.addEventListener('pointerup', this.up)
     dom.addEventListener('pointercancel', this.up)
-    dom.addEventListener('wheel', this.wheel, { passive: false })
-    dom.addEventListener('contextmenu', e => e.preventDefault())
+    dom.addEventListener('wheel', this.wheel, { passive: false, capture: true })
+    dom.addEventListener('contextmenu', this.contextmenu)
     window.addEventListener('keydown', this.keydown)
     window.addEventListener('keyup', this.keyup)
-    engine.addHook(dt => this.update(dt))
+    this.orbit = new CameraControls(this.camera, dom.ownerDocument ? dom : undefined)
+    this.orbit.smoothTime = ORBIT_SMOOTH
+    this.orbit.draggingSmoothTime = 0.11
+    this.orbit.restThreshold = 0.001
+    this.orbit.dollyToCursor = true
+    this.orbit.dollySpeed = 0.85
+    this.orbit.azimuthRotateSpeed = 0.76
+    this.orbit.polarRotateSpeed = 0.76
+    this.orbit.mouseButtons.right = ACTION.TRUCK
+    this.orbit.touches.two = ACTION.TOUCH_DOLLY_TRUCK
+    this.orbit.touches.three = ACTION.TOUCH_TRUCK
+    this.orbit.addEventListener('control', this.wakeOrbit)
+    this.orbit.addEventListener('transitionstart', this.wakeOrbit)
+    this.orbit.addEventListener('update', () => { this.orbitUpdated = true })
+    this.orbit.addEventListener('rest', () => { this.orbitRested = true })
+    this.orbit.addEventListener('sleep', () => { this.orbitPending = false })
+    this.setOrbitLimits()
+    this.removeHook = engine.addHook(dt => this.update(dt))
   }
 
   get camera() {
@@ -99,106 +132,159 @@ export class Navigator {
     return levelAtHeight(plan, this.floorHeight(x, z, y - EYE))
   }
 
+  get enabled() { return this.inputEnabled }
+
+  set enabled(value: boolean) {
+    this.inputEnabled = value
+    this.updateInputMode()
+    if (!value) {
+      this.keys.clear()
+      this.moveInput.set(0, 0)
+      this.pointers.clear()
+      this.clearTap()
+    }
+  }
+
+  private updateInputMode() {
+    this.orbit.enabled = this.inputEnabled && this.mode !== 'walk'
+  }
+
+  private setOrbitLimits() {
+    this.orbit.minPolarAngle = 0.10
+    this.orbit.maxPolarAngle = this.mode === 'dollhouse' ? 1.22 : 1.60
+    this.orbit.minDistance = this.mode === 'dollhouse' ? Math.max(2.1, this.dollyScale * 0.075) : Math.max(3.5, this.dollyScale * 0.24)
+    this.orbit.maxDistance = Math.max(35, this.dollyScale * 4.5)
+  }
+
   setBounds(box: THREE.Box3) {
     this.bounds = { minX: box.min.x - 40, maxX: box.max.x + 40, minZ: box.min.z - 40, maxZ: box.max.z + 40 }
+    this.dollyScale = Math.max(box.max.x - box.min.x, box.max.z - box.min.z)
+    this.setOrbitLimits()
+    this.orbitBounds.copy(box).expandByVector(new THREE.Vector3(this.dollyScale * 0.4, 8, this.dollyScale * 0.4))
+    this.setTargetBoundary()
+  }
+
+  private setTargetBoundary() {
+    if (this.orbitBounds.isEmpty()) return
+    const box = this.orbitBounds.clone()
+    const plan = this.engine.plan
+    if (this.mode === 'dollhouse' && plan?.levels) {
+      const floor = levelFloor(plan, this.viewLevel)
+      for (const level of plan.levels) {
+        const y = levelFloor(plan, level.id)
+        if (y > floor) box.max.y = Math.min(box.max.y, (floor + y) / 2 - 0.03)
+        if (y < floor) box.min.y = Math.max(box.min.y, (floor + y) / 2 + 0.03)
+      }
+    }
+    this.orbit.setBoundary(box)
+  }
+
+  get dollhouseLevel() { return this.viewLevel }
+
+  setCutaway(cut: boolean) {
+    this.cutWalls = cut
+    this.updateCutaway()
+  }
+
+  suspendCutaway(suspended: boolean) {
+    if (this.cutawaySuspended === suspended) return
+    this.cutawaySuspended = suspended
+    this.updateCutaway()
+  }
+
+  setDollhouseLevel(level: string) {
+    const plan = this.engine.plan
+    if (this.mode !== 'dollhouse' || !plan?.levels?.some(item => item.id === level) || level === this.viewLevel) return
+    this.interruptTween()
+    this.viewLevel = level
+    this.updateCutaway()
+    this.fitDollhouse(true, false)
+  }
+
+  private updateCutaway() {
+    this.cutawayAt = performance.now()
+    const house = this.engine.house
+    this.sectionHouse = house
+    if (!house?.cutaway) return
+    const floor = this.mode === 'dollhouse' && !this.cutawaySuspended ? levelFloor(house.plan, this.viewLevel) : undefined
+    this.engine.setDollhouseSection(floor, this.cutWalls, this.target)
   }
 
   // ------------------------------------------------------------------ modes and views
 
   setMode(mode: NavMode, animate = true) {
     if (mode === this.mode) return
-    this.interruptTween()
-    this.holdPose = false
     const prev = this.mode
-    this.walkTarget = null
-    this.walkWaypoints = []
-    this.mode = mode
-    const house = this.engine.house
-    if (house) {
-      const hide = mode === 'dollhouse'
-      house.roof.visible = !hide
-      house.ceilings.visible = !hide
-      this.engine.setDollhouse(hide)
-    }
-    if (mode === 'walk' && prev !== 'walk') {
-      // start where the camera is, dropped to the ground
+    if (mode === 'dollhouse') {
+      const plan = this.engine.house?.plan ?? this.engine.plan
+      this.viewLevel = prev === 'walk' ? this.floorLevel : plan ? levelId(plan) : undefined
+      this.fitDollhouse(animate)
+    } else if (mode === 'walk') {
       const p = this.camera.position
-      const fh = this.floorHeight(p.x, p.z, p.y - EYE)
-      this.feet.set(p.x, fh, p.z)
+      const y = this.floorHeight(p.x, p.z, p.y - EYE)
       const dir = this.camera.getWorldDirection(new THREE.Vector3())
-      this.yaw = Math.atan2(-dir.x, -dir.z)
-      this.pitch = THREE.MathUtils.clamp(Math.asin(dir.y), -0.6, 0.6)
-      this.eyeY = EYE
-      if (animate) {
-        const to = this.walkPose()
-        this.animateTo(to.pos, to.quat, this.walkFov(), () => {})
-      }
-    } else if (mode !== 'walk' && prev === 'walk') {
-      this.fitOrbitFromCamera(mode === 'dollhouse')
-    } else if (mode === 'dollhouse') {
-      this.fitOrbitFromCamera(true)
+      dir.y = THREE.MathUtils.clamp(dir.y, -0.56, 0.56)
+      this.goToPose({ mode, pos: [p.x, y + EYE, p.z], target: [p.x + dir.x, y + EYE + dir.y, p.z + dir.z], fov: this.walkFov() }, animate)
+    } else {
+      const view = this.engine.plan?.views.find(v => v.kind === 'orbit')
+      if (view) this.goToView(view, animate, mode)
+      else this.goToPose({ ...this.capturePose(), mode }, animate)
     }
-    this.onModeChange?.(mode)
-    this.engine.invalidate()
   }
 
   private walkFov() {
     return this.camera.aspect < 0.8 ? 72 : 64
   }
 
-  /** Derive orbit parameters that keep the current view (or frame the house for the dollhouse). */
-  private fitOrbitFromCamera(dollhouse: boolean) {
+  private fitDollhouse(animate: boolean, initial = true) {
     const house = this.engine.house
-    const c = house ? house.bounds.getCenter(new THREE.Vector3()) : new THREE.Vector3()
-    if (dollhouse && house) {
-      const size = house.bounds.getSize(new THREE.Vector3())
-      this.target.set(c.x, this.engine.plan?.floorY ?? 0.5, c.z)
-      const fit = this.camera.aspect < 1 ? (house.plan.levels ? Math.max(1.6, 1.18 / this.camera.aspect) : 1.6) : 1.05
-      this.radius = Math.max(size.x, size.z) * fit
-      this.polar = 0.82
-      this.azimuth = house.plan.levels && house.plan.landscape.site ? THREE.MathUtils.degToRad(house.plan.landscape.site.downhill) - 0.38 : 0.35
-    } else {
-      const dir = this.camera.getWorldDirection(new THREE.Vector3())
-      // aim at the house centre along the view direction
-      const toC = new THREE.Vector3().subVectors(c, this.camera.position)
-      const d = Math.max(6, toC.dot(dir))
-      this.target.copy(this.camera.position).addScaledVector(dir, d)
-      this.target.y = Math.max(1.2, this.target.y)
-      this.syncOrbitFromCamera()
+    if (!house) return
+    const floor = levelFloor(house.plan, this.viewLevel)
+    const box = new THREE.Box3()
+    for (const b of house.plan.blocks) {
+      if (levelId(house.plan, b.level) !== this.viewLevel) continue
+      const [x0, z0, x1, z1] = b.rect
+      for (const x of [x0, x1]) for (const z of [z0, z1]) {
+        const [wx, wz] = framePoint(b, x, z)
+        box.expandByPoint(new THREE.Vector3(wx, floor, wz))
+        box.expandByPoint(new THREE.Vector3(wx, floor + 2.7, wz))
+      }
     }
-    const to = this.orbitPose()
-    this.animateTo(to.pos, to.quat, this.engine.plan ? 45 : 45, () => {})
+    if (box.isEmpty()) box.copy(house.bounds)
+    const center = box.getCenter(new THREE.Vector3())
+    const size = box.getSize(new THREE.Vector3())
+    const azimuth = initial ? house.plan.levels && house.plan.landscape.site
+      ? THREE.MathUtils.degToRad(house.plan.landscape.site.downhill) - 0.38 : 0.48 : this.orbit.azimuthAngle
+    const polar = initial ? 0.75 : this.orbit.polarAngle
+    const fov = 45
+    center.y = floor + 0.8
+    const halfWidth = Math.tan(THREE.MathUtils.degToRad(fov) / 2) * this.camera.aspect
+    const radius = Math.max(size.x, size.z) * Math.max(1.04, 0.47 / halfWidth)
+    const pos = new THREE.Vector3().setFromSphericalCoords(radius, polar, azimuth).add(center)
+    this.applyPose({ mode: 'dollhouse', pos: pos.toArray(), target: center.toArray(), fov }, animate)
   }
 
-  private syncOrbitFromCamera() {
-    const off = new THREE.Vector3().subVectors(this.camera.position, this.target)
-    this.radius = off.length()
-    this.maxRadius = Math.max(120, this.radius)
-    this.polar = Math.acos(THREE.MathUtils.clamp(off.y / this.radius, -1, 1))
-    this.azimuth = Math.atan2(off.x, off.z)
-  }
-
-  private viewPose(v: CameraView): CameraPose {
+  private viewPose(v: CameraView, mode: NavMode = v.kind === 'orbit' && this.mode === 'dollhouse' ? 'dollhouse' : v.kind): CameraPose {
     const pos = new THREE.Vector3(...v.pos)
     const target = new THREE.Vector3(...v.target)
     if (v.id === 'tour-hero' && this.camera.aspect < 0.85) {
       pos.sub(target).multiplyScalar(Math.min(2.4, 1.1 / this.camera.aspect)).add(target)
-    } else if (v.kind === 'orbit' && this.mode !== 'dollhouse' && this.engine.plan?.levels && this.camera.aspect < 0.9) {
+    } else if (mode === 'orbit' && this.engine.plan?.levels && this.camera.aspect < 0.9) {
       const fit = Math.min(2.5, 1.18 / this.camera.aspect)
       pos.sub(target).multiplyScalar(fit).add(target)
     } else if (v.kind === 'orbit' && v.id === 'hero' && this.camera.aspect < 0.8) {
       pos.sub(target).multiplyScalar(Math.min(1.55, 0.78 / this.camera.aspect)).add(target)
     }
     const fov = (v.fov ?? (v.kind === 'walk' ? 64 : 50)) + (v.kind === 'walk' && this.camera.aspect < 0.8 ? 6 : 0)
-    return { mode: v.kind === 'orbit' && this.mode === 'dollhouse' ? 'dollhouse' : v.kind, pos: pos.toArray(), target: v.target, fov }
+    return { mode, pos: pos.toArray(), target: v.target, fov }
   }
 
-  goToView(view: CameraView, animate = true) {
-    this.goToPose(this.viewPose(view), animate)
+  goToView(view: CameraView, animate = true, mode?: NavMode) {
+    this.goToPose(this.viewPose(view, mode), animate)
   }
 
   goToTourView(view: CameraView, reducedMotion: boolean, arrived: () => void) {
-    const destination = { ...this.viewPose(view), mode: view.kind }
+    const destination = this.viewPose(view, view.kind)
     const house = this.engine.house
     if (reducedMotion || !house) {
       this.goToPose(destination, false, arrived)
@@ -215,7 +301,7 @@ export class Navigator {
     const solids: THREE.Object3D[] = []
     for (const group of groups) group.traverseVisible(object => {
       const mesh = object as THREE.Mesh
-      if (mesh.isMesh && !mesh.userData.shadowOnly && !Array.isArray(mesh.material) && mesh.material.colorWrite) solids.push(mesh)
+      if (mesh.isMesh && mesh.layers.test(this.camera.layers) && !mesh.userData.shadowOnly && !Array.isArray(mesh.material) && mesh.material.colorWrite) solids.push(mesh)
     })
     const ray = new THREE.Raycaster()
     const isClear = (start: THREE.Vector3) => {
@@ -250,81 +336,118 @@ export class Navigator {
 
   capturePose(): CameraPose {
     const cam = this.camera
-    const distance = this.mode === 'walk' ? 10 : Math.max(0.1, cam.position.distanceTo(this.target))
-    const target = cam.getWorldDirection(new THREE.Vector3()).multiplyScalar(distance).add(cam.position)
+    const target = this.mode === 'walk' ? cam.getWorldDirection(new THREE.Vector3()).multiplyScalar(10).add(cam.position) : this.target
     return { mode: this.mode, pos: cam.position.toArray(), target: target.toArray(), fov: cam.fov }
   }
 
   atView(view: CameraView) {
-    const expected = this.viewPose(view)
+    const expected = this.viewPose(view, view.kind)
     const direction = new THREE.Vector3(...expected.target).sub(new THREE.Vector3(...expected.pos)).normalize()
-    return !this.tween && this.mode === view.kind && Math.abs(this.camera.fov - expected.fov) < 0.01 &&
+    return !this.tween && !this.orbitFov && this.mode === view.kind && Math.abs(this.camera.fov - expected.fov) < 0.01 &&
       this.camera.position.distanceToSquared(new THREE.Vector3(...expected.pos)) < 0.0001 &&
       direction.dot(this.camera.getWorldDirection(new THREE.Vector3())) > 0.999999
   }
 
   goToPose(pose: CameraPose, animate = false, arrived?: () => void, duration?: number) {
-    this.walkTarget = null
-    this.walkWaypoints = []
-    this.vAz = this.vPol = this.vYaw = this.vPitch = 0
-    this.tween = null
-    const { mode, fov } = pose
-    const pos = new THREE.Vector3(...pose.pos)
-    const target = new THREE.Vector3(...pose.target)
-    const m = new THREE.Matrix4().lookAt(pos, target, new THREE.Vector3(0, 1, 0))
-    const quat = new THREE.Quaternion().setFromRotationMatrix(m)
-    const finish = () => {
-      this.syncFromCamera(target)
-      this.holdPose = true
-    }
-    const house = this.engine.house
-    if (house && (mode === 'dollhouse') !== this.engine.dollhouse) {
-      const hide = mode === 'dollhouse'
-      house.roof.visible = !hide
-      house.ceilings.visible = !hide
-      this.engine.setDollhouse(hide)
-    }
-    this.mode = mode
-    this.onModeChange?.(this.mode)
-    if (animate) this.animateTo(pos, quat, fov, finish, arrived, duration)
-    else {
-      this.camera.position.copy(pos)
-      this.camera.quaternion.copy(quat)
-      this.camera.fov = fov
-      this.camera.updateProjectionMatrix()
-      finish()
-      arrived?.()
-    }
-    this.engine.invalidate()
+    if (pose.mode === 'dollhouse' && this.engine.plan) this.viewLevel = levelAtHeight(this.engine.plan, pose.target[1])
+    this.applyPose(pose, animate, arrived, duration)
   }
 
-  /** Stop a running camera move where it is, and carry on from that pose (no jump, no stale state). */
+  private applyPose(pose: CameraPose, animate: boolean, arrived?: () => void, duration?: number) {
+    this.interruptTween()
+    this.clearTap()
+    this.walkTarget = null
+    this.walkWaypoints = []
+    this.vYaw = this.vPitch = 0
+    const { mode, fov } = pose
+    const previousMode = this.mode
+    const previousPose = this.capturePose()
+    this.mode = mode
+    this.updateInputMode()
+    this.setOrbitLimits()
+    this.setTargetBoundary()
+    const house = this.engine.house
+    if (house?.roof) {
+      const hide = mode === 'dollhouse' || (mode === 'orbit' && this.engine.dollhouse && previousMode !== 'dollhouse')
+      house.roof.visible = house.ceilings.visible = !hide
+      if (this.engine.dollhouse !== hide) this.engine.setDollhouse(hide)
+    }
+    this.onModeChange?.(mode)
+    if (mode !== 'walk') {
+      this.orbit.smoothTime = duration ? duration / 4.6 : ORBIT_SMOOTH
+      if (animate && previousMode === 'walk') {
+        // Start above the roof when leaving a walking camera. The approach then stays outdoors.
+        this.orbitScratch.fromArray(previousPose.pos)
+        this.guardOrbitPosition(this.orbitScratch)
+        void this.orbit.setLookAt(...this.orbitScratch.toArray(), ...previousPose.target, false)
+      }
+      this.orbitFov = animate ? fov : undefined
+      this.orbitArrival = animate ? arrived : undefined
+      if (!animate) {
+        this.camera.fov = fov
+        this.camera.updateProjectionMatrix()
+      }
+      void this.orbit.setLookAt(...pose.pos, ...pose.target, animate)
+      this.orbit.normalizeRotations()
+      this.orbitPending = true
+      if (!animate) {
+        this.updateOrbit(0)
+        this.orbitPending = false
+        arrived?.()
+      }
+    } else {
+      const pos = new THREE.Vector3(...pose.pos)
+      const target = new THREE.Vector3(...pose.target)
+      const m = new THREE.Matrix4().lookAt(pos, target, this.camera.up)
+      const quat = new THREE.Quaternion().setFromRotationMatrix(m)
+      const finish = () => {
+        this.syncWalkFromCamera()
+        this.holdPose = true
+      }
+      if (animate) this.animateTo(pos, quat, fov, finish, arrived, duration)
+      else {
+        this.camera.position.copy(pos)
+        this.camera.quaternion.copy(quat)
+        this.camera.fov = fov
+        this.camera.updateProjectionMatrix()
+        finish()
+        arrived?.()
+      }
+    }
+    this.updateCutaway()
+    if (!this.engine.paused) this.engine.start()
+  }
+
+  /** Stop a running camera move at the currently displayed pose. */
   interruptTween() {
-    if (!this.tween) return
-    this.tween = null
-    this.syncFromCamera()
-    this.holdPose = true
+    if (this.tween) {
+      this.tween = null
+      this.syncWalkFromCamera()
+      this.holdPose = true
+    }
+    if (this.mode === 'walk' || !this.orbitPending) return
+    const p = this.camera.position
+    void this.orbit.setLookAt(p.x, p.y, p.z, this.target.x, this.target.y, this.target.z, false)
+    this.orbit.stop()
+    this.orbitFov = undefined
+    this.orbitArrival = undefined
+    this.orbitPending = false
+    this.orbit.smoothTime = ORBIT_SMOOTH
   }
 
   pauseTween(paused: boolean) {
     this.tweenPaused = paused
-    if (!paused && this.tween && !this.engine.paused) this.engine.start()
+    if (!paused && (this.tween || this.orbitPending) && !this.engine.paused) this.engine.start()
   }
 
-  private syncFromCamera(orbitTarget?: THREE.Vector3) {
+  private syncWalkFromCamera() {
     const cam = this.camera
-    if (this.mode === 'walk') {
-      const e = new THREE.Euler().setFromQuaternion(cam.quaternion, 'YXZ')
-      this.yaw = e.y
-      this.pitch = e.x
-      const fh = this.floorHeight(cam.position.x, cam.position.z, cam.position.y - EYE)
-      this.feet.set(cam.position.x, fh, cam.position.z)
-      this.eyeY = cam.position.y - fh
-    } else {
-      if (orbitTarget) this.target.copy(orbitTarget)
-      else this.target.copy(cam.getWorldDirection(new THREE.Vector3()).multiplyScalar(Math.max(2.5, this.radius)).add(cam.position))
-      this.syncOrbitFromCamera()
-    }
+    const e = new THREE.Euler().setFromQuaternion(cam.quaternion, 'YXZ')
+    this.yaw = e.y
+    this.pitch = e.x
+    const fh = this.floorHeight(cam.position.x, cam.position.z, cam.position.y - EYE)
+    this.feet.set(cam.position.x, fh, cam.position.z)
+    this.eyeY = cam.position.y - fh
   }
 
   private animateTo(pos: THREE.Vector3, quat: THREE.Quaternion, fov: number, done: () => void, arrived?: () => void, duration?: number) {
@@ -341,7 +464,7 @@ export class Navigator {
       done,
       arrived,
     }
-    this.engine.invalidate()
+    if (!this.engine.paused) this.engine.start()
   }
 
   // ------------------------------------------------------------------ helpers
@@ -358,18 +481,33 @@ export class Navigator {
     return { pos, quat }
   }
 
-  private orbitPose() {
-    const sp = Math.sin(this.polar)
-    const pos = new THREE.Vector3(
-      this.target.x + this.radius * sp * Math.sin(this.azimuth),
-      this.target.y + this.radius * Math.cos(this.polar),
-      this.target.z + this.radius * sp * Math.cos(this.azimuth),
-    )
-    // keep the camera above ground
-    const g = (this.engine.site?.heightAt(pos.x, pos.z) ?? 0) + 0.35
-    if (pos.y < g) pos.y = g
-    const m = new THREE.Matrix4().lookAt(pos, this.target, new THREE.Vector3(0, 1, 0))
-    return { pos, quat: new THREE.Quaternion().setFromRotationMatrix(m) }
+  /** Keep the near plane clear of grade and the outside of each (possibly rotated) volume. */
+  private guardOrbitPosition(p: THREE.Vector3) {
+    const terrain = this.engine.site?.heightAt(p.x, p.z) ?? 0
+    let safeY = terrain + 0.35
+    const plan = this.engine.plan
+    if (plan) {
+      const visibleFloor = this.mode === 'dollhouse' ? levelFloor(plan, this.viewLevel) : Infinity
+      for (const b of plan.blocks ?? []) {
+        const floor = levelFloor(plan, b.level)
+        if (floor > visibleFloor) continue
+        let x = p.x, z = p.z
+        if (b.yaw) [x, z] = framePoint(b, x, z, true)
+        const [x0, z0, x1, z1] = b.rect
+        const edge = Math.max(x0 - x, x - x1, z0 - z, z - z1)
+        if (edge >= 0.65) continue
+        const roof = floor + roofHeightAt(b, x, z) + roofThickness(b.roof) + 0.35
+        // Blend the approach outside the facade so a sideways truck clears the roof
+        // before the camera crosses the wall, even at low elevations.
+        const weight = 1 - THREE.MathUtils.smoothstep(edge, 0.28, 0.65)
+        safeY = Math.max(safeY, THREE.MathUtils.lerp(terrain + 0.35, roof, weight))
+      }
+    }
+    if (p.y < safeY) {
+      p.y = safeY
+      return true
+    }
+    return false
   }
 
   private get colliders(): Segment2[] {
@@ -427,8 +565,12 @@ export class Navigator {
   // ------------------------------------------------------------------ frame update
 
   update(dt: number) {
+    if (this.sectionHouse !== this.engine.house) {
+      if (this.engine.house?.bounds) this.setBounds(this.engine.house.bounds)
+      this.updateCutaway()
+    }
+    if (this.tweenPaused) return
     if (this.tween) {
-      if (this.tweenPaused) return
       const tw = this.tween
       tw.t += dt / tw.dur
       const k = ease(Math.min(1, tw.t))
@@ -443,34 +585,50 @@ export class Navigator {
       }
       return
     }
+    if (this.mode !== 'walk') {
+      this.updateOrbit(dt)
+      return
+    }
     if (this.holdPose && !this.active) return
     this.holdPose = false
-    if (this.mode === 'walk') this.updateWalk(dt)
-    else this.updateOrbit(dt)
+    this.updateWalk(dt)
+  }
+
+  private wakeOrbit = () => {
+    this.orbitPending = true
+    if (!this.engine.paused) this.engine.start()
   }
 
   private updateOrbit(dt: number) {
-    // inertia
-    if (!this.pointers.size) {
-      this.azimuth += this.vAz * dt
-      this.polar += this.vPol * dt
-      const damp = Math.exp(-dt * 6)
-      this.vAz *= damp
-      this.vPol *= damp
-      if (Math.abs(this.vAz) < 1e-3) this.vAz = 0
-      if (Math.abs(this.vPol) < 1e-3) this.vPol = 0
-    }
-    // keys orbit too
     const kx = (this.keys.has('ArrowLeft') || this.keys.has('a') ? 1 : 0) - (this.keys.has('ArrowRight') || this.keys.has('d') ? 1 : 0)
     const ky = (this.keys.has('ArrowUp') || this.keys.has('w') ? 1 : 0) - (this.keys.has('ArrowDown') || this.keys.has('s') ? 1 : 0)
-    this.azimuth += kx * dt * 0.9
-    this.radius *= 1 - ky * dt * 0.8
-    const dh = this.mode === 'dollhouse'
-    this.polar = THREE.MathUtils.clamp(this.polar, dh ? 0.15 : 0.12, dh ? 1.35 : 1.62)
-    this.radius = THREE.MathUtils.clamp(this.radius, 2.5, this.maxRadius)
-    const { pos, quat } = this.orbitPose()
-    this.camera.position.copy(pos)
-    this.camera.quaternion.copy(quat)
+    if (kx) void this.orbit.rotate(kx * dt * 0.9, 0, true)
+    if (ky) void this.orbit.dollyTo(this.orbit.distance * (1 - ky * dt * 0.8), true)
+    if (kx || ky) this.orbitPending = true
+
+    this.orbitUpdated = this.orbitRested = false
+    if (this.orbitPending || this.orbitFov !== undefined) {
+      const updated = this.orbit.update(dt)
+      if (!updated) this.orbitPending = false
+      this.orbit.getTarget(this.target, false)
+      if (this.guardOrbitPosition(this.camera.position)) this.camera.lookAt(this.target)
+    }
+    if (this.orbitFov !== undefined) {
+      const delta = this.orbitFov - this.camera.fov
+      if (Math.abs(delta) < 0.015) {
+        this.camera.fov = this.orbitFov
+        this.orbitFov = undefined
+      } else this.camera.fov += delta * (1 - Math.exp(-dt * 10))
+      this.camera.updateProjectionMatrix()
+    }
+    if (this.mode === 'dollhouse' && (this.orbitRested || (this.orbitUpdated && performance.now() - this.cutawayAt >= 95)))
+      this.updateCutaway()
+    if (!this.orbitPending && this.orbitFov === undefined && this.orbitArrival) {
+      const arrived = this.orbitArrival
+      this.orbitArrival = undefined
+      this.orbit.smoothTime = ORBIT_SMOOTH
+      arrived()
+    }
   }
 
   private updateWalk(dt: number) {
@@ -535,24 +693,35 @@ export class Navigator {
 
   // ------------------------------------------------------------------ input
 
+  private contextmenu = (e: Event) => e.preventDefault()
+
   private down = (e: PointerEvent) => {
     if (!this.enabled) return
     this.dom.setPointerCapture(e.pointerId)
     this.interruptTween()
-    const suppressTap = this.onInteract?.() === true
+    const suppressTap = this.onInteract?.() === true || e.button > 0 || e.shiftKey || this.pointers.size > 0
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), suppressTap })
-    this.vAz = this.vPol = this.vYaw = this.vPitch = 0
-    if (this.pointers.size === 2) {
+    this.vYaw = this.vPitch = 0
+    this.orbit.mouseButtons.left = e.shiftKey ? ACTION.TRUCK : ACTION.ROTATE
+    if (this.pointers.size > 1) {
+      this.clearTap()
+      for (const p of this.pointers.values()) p.suppressTap = true
+    }
+    if (this.mode === 'walk' && this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()]
       this.pinchDist = Math.hypot(a.x - b.x, a.y - b.y)
       this.pinchMid.set((a.x + b.x) / 2, (a.y + b.y) / 2)
     }
-    this.engine.invalidate()
   }
 
   private move = (e: PointerEvent) => {
     const p = this.pointers.get(e.pointerId)
     if (!p) return
+    if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) >= 8) {
+      p.suppressTap = true
+      this.clearTap()
+    }
+    if (this.mode !== 'walk') return
     const dx = e.clientX - p.x
     const dy = e.clientY - p.y
     if (!dx && !dy) return
@@ -561,143 +730,166 @@ export class Navigator {
     p.y = e.clientY
     const h = this.dom.clientHeight || 800
     if (this.pointers.size === 1) {
-      const pan = e.buttons === 2 || e.shiftKey
-      if (this.mode === 'walk') {
-        // grab the world: drag right turns left
-        const k = (this.camera.fov * Math.PI) / 180 / h
-        this.yaw += dx * k * 1.15
-        this.pitch += dy * k * 1.15
-        this.vYaw = (dx * k * 1.15) / Math.max(0.008, 1 / 60)
-        this.vPitch = (dy * k * 1.15) / Math.max(0.008, 1 / 60)
-        this.vYaw *= 0.35
-        this.vPitch *= 0.35
-      } else if (pan) {
-        this.panOrbit(dx, dy)
-      } else {
-        const k = 4.2 / h
-        this.azimuth -= dx * k
-        this.polar -= dy * k
-        this.vAz = -dx * k * 22
-        this.vPol = -dy * k * 22
-      }
+      // Grab the world: drag right turns left.
+      const k = THREE.MathUtils.degToRad(this.camera.fov) / h * 1.15
+      this.yaw += dx * k
+      this.pitch += dy * k
+      this.vYaw = dx * k * 21
+      this.vPitch = dy * k * 21
     } else if (this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()]
       const dist = Math.hypot(a.x - b.x, a.y - b.y)
-      const mid = new THREE.Vector2((a.x + b.x) / 2, (a.y + b.y) / 2)
+      const x = (a.x + b.x) / 2, y = (a.y + b.y) / 2
       const ratio = this.pinchDist > 0 ? dist / this.pinchDist : 1
-      const mdx = mid.x - this.pinchMid.x
-      const mdy = mid.y - this.pinchMid.y
-      if (this.mode === 'walk') {
-        // pinch apart = walk forward; two-finger drag = move (strafe / forward)
-        const fwd = (ratio - 1) * 3.2 + (mdy / h) * 4
-        const side = -(mdx / h) * 4
-        const sin = Math.sin(this.yaw)
-        const cos = Math.cos(this.yaw)
-        this.walk(-sin * fwd + cos * side, -cos * fwd - sin * side)
-      } else {
-        this.radius /= Math.max(0.5, Math.min(2, ratio))
-        this.panOrbit(mdx, mdy)
-      }
+      const fwd = (ratio - 1) * 3.2 + (y - this.pinchMid.y) / h * 4
+      const side = -(x - this.pinchMid.x) / h * 4
+      const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw)
+      this.walk(-sin * fwd + cos * side, -cos * fwd - sin * side)
       this.pinchDist = dist
-      this.pinchMid.copy(mid)
+      this.pinchMid.set(x, y)
     }
-    this.engine.invalidate()
+    this.engine.start()
   }
 
   private up = (e: PointerEvent) => {
     const p = this.pointers.get(e.pointerId)
     this.pointers.delete(e.pointerId)
     if (this.pointers.size < 2) this.pinchDist = 0
-    if (!p) return
-    const moved = Math.hypot(e.clientX - p.sx, e.clientY - p.sy)
-    const quick = performance.now() - p.t < 320
-    if (!p.suppressTap && e.type !== 'pointercancel' && moved < 8 && quick && this.pointers.size === 0) this.tap(e)
-    this.engine.invalidate()
+    if (!p || p.suppressTap || e.type === 'pointercancel' || this.pointers.size > 0) return
+    if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) < 8 && performance.now() - p.t < DOUBLE_TAP_MS) this.tap(e)
   }
 
   private wheel = (e: WheelEvent) => {
     if (!this.enabled) return
-    e.preventDefault()
-    this.interruptTween()
-    this.holdPose = false
-    const d = Math.sign(e.deltaY) * Math.min(1, Math.abs(e.deltaY) / 100)
-    if (this.mode === 'walk') {
-      const sin = Math.sin(this.yaw)
-      const cos = Math.cos(this.yaw)
-      this.walk(sin * d * 0.6, cos * d * 0.6)
-    } else {
-      this.radius *= 1 + d * 0.12
-    }
+    const now = performance.now()
+    if (now - this.lastWheel > 140) this.interruptTween()
+    this.lastWheel = now
+    this.clearTap()
     this.onInteract?.()
-    this.engine.invalidate()
+    if (this.mode === 'walk') {
+      e.preventDefault()
+      this.holdPose = false
+      const d = Math.sign(e.deltaY) * Math.min(1, Math.abs(e.deltaY) / 100)
+      this.walk(Math.sin(this.yaw) * d * 0.6, Math.cos(this.yaw) * d * 0.6)
+      this.engine.start()
+    } else if (e.ctrlKey) {
+      // Browsers deliver trackpad pinch as a control-wheel. Keep it a perspective dolly.
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      const rect = this.dom.getBoundingClientRect()
+      const from = this.orbit.distance
+      const distance = THREE.MathUtils.clamp(from * Math.exp(e.deltaY * 0.012), this.orbit.minDistance, this.orbit.maxDistance)
+      const height = 2 * (from - distance) * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)
+      const x = (e.clientX - rect.left) / rect.width - 0.5
+      const y = (e.clientY - rect.top) / rect.height - 0.5
+      void this.orbit.truck(x * height * this.camera.aspect, y * height, true)
+      void this.orbit.dollyTo(distance, true)
+      this.wakeOrbit()
+    }
   }
 
-  private panOrbit(dx: number, dy: number) {
-    const h = this.dom.clientHeight || 800
-    const k = (this.radius * 1.1) / h
-    const right = new THREE.Vector3(Math.cos(this.azimuth), 0, -Math.sin(this.azimuth))
-    const fwd = new THREE.Vector3(Math.sin(this.azimuth), 0, Math.cos(this.azimuth))
-    this.target.addScaledVector(right, -dx * k)
-    if (this.polar < 0.9) this.target.addScaledVector(fwd, -dy * k)
-    else this.target.y += dy * k
-    this.target.y = THREE.MathUtils.clamp(this.target.y, 0.3, 12)
-    this.target.x = THREE.MathUtils.clamp(this.target.x, this.bounds.minX, this.bounds.maxX)
-    this.target.z = THREE.MathUtils.clamp(this.target.z, this.bounds.minZ, this.bounds.maxZ)
-  }
-
-  private pick(e: PointerEvent): THREE.Intersection | null {
+  private pick(x: number, y: number): THREE.Intersection | null {
     const r = this.dom.getBoundingClientRect()
-    const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1)
+    const ndc = new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1)
+    this.camera.updateMatrixWorld()
+    this.raycaster.layers.mask = this.camera.layers.mask
     this.raycaster.setFromCamera(ndc, this.camera)
     const roots: THREE.Object3D[] = []
     const h = this.engine.house
-    if (h) roots.push(h.shell, h.interior, h.outdoor, ...(h.roof.visible ? [h.roof] : []), ...(h.ceilings.visible ? [h.ceilings] : []))
+    if (h) {
+      roots.push(h.shell, h.interior, h.outdoor)
+      if (h.cutaway?.group.visible) roots.push(h.cutaway.group)
+      if (h.roof.visible) roots.push(h.roof)
+      if (h.ceilings.visible) roots.push(h.ceilings)
+    }
     if (this.engine.interior) roots.push(this.engine.interior.group)
     const site = this.engine.site
     if (site) roots.push(...site.group.children.filter(c => c.name === 'terrain' || (c as THREE.Mesh).isMesh))
-    const hits = this.raycaster.intersectObjects(roots, true).filter(x => {
-      const m = x.object as THREE.Mesh
-      return m.visible && (m.material as THREE.Material)?.name !== 'glass'
-    })
-    return hits[0] ?? null
+    const hits = this.raycaster.intersectObjects(roots, true)
+    return hits.find(({ object }) => object.visible && !object.userData.shadowOnly &&
+      ((object as THREE.Mesh).material as THREE.Material)?.name !== 'glass') ?? null
+  }
+
+  private clearTap() {
+    clearTimeout(this.lastTap?.timer)
+    this.lastTap = undefined
+  }
+
+  private roomAt(x: number, z: number) {
+    const plan = this.engine.plan
+    if (!plan) return
+    return plan.rooms.find(room => levelId(plan, room.level) === this.viewLevel &&
+      inRect(room.rect, ...framePoint(plan.blocks.find(b => b.id === room.frame), x, z)))
+  }
+
+  private fitBox(box: THREE.Box3) {
+    this.interruptTween()
+    // Preserve the current azimuth and an oblique view while letting fitToBox
+    // calculate the distance for this viewport, including portrait framing.
+    const { minPolarAngle, maxPolarAngle, minAzimuthAngle, maxAzimuthAngle } = this.orbit
+    const polar = THREE.MathUtils.clamp(this.orbit.polarAngle, 0.58, 0.89)
+    const azimuth = this.orbit.azimuthAngle
+    this.orbit.minPolarAngle = this.orbit.maxPolarAngle = polar
+    this.orbit.minAzimuthAngle = this.orbit.maxAzimuthAngle = azimuth
+    const padding = this.camera.aspect < 0.8 ? 0.38 : 0.62
+    void this.orbit.fitToBox(box, true, { paddingLeft: padding, paddingRight: padding, paddingTop: padding, paddingBottom: padding })
+    Object.assign(this.orbit, { minPolarAngle, maxPolarAngle, minAzimuthAngle, maxAzimuthAngle })
+    this.wakeOrbit()
+  }
+
+  private frameRoom(room: RoomDef) {
+    const plan = this.engine.plan!
+    const floor = levelFloor(plan, room.level)
+    const frame = plan.blocks.find(b => b.id === room.frame)
+    const box = new THREE.Box3()
+    for (const x of [room.rect[0], room.rect[2]]) for (const z of [room.rect[1], room.rect[3]]) {
+      const [wx, wz] = framePoint(frame, x, z)
+      box.expandByPoint(new THREE.Vector3(wx, floor, wz))
+      box.expandByPoint(new THREE.Vector3(wx, floor + 1.65, wz))
+    }
+    this.fitBox(box)
+  }
+
+  frameSurface(x: number, y: number) {
+    if (this.mode === 'walk') return
+    const hit = this.pick(x, y)
+    if (!hit) return
+    const box = new THREE.Box3().setFromCenterAndSize(hit.point, new THREE.Vector3(3.4, 2, 3.4))
+    this.fitBox(box)
   }
 
   private tap(e: PointerEvent) {
-    const hit = this.pick(e)
+    const hit = this.pick(e.clientX, e.clientY)
     if (this.mode === 'walk') {
       if (!hit) return
       const n = hit.face?.normal.clone().transformDirection(hit.object.matrixWorld) ?? new THREE.Vector3(0, 1, 0)
       const to = hit.point.clone()
       if (n.y < 0.6) {
-        // a wall: stop half a metre in front of it
         const back = new THREE.Vector3(this.feet.x - to.x, 0, this.feet.z - to.z).normalize().multiplyScalar(0.55)
         to.add(back)
       }
       this.walkWaypoints = this.stairRoute(to)
       this.walkTarget = this.walkWaypoints.shift() ?? to
       this.onWalkTo?.(hit.point.clone())
+      this.engine.start()
     } else if (this.mode === 'dollhouse') {
       if (!hit) return
-      // tap a floor -> walk in there, looking across the room
       const p = hit.point
-      this.feet.set(p.x, this.floorHeight(p.x, p.z, p.y), p.z)
-      const c = this.engine.house?.bounds.getCenter(new THREE.Vector3()) ?? new THREE.Vector3()
-      this.yaw = Math.atan2(-(c.x - p.x) || 0.001, -(c.z - p.z) || 0.001) + Math.PI
-      this.pitch = -0.05
-      this.eyeY = EYE
-      const h = this.engine.house
-      if (h) {
-        h.roof.visible = true
-        h.ceilings.visible = true
-        this.engine.setDollhouse(false)
+      const room = this.roomAt(p.x, p.z)
+      if (room && this.lastTap?.room === room && Math.hypot(e.clientX - this.lastTap.x, e.clientY - this.lastTap.y) < 34) {
+        this.clearTap()
+        this.frameRoom(room)
+        return
       }
-      this.mode = 'walk'
-      const pose = this.walkPose()
-      this.animateTo(pose.pos, pose.quat, this.walkFov(), () => {})
-      this.onModeChange?.('walk')
-    } else {
-      this.onTap?.(hit, e)
-    }
+      this.clearTap()
+      this.lastTap = { x: e.clientX, y: e.clientY, room, timer: setTimeout(() => {
+        this.lastTap = undefined
+        const plan = this.engine.plan
+        const y = this.floorHeight(p.x, p.z, plan ? levelFloor(plan, this.viewLevel) : p.y)
+        const center = this.engine.house?.bounds.getCenter(new THREE.Vector3()) ?? new THREE.Vector3()
+        this.goToPose({ mode: 'walk', pos: [p.x, y + EYE, p.z], target: [center.x, y + EYE - 0.24, center.z], fov: this.walkFov() }, true)
+      }, DOUBLE_TAP_MS) }
+    } else this.onTap?.(hit, e)
   }
 
   /** Route a tap across visible stair landings, while ordinary floor taps still walk in a straight line. */
@@ -733,9 +925,10 @@ export class Navigator {
     if (['w', 'a', 's', 'd', 'q', 'e', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) {
       this.keys.add(k)
       if (e.shiftKey) this.keys.add('Shift')
-      this.interruptTween()
+      if (!e.repeat) this.interruptTween()
+      this.clearTap()
       this.onInteract?.()
-      this.engine.invalidate()
+      this.engine.start()
     }
   }
 
@@ -747,7 +940,10 @@ export class Navigator {
 
   /** Keep the loop running while a key is held or the joystick is used. */
   get active() {
-    return this.keys.size > 0 || this.moveInput.lengthSq() > 0 || !!this.walkTarget || (!!this.tween && !this.tweenPaused) || Math.abs(this.vAz) + Math.abs(this.vPol) + Math.abs(this.vYaw) + Math.abs(this.vPitch) > 0.002
+    if (this.tweenPaused) return false
+    if (this.mode !== 'walk') return this.keys.size > 0 || this.orbitPending || this.orbitFov !== undefined
+    return this.keys.size > 0 || this.moveInput.lengthSq() > 0 || !!this.walkTarget || !!this.tween ||
+      Math.abs(this.vYaw) + Math.abs(this.vPitch) > 0.002
   }
 
   dispose() {
@@ -755,7 +951,11 @@ export class Navigator {
     this.dom.removeEventListener('pointermove', this.move)
     this.dom.removeEventListener('pointerup', this.up)
     this.dom.removeEventListener('pointercancel', this.up)
-    this.dom.removeEventListener('wheel', this.wheel)
+    this.dom.removeEventListener('wheel', this.wheel, true)
+    this.dom.removeEventListener('contextmenu', this.contextmenu)
+    this.clearTap()
+    this.orbit.dispose()
+    this.removeHook?.()
     window.removeEventListener('keydown', this.keydown)
     window.removeEventListener('keyup', this.keyup)
   }

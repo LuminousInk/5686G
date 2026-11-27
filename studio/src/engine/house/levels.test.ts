@@ -56,7 +56,8 @@ describe('Aspen floors', () => {
     const house = buildHouse(aspenCustom, lib)
     const eventTarget = new EventTarget()
     vi.stubGlobal('window', eventTarget)
-    const engine = { plan: aspenCustom, house, addHook() {}, site: { heightAt: () => 0 } } as unknown as Engine
+    vi.stubGlobal('DOMRect', class {})
+    const engine = { plan: aspenCustom, house, camera: new THREE.PerspectiveCamera(), addHook() {}, site: { heightAt: () => 0 } } as unknown as Engine
     const nav = new Navigator(engine, eventTarget as unknown as HTMLElement)
     const upper = levelFloor(aspenCustom, 'main')
     const lower = levelFloor(aspenCustom, 'lower')
