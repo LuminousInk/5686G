@@ -6,6 +6,13 @@
   "license": "CC BY 4.0",
   "source": "https://sketchfab.com/3d-models/barstool-round-b221ad482e084c449408c229cab380d6"
  },
+ "bath_angelo": {
+  "uid": "dcd691724f6b4d29a6d16def24d14e6e",
+  "title": "Angelo Freestanding Bath",
+  "author": "tissinouk",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/dcd691724f6b4d29a6d16def24d14e6e"
+ },
  "bed_dark_headboard": {
   "uid": "8926f6be27704713980076253a78e057",
   "title": "Bed",
@@ -13,12 +20,19 @@
   "license": "CC BY 4.0",
   "source": "https://sketchfab.com/3d-models/bed-8926f6be27704713980076253a78e057"
  },
- "bed_upholstered_white": {
-  "uid": "2bd3fcc82c9f43cfb0c8cf26c7d0107c",
-  "title": "Bed For Vr",
-  "author": "olamii",
+ "bed_oak_linen": {
+  "uid": "39d113d5868d473caf71e928d1d313a6",
+  "title": "Queen-bed",
+  "author": "lugher3d.com",
   "license": "CC BY 4.0",
-  "source": "https://sketchfab.com/3d-models/bed-for-vr-2bd3fcc82c9f43cfb0c8cf26c7d0107c"
+  "source": "https://sketchfab.com/3d-models/39d113d5868d473caf71e928d1d313a6"
+ },
+ "bench_upholstered": {
+  "uid": "14e958fe6d104a02864433899d3079b2",
+  "title": "Michael Amini MALIBU CREST Bench",
+  "author": "Charles Neal",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/michael-amini-malibu-crest-bench-14e958fe6d104a02864433899d3079b2"
  },
  "desk_lamp_black": {
   "uid": "4b9a5c4d5e20434793388325ec18ba57",
@@ -27,6 +41,13 @@
   "license": "CC BY 4.0",
   "source": "https://sketchfab.com/3d-models/luminaria-4b9a5c4d5e20434793388325ec18ba57"
  },
+ "desk_wood": {
+  "uid": "9262f311271c4c4390341e526d3fe103",
+  "title": "Office Desk 140x60",
+  "author": "AleixoAlonso",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/9262f311271c4c4390341e526d3fe103"
+ },
  "dining_chair_bentwood": {
   "uid": "d2785b57e7da45858f2fe8bf4dedd68d",
   "title": "Chair",
@@ -34,19 +55,33 @@
   "license": "CC BY 4.0",
   "source": "https://sketchfab.com/3d-models/chair-d2785b57e7da45858f2fe8bf4dedd68d"
  },
- "dining_table_oak": {
-  "uid": "d7afff23c741411c82a5994ae9940669",
-  "title": "Kitchen Table",
-  "author": "CioJay",
+ "dining_linear_pendant": {
+  "uid": "4b3ae3b8744d429a8a4aa1b5b5cb4f7c",
+  "title": "Pendente Mantra 30500",
+  "author": "Homak",
   "license": "CC BY 4.0",
-  "source": "https://sketchfab.com/3d-models/kitchen-table-d7afff23c741411c82a5994ae9940669"
+  "source": "https://sketchfab.com/3d-models/pendente-mantra-30500-4b3ae3b8744d429a8a4aa1b5b5cb4f7c"
+ },
+ "dining_table_trestle": {
+  "uid": "8daedeb29bb444f8aaf2640131eed0a9",
+  "title": "Free 3D model 004 - Dining table",
+  "author": "3D Furniture Gallery",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/8daedeb29bb444f8aaf2640131eed0a9"
  },
  "dresser_tall": {
   "uid": "abbc90bbd5474f73b16482ccd10e07ec",
-  "title": "Leaves 40x60\u30c7\u30b9\u30af\u30b5\u30a4\u30c9\u30c9\u30ed\u30ef\u30fc BC",
+  "title": "Leaves 40x60デスクサイドドロワー BC",
   "author": "classe-saga",
   "license": "CC BY 4.0",
   "source": "https://sketchfab.com/3d-models/leaves-40x60-bc-abbc90bbd5474f73b16482ccd10e07ec"
+ },
+ "floor_lamp_tripod": {
+  "uid": "1aa6739d774348efa691340e3a12b870",
+  "title": "Drum shade floor lamp",
+  "author": "alpaca.",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/1aa6739d774348efa691340e3a12b870"
  },
  "fridge_steel": {
   "uid": "53ad8efeb5e9427a901fc669b440e3cf",
@@ -61,6 +96,34 @@
   "author": "trendforward",
   "license": "CC BY 4.0",
   "source": "https://sketchfab.com/3d-models/grohe-g-32467002-8d28b4123c6641b19c6557cf8f2f80c6"
+ },
+ "media_console_oak": {
+  "uid": "0de6f66f2656437ead91318eabadc503",
+  "title": "Cabinet tv",
+  "author": "Thomas Binder",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/0de6f66f2656437ead91318eabadc503"
+ },
+ "nightstand_oak": {
+  "uid": "5c2dc41590754d27b99371ee89a45757",
+  "title": "Alex mini",
+  "author": "WOODPORT",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/5c2dc41590754d27b99371ee89a45757"
+ },
+ "oven_built_in": {
+  "uid": "1e524fe8e0e546d69baff4d6e20e7533",
+  "title": "Single Oven Bosch - HBLP451RUC",
+  "author": "Andre Ramos",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/single-oven-bosch-hblp451ruc-1e524fe8e0e546d69baff4d6e20e7533"
+ },
+ "pendant_dome": {
+  "uid": "9f0d6acab78e4a84904e4f8ba573118e",
+  "title": "Diner Lamp",
+  "author": "mazormedia",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/diner-lamp-9f0d6acab78e4a84904e4f8ba573118e"
  },
  "sectional_grey": {
   "uid": "0eb6c94aa40c41b480cf35de229e8e88",
@@ -90,6 +153,34 @@
   "license": "CC BY 4.0",
   "source": "https://sketchfab.com/3d-models/feathers-5-seat-fbadc209177641978444636641a6d515"
  },
+ "sofa_linen": {
+  "uid": "ac92f6e97eaa43c4ad6cb8f7c65ac43f",
+  "title": "Modern Sofa",
+  "author": "3dimentionalben",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/ac92f6e97eaa43c4ad6cb8f7c65ac43f"
+ },
+ "stool_counter_back": {
+  "uid": "72772460843d443bbe16f9ede0572c6b",
+  "title": "Counter Stool 01",
+  "author": "Dominik Lebiedowicz",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/counter-stool-01-72772460843d443bbe16f9ede0572c6b"
+ },
+ "table_lamp_ceramic": {
+  "uid": "3572234e084a455ba329944e5fb309ba",
+  "title": "Modern Lamp",
+  "author": "nickvarts",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/modern-lamp-3572234e084a455ba329944e5fb309ba"
+ },
+ "table_lamp_white": {
+  "uid": "a9f27de045ff4869a48005dece8444a6",
+  "title": "Настольная лампа Favourite",
+  "author": "fedomo",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/favourite-a9f27de045ff4869a48005dece8444a6"
+ },
  "toilet_modern": {
   "uid": "455028add66d48e7ae391beda0a6dae6",
   "title": "HD177A",
@@ -97,18 +188,25 @@
   "license": "CC BY 4.0",
   "source": "https://sketchfab.com/3d-models/hd177a-455028add66d48e7ae391beda0a6dae6"
  },
- "towel_bar": {
-  "uid": "42afb2b0a7ea4ff086acd6da28787bb5",
-  "title": "MC-05-0085",
-  "author": "ubaid.kfat",
+ "treadmill_gym": {
+  "uid": "03e4ff99ecc24e5f8ea49d4e8df876e8",
+  "title": "treadmill ProForm",
+  "author": "e-restrepo1114",
   "license": "CC BY 4.0",
-  "source": "https://sketchfab.com/3d-models/mc-05-0085-42afb2b0a7ea4ff086acd6da28787bb5"
+  "source": "https://sketchfab.com/3d-models/treadmill-proform-03e4ff99ecc24e5f8ea49d4e8df876e8"
  },
- "vanity_floating": {
-  "uid": "6441fe1ec6744bacaafd3b21c424fc91",
-  "title": "Aquaterm170 EL13 4 Zn Z 120 V1",
-  "author": "crosslag",
+ "vessel_sink_white": {
+  "uid": "b2a41b1275e04f4594103888d63c366e",
+  "title": "LA REINA - MEXICAN VESSEL SINK",
+  "author": "Cerames",
   "license": "CC BY 4.0",
-  "source": "https://sketchfab.com/3d-models/aquaterm170-el13-4-zn-z-120-v1-6441fe1ec6744bacaafd3b21c424fc91"
+  "source": "https://sketchfab.com/3d-models/b2a41b1275e04f4594103888d63c366e"
+ },
+ "washer_front_load": {
+  "uid": "0e0f28026fec40da8c0f1dfd7a8dd45f",
+  "title": "Washing Machine Whirpool",
+  "author": "Francesco Coldesina",
+  "license": "CC BY 4.0",
+  "source": "https://sketchfab.com/3d-models/washing-machine-whirpool-0e0f28026fec40da8c0f1dfd7a8dd45f"
  }
 }

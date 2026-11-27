@@ -1,7 +1,9 @@
 import * as THREE from 'three'
 import { V3 } from './geo'
-import { plumbingArc } from './interior/catalogFixtures'
-import { barStool, diningChair, diningTable, Piece, platformBed, sideboard } from './interior/modern'
+import { vanityVessel } from './interior/bathParts'
+import { domeShade, kitchenPendant, ovalTub, plumbingArc } from './interior/catalogFixtures'
+import { INTERIOR_STYLES } from './interior/catalogStyle'
+import { barStool, bookStack, diningChair, diningTable, floorLamp, linenBench, nightstand, Piece, platformBed, sideboard, tableLamp } from './interior/modern'
 import type { MaterialLibrary } from './materials/library'
 import { rng } from './materials/textures'
 
@@ -70,27 +72,6 @@ function dresser(lib: Library) {
     p.box(lib.bronze, 0.111, 0.013, 0.016, 0, y + 0.055, 0.25, 0.004, 1)
   }
   return p.build('four-drawer chest')
-}
-
-function cabinet(lib: Library, open: boolean) {
-  const p = new Piece()
-  const w = open ? 1.02 : 1.25
-  const h = open ? 1.45 : 1.1
-  const d = open ? 0.31 : 0.44
-  p.slab(lib.darkWood, w - 0.09, 0.07, d - 0.06, 0, 0.035, 0)
-  p.slab(lib.cabinet, w, h - 0.07, 0.023, 0, (h + 0.07) / 2, -d / 2)
-  for (const x of [-w / 2 + 0.012, w / 2 - 0.012])
-    p.slab(lib.cabinet, 0.024, h - 0.07, d, x, (h + 0.07) / 2, 0)
-  for (const y of [0.09, h - 0.014]) p.slab(lib.cabinet, w, 0.028, d, 0, y, 0)
-  if (open) {
-    for (const y of [0.41, 0.75, 1.08]) p.slab(lib.cabinet, w - 0.026, 0.023, d - 0.008, 0, y, 0)
-  } else {
-    for (const x of [-w / 4, w / 4]) {
-      p.box(lib.cabinet, w / 2 - 0.023, h - 0.137, 0.023, x, (h + 0.07) / 2, d / 2, 0.004, 1)
-      p.slab(lib.bronze, 0.012, 0.13, 0.018, Math.sign(x) * 0.052, h * 0.69, d / 2 + 0.02)
-    }
-  }
-  return p.build('wood casework')
 }
 
 function coffeeTable(lib: Library) {
@@ -184,28 +165,76 @@ function shower(lib: Library) {
   return p.build('rain shower fixture')
 }
 
-function vanity(lib: Library) {
+function officeDesk(lib: Library) {
   const p = new Piece()
-  p.slabFromBase(lib.cabinet, 0, 0, 0, 1.24, 0.50, 0.49)
-  for (const x of [-0.307, 0.307]) {
-    for (const y of [0.115, 0.36]) {
-      p.box(lib.cabinet, 0.609, 0.233, 0.020, x, y, 0.248, 0.004, 1)
-      p.box(lib.fixtureMetal, 0.18, 0.011, 0.018, x, y + 0.064, 0.264, 0.004, 1)
-    }
+  p.box(lib.cabinet, 1.36, 0.036, 0.61, 0, 0.742, 0, 0.005, 1)
+  p.slabFromBase(lib.cabinet, -0.63, 0, 0, 0.036, 0.724, 0.60)
+  p.slabFromBase(lib.cabinet, 0.48, 0, -0.01, 0.39, 0.724, 0.58)
+  for (const y of [0.29, 0.49, 0.68]) {
+    p.slab(lib.darkWood, 0.37, 0.003, 0.007, 0.48, y, 0.283)
+    p.slab(lib.fixtureMetal, 0.16, 0.009, 0.018, 0.48, y - 0.032, 0.289)
   }
-  p.box(lib.counter, 1.26, 0.048, 0.52, 0, 0.52, 0, 0.008, 1)
-  p.add(lib.porcelain, lathe([
-    [0, 0], [0.70, 0], [0.91, 0.042], [1, 0.089], [0.94, 0.094],
-    [0.86, 0.061], [0.66, 0.021], [0, 0.014],
-  ]).scale(0.23, 1, 0.149).translate(0, 0.544, 0.04))
-  return p.build('floating vanity')
+  return p.build('oak desk')
 }
 
-function bareTowelBar(lib: Library) {
+function builtInOven(lib: Library) {
   const p = new Piece()
-  for (const x of [-0.27, 0.27]) p.box(lib.fixtureMetal, 0.038, 0.036, 0.080, x, 0.018, 0, 0.007, 1)
-  rod(p, lib.fixtureMetal, [-0.277, 0.018, 0.042], [0.277, 0.018, 0.042], 0.009)
-  return p.build('towel bar')
+  p.box(lib.blackMetal, 0.58, 0.596, 0.53, 0, 0.298, -0.015, 0.009, 1)
+  p.box(lib.fixtureMetal, 0.576, 0.065, 0.03, 0, 0.557, 0.263, 0.005, 1)
+  p.box(lib.tvGlass, 0.51, 0.40, 0.02, 0, 0.253, 0.264, 0.009, 1)
+  p.box(lib.fixtureMetal, 0.47, 0.018, 0.03, 0, 0.459, 0.289, 0.007, 1)
+  return p.build('built-in oven')
+}
+
+function frontLoader(lib: Library) {
+  const p = new Piece()
+  p.box(lib.porcelain, 0.65, 0.89, 0.60, 0, 0.445, 0, 0.02, 1)
+  for (const [material, radius, z] of [[lib.appliance, 0.235, 0.304], [lib.tvGlass, 0.181, 0.32]] as const) {
+    const disk = new THREE.CylinderGeometry(radius, radius, 0.025, 32)
+    p.add(material, disk.rotateX(Math.PI / 2).translate(0, 0.435, z))
+  }
+  p.box(lib.blackMetal, 0.14, 0.034, 0.014, 0.168, 0.819, 0.3, 0.005, 1)
+  return p.build('front-loading washer')
+}
+
+function linearPendant(lib: Library) {
+  const p = new Piece()
+  p.box(lib.cabinet, 1.38, 0.053, 0.066, 0, 0.029, 0, 0.012, 1)
+  p.box(lib.diffuser, 1.31, 0.009, 0.039, 0, 0.004, 0, 0.003, 1)
+  for (const x of [-0.11, 0.11]) p.cylinder(lib.blackMetal, 0.004, 0.004, 0.68, x, 0.37, 0, false, 8)
+  p.box(lib.cabinet, 0.28, 0.026, 0.081, 0, 0.734, 0, 0.006, 1)
+  return p.build('linear pendant')
+}
+
+function backedStool(lib: Library) {
+  const p = new Piece()
+  for (const x of [-0.15, 0.15]) {
+    p.leg(lib.cabinet, V3(x, 0.61, -0.12), V3(1.16 * x, 0, -0.17), 0.03)
+    p.leg(lib.cabinet, V3(x, 0.61, 0.12), V3(1.16 * x, 0, 0.17), 0.03)
+  }
+  p.box(lib.fixtureMetal, 0.36, 0.012, 0.019, 0, 0.25, 0.12, 0.004, 1)
+  p.box(lib.fabric2, 0.39, 0.048, 0.40, 0, 0.626, 0, 0.017, 1)
+  p.tiltBack(lib.fabric2, 0.37, 0.28, 0.04, V3(0, 0.65, -0.149), 0.15, 0.02)
+  return p.build('upholstered counter stool')
+}
+
+function treadmill(lib: Library) {
+  const p = new Piece()
+  p.box(lib.blackMetal, 0.74, 0.12, 1.59, 0, 0.08, 0, 0.023, 1)
+  p.box(lib.fabric2, 0.54, 0.022, 1.34, 0, 0.15, -0.03, 0.008, 1)
+  for (const x of [-0.31, 0.31]) {
+    rod(p, lib.appliance, [x, 0.12, 0.55], [x, 1.13, 0.45], 0.028)
+    rod(p, lib.blackMetal, [x, 1.01, 0.54], [x, 1.01, 0.12], 0.021)
+  }
+  p.box(lib.blackMetal, 0.61, 0.14, 0.28, 0, 1.20, 0.48, 0.031, 1)
+  p.box(lib.tvGlass, 0.28, 0.012, 0.13, 0, 1.275, 0.45, 0.006, 1)
+  return p.build('treadmill')
+}
+
+function sofaCushion(lib: Library) {
+  const p = new Piece()
+  p.tiltBack(lib.oliveLinen, 0.36, 0.32, 0.19, V3(0, 0, 0), 0.20, 0.08)
+  return p.build('linen pillow')
 }
 
 // Curved tapered surfaces keep clumps recognisable when each mesh is instanced as one plant by the site builder.
@@ -307,26 +336,37 @@ function rocks(lib: Library, seed: number, moss: boolean, count: number) {
 }
 
 const designs = {
-  GlamVelvetSofa: lib => upholstered(lib, 2.19, 0.95, lib.oliveLinen, 2),
   SheenChair: lib => loungeChair(lib, lib.rustLinen),
   bar_stool_wood: barStool,
+  bath_angelo: ovalTub,
   basin_mixer_dark: lib => plumbingArc(lib, 0.17, 0.14, lib.blackMetal),
   bed_dark_headboard: darkHeadboardBed,
-  bed_upholstered_white: lib => platformBed(lib, 1.91, 2.05, 1.03),
+  bed_oak_linen: lib => platformBed(lib, 1.81, 2.05, 1.03),
+  bench_upholstered: lib => linenBench(lib, 1.27),
   ceramic_vase_02: lib => vessel(lib, false),
+  book_encyclopedia_set_01: lib => bookStack(lib, lib.fabric2, lib.linen),
   coffee_table_round_01: coffeeTable,
   desk_lamp_black: deskLamp,
+  desk_wood: officeDesk,
+  dining_linear_pendant: linearPendant,
   dining_chair_bentwood: diningChair,
-  dining_table_oak: lib => diningTable(lib, 1.78, 0.90),
+  dining_table_trestle: lib => diningTable(lib, 1.9, 0.92),
   dresser_tall: dresser,
   fern_02: lib => plant(lib, 'fern', 23),
   fridge_steel: fridge,
+  floor_lamp_tripod: floorLamp,
   grass_medium_01: lib => plant(lib, 'grass', 35),
   kitchen_faucet: lib => plumbingArc(lib, 0.36, 0.23),
-  mid_century_lounge_chair: lib => loungeChair(lib, lib.linen),
-  modern_wooden_cabinet: lib => cabinet(lib, false),
+  media_console_oak: lib => sideboard(lib, 1.85),
+  modern_arm_chair_01: lib => loungeChair(lib, lib.blackMetal),
+  modern_ceiling_lamp_01: lib => kitchenPendant(lib, INTERIOR_STYLES.desert, 0.86),
+  modern_wooden_cabinet: lib => sideboard(lib, 1.85),
   namaqualand_boulder_02: lib => rocks(lib, 23, false, 1),
+  nightstand_oak: lib => nightstand(lib, 0.47, null),
+  oven_built_in: builtInOven,
+  pendant_dome: lib => domeShade(lib, INTERIOR_STYLES.woodland),
   potted_plant_01: lib => plant(lib, 'potted', 13),
+  potted_plant_02: lib => plant(lib, 'broadleaf', 15),
   potted_plant_04: lib => plant(lib, 'broadleaf', 21),
   rock_07: lib => rocks(lib, 7, false, 1),
   rock_09: lib => rocks(lib, 9, false, 1),
@@ -337,13 +377,24 @@ const designs = {
   shrub_03: lib => plant(lib, 'shrub', 37),
   shrub_04: lib => plant(lib, 'shrub', 69),
   sideboard_midcentury: lib => sideboard(lib, 1.62),
+  side_table_01: lib => nightstand(lib, 0.47, null),
   sofa_beige: lib => upholstered(lib, 3.385, 1.104, lib.linen, 3),
+  sofa_linen: lib => upholstered(lib, 2.22, 0.87, lib.linen, 2),
+  stool_counter_back: backedStool,
   stone_01: lib => rocks(lib, 1, false, 1),
   toilet_modern: toilet,
-  towel_bar: bareTowelBar,
-  vanity_floating: vanity,
+  treadmill_gym: treadmill,
+  table_lamp_white: tableLamp,
+  table_lamp_ceramic: tableLamp,
+  throw_pillows_01: sofaCushion,
+  vessel_sink_white: lib => {
+    const group = new THREE.Group()
+    group.add(vanityVessel(lib, 0.44, 0.32))
+    return group
+  },
+  washer_front_load: frontLoader,
   wooden_bowl_01: lib => vessel(lib, true),
-  wooden_display_shelves_01: lib => cabinet(lib, true),
+  wooden_table_02: lib => diningTable(lib, 1.75, 0.85),
 } satisfies Record<string, (lib: Library) => THREE.Group>
 
 const sources = new WeakMap<Library, Map<string, THREE.Group>>()

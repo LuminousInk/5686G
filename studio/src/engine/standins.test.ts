@@ -17,9 +17,7 @@ const lib = new Proxy({} as MaterialLibrary, {
   },
 })
 
-const ids = [...new Set(['models', 'models-lo'].flatMap(folder =>
-  readdirSync(`public/assets/${folder}`).filter(file => file.endsWith('.json')).map(file => file.slice(0, -5)),
-))]
+const ids = readdirSync('public/assets/models').filter(file => file.endsWith('.json')).map(file => file.slice(0, -5))
 
 afterEach(() => {
   vi.unstubAllEnvs()

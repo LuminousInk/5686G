@@ -32,13 +32,10 @@ export function eucalyptus(lib: MaterialLibrary, size: number) {
   return g
 }
 
-export function sofaTextiles(lib: MaterialLibrary, width: number, depth: number, lounge: boolean, seat: number,
+export function sofaThrow(lib: MaterialLibrary, width: number, depth: number, lounge: boolean,
   back: { height: number; crest: number }) {
   const p = new Piece()
   const z = lounge ? depth * 0.045 : -depth * 0.18
-  p.tiltBack(lib.oliveLinen, 0.37, 0.36, 0.15, V3(-width * 0.34, seat, z), 0.32, 0.07)
-  p.tiltBack(lib.linen, 0.36, 0.30, 0.16, V3(-width * 0.19, seat, z + 0.063), 0.34, 0.077)
-  p.tiltBack(lib.rustLinen, 0.33, 0.31, 0.16, V3(width * (lounge ? 0.14 : 0.29), seat, z + 0.044), 0.41, 0.074)
 
   // A throw hangs over a seat back along its measured ridge. Folds follow the cloth over the edge.
   const edge = -depth / 2 - 0.018
@@ -63,7 +60,7 @@ export function sofaTextiles(lib: MaterialLibrary, width: number, depth: number,
   }
   p.add(lib.fabric2, strip(0, 0.04))
   p.add(lib.throwLinen, strip(0.04, 1))
-  return decor(p.build('sofa-throw-and-pillows'))
+  return decor(p.build('sofa-throw'))
 }
 
 export function kitchenCounterDecor(lib: MaterialLibrary, width: number) {

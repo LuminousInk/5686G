@@ -61,6 +61,7 @@ describe.each(sections)('$name interior', ({ plan }) => {
     interior = new Interior(lib, TIERS.low)
     const { colliders } = buildInteriorShell(plan, lib, new MeshBatch())
     await interior.build(plan, { plan, colliders } as HouseModel)
+    interior.group.updateMatrixWorld(true)
   })
 
   it('keeps occupied footprints inside rooms, apart, and clear of door swings and landings', () => {
@@ -84,7 +85,7 @@ describe.each(sections)('$name interior', ({ plan }) => {
   it('furnishes every bedroom with a wall-backed bed, paired nightstands, a lamp and a rug', () => {
     for (const room of plan.rooms.filter(r => r.type === 'bedroom' || r.type === 'primary')) {
       const objects = interior.group.children.filter(o => inRoom(room, o))
-      const bed = objects.find(o => o.name === 'platformBed' || o.name === 'bed_dark_headboard')
+      const bed = objects.find(o => o.name === 'bed_oak_linen' || o.name === 'bed_dark_headboard')
       const layout = interior['layouts'].get(room.id)
       expect(bed, room.id).toBeDefined()
       expect(layout, room.id).toBeDefined()
@@ -104,13 +105,26 @@ describe.each(sections)('$name interior', ({ plan }) => {
       const [left, right] = stands.map(o => (o.position.x - footprint.x) * nz - (o.position.z - footprint.z) * nx)
       expect(left * right, room.id).toBeLessThan(0)
       expect(Math.abs(left + right), room.id).toBeLessThan(0.001)
-      expect(stands.some(o => o.getObjectByName('tableLamp')), room.id).toBe(true)
-      expect(bed?.getObjectByName('bed-throws-and-pillows')?.userData.bakeIgnore, room.id).toBe(true)
+      const lamps = stands.flatMap(stand => {
+        const model = stand.getObjectByName('table_lamp_ceramic')
+        return model ? [{ model, stand }] : []
+      })
+      expect(lamps.length, room.id).toBeGreaterThan(0)
+      for (const { model, stand } of lamps) {
+        expect(model.userData.bakeIgnore, room.id).toBe(true)
+        expect(model.position.y, room.id).toBeCloseTo(0.53, 3)
+        expect(new THREE.Box3().setFromObject(stand.children[0], true).max.y, room.id).toBeCloseTo(plan.floorY + model.position.y, 3)
+      }
       expect(bed?.userData.bakeIgnore, room.id).toBeUndefined()
-      expect(stands.find(o => o.getObjectByName('tableLamp'))?.getObjectByName('tableLamp')?.userData.bakeIgnore, room.id).toBe(true)
       expect(objects.some(o => o.name === 'areaRug'), room.id).toBe(true)
       const measured = new THREE.Box3().setFromObject(bed!, true)
       expect(measured.min.y, room.id).toBeCloseTo(plan.floorY, 3)
+      if (bed?.name === 'bed_oak_linen') {
+        const duvet = bed.getObjectByName('queen_bed_Curtins1_0')!
+        const frame = bed.getObjectByName('pCube42143476_fabric_brown_0')!
+        expect(new THREE.Box3().setFromObject(frame, true).min.y, room.id).toBeCloseTo(plan.floorY, 3)
+        expect(new THREE.Box3().setFromObject(duvet, true).min.y, room.id).toBeGreaterThan(plan.floorY + 0.007)
+      }
       // The tallest upholstered points belong at the wall end of the bed.
       const top = new THREE.Vector3()
       let frontmost = -Infinity
@@ -134,14 +148,16 @@ describe.each(sections)('$name interior', ({ plan }) => {
       const objects = interior.group.children.filter(o => inRoom(room, o))
       const byName = (name: string) => objects.filter(o => o.name === name)
       if (room.type === 'living') {
-        expect(objects.some(o => ['sectional_grey', 'sofa_beige'].includes(o.name)), room.id).toBe(true)
+        const sofa = objects.find(o => ['sectional_grey', 'sofa_beige', 'sofa_linen'].includes(o.name))
+        expect(sofa, room.id).toBeDefined()
         expect(byName('areaRug'), room.id).toHaveLength(1)
         expect(byName('areaRug')[0].userData.bakeIgnore, room.id).toBeUndefined()
-        expect(byName('sofa-throw-and-pillows')[0]?.userData.bakeIgnore, room.id).toBe(true)
+        if (sofa?.name !== 'sofa_linen') expect(byName('sofa-throw')[0]?.userData.bakeIgnore, room.id).toBe(true)
+        expect(byName('throw_pillows_01')[0]?.userData.bakeIgnore, room.id).toBe(true)
         expect(byName('coffee_table_round_01'), room.id).toHaveLength(1)
       }
       if (room.type === 'dining') {
-        const [table] = byName('diningTable')
+        const table = byName('dining_table_trestle')[0] ?? byName('wooden_table_02')[0]
         const [pendant] = byName('pendant')
         expect(table, room.id).toBeDefined()
         expect(pendant, room.id).toBeDefined()
@@ -172,13 +188,15 @@ describe.each(sections)('$name interior', ({ plan }) => {
         expect(byName('kitchen-base'), room.id).toHaveLength(1)
         expect(byName('fridge_steel'), room.id).toHaveLength(1)
         const [island] = byName('kitchen-island')
-        const stools = byName('bar_stool_wood')
+        const stools = [...byName('bar_stool_wood'), ...byName('stool_counter_back')]
         if (room.id === 'adu-kitchen') {
           expect(island, room.id).toBeUndefined()
           expect(stools, room.id).toHaveLength(0)
           continue
         }
         expect(island, room.id).toBeDefined()
+        const tap = island.getObjectByName('kitchen_faucet')!
+        expect(new THREE.Box3().setFromObject(tap, true).min.y, room.id).toBeCloseTo(plan.floorY + 0.94, 3)
         expect([2, 3], room.id).toContain(stools.length)
         const islandBounds = new THREE.Box3().setFromObject(island, true)
         for (const stool of stools) {
@@ -197,15 +215,18 @@ describe.each(sections)('$name interior', ({ plan }) => {
         }
         for (const vanity of byName('floating-vanity')) {
           expect(vanity.getObjectByName('vanity-mirror'), room.id).toBeDefined()
+          const basin = vanity.getObjectByName('vessel_sink_white')!
+          expect(new THREE.Box3().setFromObject(basin, true).min.y, room.id).toBeCloseTo(floor + 0.864, 3)
           expect(new THREE.Box3().setFromObject(vanity, true).min.y, room.id).toBeGreaterThan(floor + 0.25)
         }
         for (const shower of byName('walk-in-shower')) {
           expect(shower.getObjectByName('shower-screen'), room.id).toBeDefined()
+          expect(shower.getObjectByName('shower_black'), room.id).toBeDefined()
           expect(new THREE.Box3().setFromObject(shower, true).min.y, room.id).toBeCloseTo(floor, 3)
         }
       }
       if (room.type === 'bath' && /primary/i.test(room.name)) {
-        const bathtub = byName('freestanding-oval-tub')
+        const bathtub = byName('bath_angelo')
         expect(bathtub, room.id).toHaveLength(['cedar-ridge', 'woodland-modern'].includes(plan.id) ? 1 : 0)
         for (const tub of bathtub) {
           expect(tub.position.y, room.id).toBeCloseTo(plan.floorY + 0.004, 3)
@@ -220,8 +241,30 @@ describe.each(sections)('$name interior', ({ plan }) => {
         }
       }
       if (room.type === 'office') {
-        expect(byName('officeDesk'), room.id).toHaveLength(1)
+        expect(byName('desk_wood'), room.id).toHaveLength(1)
         expect(byName('dining_chair_bentwood'), room.id).toHaveLength(1)
+      }
+      if (room.type === 'gym') {
+        const treadmill = byName('treadmill_gym')[0]
+        expect(treadmill, room.id).toBeDefined()
+        const base = new THREE.Box3().setFromObject(treadmill, true).min.y
+        expect(base).toBeGreaterThanOrEqual(plan.floorY - 0.001)
+        expect(base).toBeLessThanOrEqual(plan.floorY + 0.009)
+        const footprint = interior['layouts'].get(room.id)!.pieces[0]
+        const towardRoom = new THREE.Vector3(Math.sin(footprint.yaw), 0, Math.cos(footprint.yaw))
+        const vertex = new THREE.Vector3()
+        let consoleEdge = -Infinity
+        treadmill.traverse(o => {
+          if (!(o instanceof THREE.Mesh)) return
+          const positions = o.geometry.getAttribute('position')
+          for (let i = 0; i < positions.count; i++) {
+            vertex.fromBufferAttribute(positions, i).applyMatrix4(o.matrixWorld)
+            if (vertex.y > base + 1.2) {
+              consoleEdge = Math.max(consoleEdge, vertex.sub(treadmill.position).dot(towardRoom))
+            }
+          }
+        })
+        expect(consoleEdge).toBeLessThan(-0.35)
       }
       if (room.type === 'entry') {
         expect(objects.some(o => o.name === 'entryBench' || o.name === 'sideboard_midcentury'), room.id).toBe(true)

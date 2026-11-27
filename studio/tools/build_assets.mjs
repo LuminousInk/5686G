@@ -2,7 +2,7 @@
 // Turns the raw Poly Haven downloads (.cache/raw, see fetch_assets.py) into web-ready files in public/assets/:
 //   hdri/<id>_<res>.hdr                 copied as-is (RGBE)
 //   tex/<id>_<res>_{d,n,arm}.webp        PBR maps (diffuse sRGB, OpenGL normal, AO/rough/metal)
-//   models{,-lo}/<id>.json + <id>_<n>.webp  simplified meshes as glTF JSON (one inline buffer, no meshopt:
+//   models/<id>.json + <id>_<n>.webp  simplified meshes as glTF JSON (one inline buffer, no meshopt:
 //                                        hosts may refuse WebAssembly) with textures as separate webp files
 //   trees/*.webp                         ez-tree bark and needle textures
 //   art/*.webp and manifest.json          Art Institute of Chicago prints (see fetch_art.py)
@@ -13,8 +13,9 @@ import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { NodeIO } from '@gltf-transform/core'
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
-import { dedup, prune, weld, simplify, textureCompress, reorder, metalRough, unpartition, getBounds } from '@gltf-transform/functions'
+import { dedup, flatten, getBounds, join, metalRough, prune, quantize, reorder, simplify, textureCompress, unpartition, weld } from '@gltf-transform/functions'
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer'
+import { Matrix4, Vector3 } from 'three'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const RAW = process.env.CUBY_ASSET_CACHE ?? path.join(ROOT, '.cache', 'raw')
@@ -34,38 +35,56 @@ const MODELS = {
   stone_01: { tris: 1200, tex: 512, error: 0.03 },
   rock_07: { tris: 1500, tex: 512, error: 0.03 },
   rock_09: { tris: 1200, tex: 512, error: 0.03 },
-  fern_02: { tris: 6500, tex: 1024 },
-  shrub_04: { tris: 16000, tex: 1024, error: 0.01 },
+  fern_02: { tris: 6500, tex: 512 },
+  shrub_04: { tris: 16000, tex: 512, error: 0.01 },
   shrub_03: { tris: 1600, tex: 512, error: 0.02, diffuseOnly: true },
   grass_medium_01: { tris: 2400, tex: 512, error: 0.025, diffuseOnly: true },
-  mid_century_lounge_chair: { tris: 7000, tex: 1024 },
-  coffee_table_round_01: { tris: 5000, tex: 1024 },
-  potted_plant_01: { tris: 30000, tex: 1024, error: 0.01 },
+  coffee_table_round_01: { tris: 5000, tex: 512 },
+  potted_plant_01: { tris: 14000, tex: 512, error: 0.016, quantize: true },
   potted_plant_04: { tris: 6500, tex: 512, error: 0.006 },
   ceramic_vase_02: { tris: 3000, tex: 512, error: 0.004 },
   wooden_bowl_01: { tris: 3000, tex: 512, error: 0.004 },
-  modern_wooden_cabinet: { tris: 5000, tex: 1024 },
-  wooden_display_shelves_01: { tris: 5000, tex: 1024 },
-  // Khronos glTF Sample Assets (CC BY 4.0, Wayfair); gltf-transform keeps their sheen/specular extensions
-  GlamVelvetSofa: { tris: 12000, tex: 1024 },
-  SheenChair: { tris: 12000, tex: 1024 },
+  modern_wooden_cabinet: { tris: 7500, tex: 1024, error: 0.012, quantize: true },
+  modern_arm_chair_01: { tris: 5800, tex: 1024, error: 0.01, quantize: true },
+  side_table_01: { tris: 2500, tex: 512, quantize: true },
+  modern_ceiling_lamp_01: { tris: 4200, tex: 512, error: 0.005, quantize: true },
+  potted_plant_02: { tris: 12500, tex: 512, error: 0.018, quantize: true },
+  book_encyclopedia_set_01: { tris: 2000, tex: 512, error: 0.02, quantize: true },
+  throw_pillows_01: { tris: 2700, tex: 512, error: 0.012, quantize: true },
+  wooden_table_02: { tris: 1100, tex: 1024, quantize: true },
+  // Khronos glTF Sample Assets (Wayfair, CC0), with sheen and texture transforms.
+  SheenChair: { tris: 9000, tex: 512, error: 0.011, quantize: true },
   // Objaverse (Sketchfab, CC BY 4.0; authors in tools/objaverse.json, fetched by tools/fetch_objaverse.py)
-  sofa_beige: { loTex: 512, tris: 30000, tex: 1024 },
-  sectional_grey: { loTex: 512, tris: 30000, tex: 1024 },
-  sideboard_midcentury: { loTex: 512, tris: 20000, tex: 1024 },
-  dining_table_oak: { loTex: 512, tris: 10000, tex: 1024 },
-  dining_chair_bentwood: { tris: 10000, tex: 512, error: 0.003 },
-  bar_stool_wood: { tris: 6000, tex: 512 },
-  fridge_steel: { tris: 6000, tex: 1024 },
-  kitchen_faucet: { tris: 6000, tex: 512, error: 0.003 },
-  bed_upholstered_white: { loTex: 512, tris: 30000, tex: 1024 },
-  bed_dark_headboard: { loTex: 512, tris: 30000, tex: 1024 },
-  dresser_tall: { tris: 15000, tex: 1024 },
-  vanity_floating: { tris: 15000, tex: 1024 },
-  toilet_modern: { tris: 15000, tex: 512 },
-  shower_black: { tris: 12000, tex: 512, error: 0.02 },
-  towel_bar: { tris: 6000, tex: 512, error: 0.003 },
-  desk_lamp_black: { tris: 12000, tex: 512 },
+  bench_upholstered: { tris: 7000, tex: 512, error: 0.02, quantize: true },
+  pendant_dome: { tris: 4200, tex: 512, error: 0.018, quantize: true },
+  dining_linear_pendant: { tris: 3500, tex: 512, error: 0.02, quantize: true },
+  stool_counter_back: { tris: 3800, tex: 512, error: 0.018, quantize: true },
+  bed_oak_linen: { tris: 11000, tex: 1024, error: 0.016, quantize: true },
+  sofa_linen: { tris: 9000, tex: 512, error: 0.017, quantize: true },
+  nightstand_oak: { tris: 3000, tex: 512, quantize: true },
+  media_console_oak: { tris: 4500, tex: 1024, quantize: true },
+  desk_wood: { tris: 3500, tex: 1024, error: 0.012, quantize: true },
+  floor_lamp_tripod: { tris: 5000, tex: 512, error: 0.02, quantize: true },
+  bath_angelo: { tris: 3500, tex: 512, quantize: true },
+  vessel_sink_white: { tris: 3000, tex: 512, error: 0.015, quantize: true },
+  oven_built_in: { tris: 5000, tex: 512, error: 0.016, quantize: true },
+  washer_front_load: { tris: 5500, tex: 512, error: 0.025, quantize: true },
+  dining_table_trestle: { tris: 5000, tex: 1024, error: 0.022, quantize: true },
+  table_lamp_ceramic: { tris: 3800, tex: 512, error: 0.022, quantize: true },
+  table_lamp_white: { tris: 3000, tex: 512, error: 0.017, quantize: true },
+  sofa_beige: { tris: 11000, tex: 512, error: 0.014, quantize: true },
+  sectional_grey: { tris: 15000, tex: 1024, error: 0.013, quantize: true },
+  sideboard_midcentury: { tris: 6800, tex: 512, error: 0.015, quantize: true },
+  dining_chair_bentwood: { tris: 5100, tex: 512, error: 0.013, quantize: true },
+  bar_stool_wood: { tris: 5000, tex: 512, error: 0.013, quantize: true },
+  fridge_steel: { tris: 6000, tex: 512, error: 0.012, quantize: true },
+  kitchen_faucet: { tris: 3500, tex: 512, error: 0.015, quantize: true },
+  bed_dark_headboard: { tris: 11000, tex: 512, error: 0.015, quantize: true },
+  dresser_tall: { tris: 7800, tex: 512, error: 0.015, quantize: true },
+  treadmill_gym: { tris: 4700, tex: 512, error: 0.014, quantize: true },
+  toilet_modern: { tris: 6000, tex: 512, error: 0.012, quantize: true },
+  shower_black: { tris: 5500, tex: 512, error: 0.022, quantize: true },
+  desk_lamp_black: { tris: 4200, tex: 512, error: 0.018, quantize: true },
 }
 
 const log = (...a) => console.log(...a)
@@ -193,11 +212,15 @@ async function oceanNormals() {
 
 function triCount(doc) {
   let n = 0
-  for (const mesh of doc.getRoot().listMeshes())
+  for (const node of doc.getRoot().listNodes()) {
+    const mesh = node.getMesh()
+    if (!mesh) continue
     for (const p of mesh.listPrimitives()) {
+      if (p.getMode() !== 4) continue
       const idx = p.getIndices()
       n += idx ? idx.getCount() / 3 : p.getAttribute('POSITION').getCount() / 3
     }
+  }
   return n
 }
 
@@ -235,24 +258,111 @@ function dropGroundPlanes(doc, id) {
   }
 }
 
+async function prepareFurniture(doc, id) {
+  const root = doc.getRoot()
+  if (id === 'floor_lamp_tripod') {
+    // The cord and plug extend past the tripod's usable footprint.
+    for (const node of root.listNodes()) {
+      if (/^(Cable|Electrical-Plug)_/.test(node.getName())) node.dispose()
+    }
+  }
+  if (id === 'pendant_dome') {
+    // Keep the spun shade and cut the cord to each plan's ceiling height at placement time.
+    for (const node of root.listNodes()) {
+      if (/^cable(?:_|$)/i.test(node.getName())) node.dispose()
+    }
+  }
+  if (id === 'shower_black') {
+    // The brassware's individual millimetre-scale spray nozzles account for most source triangles.
+    for (const node of root.listNodes()) {
+      if (/^Circle\d+$/.test(node.getName())) node.dispose()
+    }
+  }
+  if (id === 'throw_pillows_01') {
+    // Keep the scanned folds and the fabric weave in a solid olive accent.
+    for (const node of root.listNodes()) {
+      if (node.getName().endsWith('_pillow01')) node.dispose()
+    }
+  }
+  if (id === 'book_encyclopedia_set_01') {
+    // Keep four neighboring volumes and lay the original meshes on their sides.
+    const turn = new Matrix4().makeRotationZ(Math.PI / 2)
+    for (const node of root.listNodes()) {
+      if (!/_book0[4-7]$/.test(node.getName())) node.dispose()
+      else node.setMatrix(new Matrix4().fromArray(node.getMatrix()).premultiply(turn).toArray())
+    }
+  }
+  if (id === 'bed_oak_linen') {
+    // Hem the bottom of the drape at the foot so the bed frame takes the floor contact.
+    const nodes = root.listNodes()
+    const duvet = nodes.find(node => node.getName() === 'queen_bed_Curtins1_0')
+    const headboard = nodes.find(node => node.getName() === 'pCube42143476_fabric_brown_0')
+    const floor = getBounds(headboard).min[1] + 0.07
+    const matrix = new Matrix4().fromArray(duvet.getWorldMatrix())
+    const inverse = matrix.clone().invert()
+    const vertex = new Vector3()
+    const xyz = [0, 0, 0]
+    for (const primitive of duvet.getMesh().listPrimitives()) {
+      const positions = primitive.getAttribute('POSITION')
+      for (let i = 0; i < positions.getCount(); i++) {
+        vertex.fromArray(positions.getElement(i, xyz)).applyMatrix4(matrix)
+        if (vertex.y < floor) {
+          vertex.y = floor
+          positions.setElement(i, vertex.applyMatrix4(inverse).toArray(xyz))
+        }
+      }
+    }
+  }
+  for (const material of root.listMaterials()) {
+    if (id === 'SheenChair' && material.getName().includes('Mango Velvet')) {
+      material.setBaseColorFactor([0.38, 0.20, 0.125, 1])
+      material.getExtension('KHR_materials_sheen')?.setSheenColorFactor([0.41, 0.27, 0.19])
+    }
+    if (id === 'sectional_grey' && material.getName() === 'Tela_Victoria') {
+      material.setBaseColorFactor([0.97, 0.9, 0.81, 1])
+    }
+    if (id === 'sofa_linen' && material.getMetallicFactor() === 0) {
+      const upholstery = material.getBaseColorTexture()
+      if (upholstery) {
+        const image = await sharp(upholstery.getImage()).linear([0.81, 0.75, 0.67], [56, 54, 54]).png().toBuffer()
+        upholstery.setImage(image).setMimeType('image/png')
+      }
+    }
+    if (id === 'throw_pillows_01') {
+      material.setBaseColorTexture(null).setBaseColorFactor([0.25, 0.27, 0.16, 1])
+        .setMetallicFactor(0).setRoughnessFactor(0.93)
+    }
+    if (id === 'pendant_dome') {
+      material.setBaseColorTexture(null).setBaseColorFactor([0.36, 0.24, 0.13, 1])
+        .setMetallicRoughnessTexture(null).setMetallicFactor(0.76).setRoughnessFactor(0.37)
+    }
+    if (id === 'table_lamp_ceramic' && material.getName() === 'fabric.002') {
+      material.setEmissiveFactor([0.13, 0.090, 0.054])
+    }
+    if (id === 'floor_lamp_tripod' && material.getName() === 'Lamp_Shade_Outside') {
+      material.setBaseColorTexture(null).setBaseColorFactor([0.72, 0.61, 0.49, 1]).setMetallicFactor(0)
+    }
+    if (id === 'washer_front_load') {
+      material.setExtension('KHR_materials_ior', null).setExtension('KHR_materials_specular', null)
+        .setEmissiveTexture(null).setAlphaMode('OPAQUE').setRoughnessFactor(0.45)
+    }
+  }
+}
+
 async function models() {
   await MeshoptEncoder.ready
   await MeshoptSimplifier.ready
   const io = new NodeIO()
     .registerExtensions(ALL_EXTENSIONS)
     .registerDependencies({ 'meshopt.encoder': MeshoptEncoder })
-  fs.mkdirSync(path.join(OUT, 'models-lo'), { recursive: true })
-  for (const [id, cfg0] of Object.entries(MODELS)) {
+  for (const [id, cfg] of Object.entries(MODELS)) {
     if (only && !only.split(',').some(o => id === o || id.includes(o))) continue
-    for (const lo of [false, true]) {
-    const isRock = /rock|stone|boulder/.test(id)
-    // furniture and props never need more than 512px; phones get 256 (rocks keep 512)
-    const cfg = { ...cfg0, tex: lo ? (isRock ? 512 : cfg0.loTex ?? 256) : Math.min(cfg0.tex, isRock ? 1024 : 512) }
     const base = path.join(RAW, 'models', id)
     // Poly Haven ships .gltf + .bin + textures; the Khronos samples are self-contained .glb
     const src = [path.join(base, `${id}.gltf`), path.join(base, `${id}.glb`)].find(f => fs.existsSync(f))
     if (!src) { log('skip ', id); continue }
     const doc = await io.read(src)
+    await prepareFurniture(doc, id)
     if (cfg.diffuseOnly) {
       for (const material of doc.getRoot().listMaterials()) {
         material.setNormalTexture(null).setOcclusionTexture(null).setMetallicRoughnessTexture(null)
@@ -264,23 +374,25 @@ async function models() {
     for (const node of doc.getRoot().listNodes()) node.setExtension('KHR_lights_punctual', null)
     sanitizeNames(doc)
     const before = triCount(doc)
-    const ratio = Math.min(1, cfg.tris / before)
     // Sketchfab exports often use the old specular-glossiness workflow, which three.js no longer reads
     if (Object.hasOwn(objaverse, id)) {
       await doc.transform(metalRough(), unpartition())
       dropGroundPlanes(doc, id)
     }
+    // Batch fixed parts before measuring the triangle budget so repeated meshes count once per use.
+    // Keep the bed's named fabrics for the room styling.
+    const batch = cfg.quantize && id !== 'bed_oak_linen'
+    await doc.transform(dedup(), prune(), ...(batch ? [flatten(), join()] : []), weld({}))
+    const ratio = Math.min(1, cfg.tris / triCount(doc))
     await doc.transform(
-      dedup(),
-      prune(),
-      weld({}),
       ...(ratio < 0.98 ? [simplify({ simplifier: MeshoptSimplifier, ratio, error: cfg.error ?? 0.001, lockBorder: false })] : []),
       textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [cfg.tex, cfg.tex], quality: 84 }),
       prune(),
+      ...(cfg.quantize ? [quantize({ quantizePosition: 16, quantizeNormal: 10, quantizeTexcoord: 14 })] : []),
       reorder({ encoder: MeshoptEncoder }),
     )
     // No EXT_meshopt_compression: its decoder is WebAssembly, which locked-down hosts (the artifact CSP) refuse.
-    const dir = path.join(OUT, lo ? 'models-lo' : 'models')
+    const dir = path.join(OUT, 'models')
     const { json, resources } = await io.writeJSON(doc)
     // geometry: one buffer, inline as base64. src/engine/models.ts decodes it itself; a strict host refuses to
     // fetch data: URLs, so the loader never hands this URI to GLTFLoader.
@@ -297,8 +409,7 @@ async function models() {
     })
     const out = path.join(dir, `${id}.json`)
     fs.writeFileSync(out, JSON.stringify(json))
-    log('model', (lo ? 'lo ' : '') + id.padEnd(26), `${before} -> ${triCount(doc)} tris`, 'geometry', mb(fs.statSync(out).size), 'textures', mb(texBytes))
-    }
+    log('model', id.padEnd(26), `${before} -> ${triCount(doc)} tris`, 'geometry', mb(fs.statSync(out).size), 'textures', mb(texBytes))
   }
 }
 

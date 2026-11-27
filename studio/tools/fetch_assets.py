@@ -4,8 +4,8 @@
     python3 tools/fetch_assets.py            # everything
     python3 tools/fetch_assets.py teak_veneer boulder_01
 
-Poly Haven and ambientCG assets are CC0; the Khronos glTF sample models are CC BY 4.0
-(see README "Assets and licences"). Re-running skips files that are already complete.
+Poly Haven and ambientCG assets are CC0. Model credits are in tools/model-credits.json.
+Re-running skips files that are already complete.
 Then run `node tools/build_assets.mjs` to turn them into the web-ready files in public/assets/.
 """
 from __future__ import annotations
@@ -60,22 +60,15 @@ AMBIENT_CG = {
 }
 TEX_MAPS = ('Diffuse', 'nor_gl', 'arm')
 COASTAL_SURFACES = {'withered_grass', 'wood_chip_path', 'gravelly_sand', 'coast_sand_rocks_02'}
-MODELS = [
-    # rock garden
+with open(os.path.join(ROOT, 'tools', 'model-credits.json'), encoding='utf-8') as manifest:
+    MODEL_CREDITS = json.load(manifest)
+# Rock-garden models for the site, plus every Poly Haven model credited in tools/model-credits.json.
+SITE_MODELS = [
     'boulder_01', 'rock_moss_set_01', 'rock_moss_set_02', 'namaqualand_boulder_02', 'namaqualand_boulders_01',
-    'stone_01', 'rock_07', 'rock_09', 'fern_02', 'shrub_04',
-    'shrub_03', 'grass_medium_01',
-    # interior
-    'sofa_03', 'Sofa_01', 'modern_arm_chair_01', 'mid_century_lounge_chair', 'coffee_table_round_01',
-    'modern_coffee_table_01', 'dining_table', 'dining_chair_02', 'bar_chair_round_01', 'modern_ceiling_lamp_01',
-    'potted_plant_01', 'potted_plant_02', 'potted_plant_04', 'ceramic_vase_01', 'ceramic_vase_02',
-    'ceramic_vase_03', 'ceramic_vase_04', 'throw_pillows_01', 'side_table_01',
-    'wooden_bowl_01',
-    # modern furniture
-    'modern_wooden_cabinet', 'wooden_display_shelves_01', 'desk_lamp_arm_01',
+    'stone_01', 'rock_07', 'rock_09', 'fern_02', 'shrub_04', 'shrub_03', 'grass_medium_01',
 ]
-# Khronos glTF Sample Assets (CC BY 4.0, donated by Wayfair) ship as GLB rather than Poly Haven glTF.
-KHRONOS = ('GlamVelvetSofa', 'SheenChair', 'SheenWoodLeatherSofa')
+MODELS = list(dict.fromkeys(SITE_MODELS + [asset for asset, credit in MODEL_CREDITS.items() if credit['provider'] == 'Poly Haven']))
+KHRONOS = [asset for asset, credit in MODEL_CREDITS.items() if credit['provider'] == 'Khronos']
 KHRONOS_URL = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/{0}/glTF-Binary/{0}.glb'
 
 

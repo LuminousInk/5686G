@@ -39,7 +39,16 @@ function roundPanel(w: number, h: number, r: number) {
     .lineTo(-x, -y + r).quadraticCurveTo(-x, -y, -x + r, -y)
 }
 
-export function vanity(lib: MaterialLibrary, w: number, d: number, green: boolean, metal: THREE.Material) {
+export function vanityVessel(lib: MaterialLibrary, width: number, depth: number) {
+  const profile = [[0, 0], [0.76, 0], [0.95, 0.041], [1, 0.078], [0.96, 0.082], [0.85, 0.053], [0.68, 0.021], [0, 0.013]]
+  const geometry = new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), 32)
+  const vessel = new THREE.Mesh(geometry.scale(width / 2, 1, depth / 2), lib.porcelain)
+  vessel.castShadow = vessel.receiveShadow = true
+  return vessel
+}
+
+export function vanity(lib: MaterialLibrary, w: number, d: number, green: boolean, metal: THREE.Material,
+  vessels?: ReadonlyArray<THREE.Group | null>) {
   const p = new Piece()
   const centers = w >= 1.43 ? [-w * 0.25, w * 0.25] : [0]
   const depth = d / 0.508
@@ -58,12 +67,10 @@ export function vanity(lib: MaterialLibrary, w: number, d: number, green: boolea
   p.slabFromBase(lib.counter, 0, 0.818, d / 2, w, 0.045, d)
   p.slabFromBase(lib.counter, 0, 0.863, 0.034, w, 0.085, 0.048)
   const g = p.build('floating-vanity')
-  for (const x of centers) {
+  for (const [i, x] of centers.entries()) {
     const sinkWidth = Math.min(bay * 0.71, 0.52)
-    const vesselProfile = [[0, 0], [0.76, 0], [0.95, 0.041], [1, 0.078], [0.96, 0.082], [0.85, 0.053], [0.68, 0.021], [0, 0.013]]
-    const vessel = new THREE.Mesh(new THREE.LatheGeometry(vesselProfile.map(([r, y]) => new THREE.Vector2(r, y)), 32).scale(sinkWidth / 2, 1, 0.151 * depth), lib.porcelain)
+    const vessel = vessels?.[i] ?? vanityVessel(lib, sinkWidth, 0.302 * depth)
     vessel.position.set(x, 0.864, 0.293 * depth)
-    vessel.castShadow = vessel.receiveShadow = true
     g.add(vessel)
     const tap = plumbingArc(lib, 0.167, 0.155 * depth, metal)
     tap.position.set(x, 0.862, 0.11 * depth)
@@ -91,7 +98,8 @@ export function showerOpening(width: number) {
 }
 
 /** The origin sits at the rear wall, with the entrance opposite it. */
-export function shower(lib: MaterialLibrary, width: number, depth: number, metal: THREE.Material, screenSide: number, wallHeight: number) {
+export function shower(lib: MaterialLibrary, width: number, depth: number, metal: THREE.Material, screenSide: number, wallHeight: number,
+  hardware?: THREE.Group) {
   const p = new Piece()
   const opening = showerOpening(width)
   const glassW = width - opening
@@ -105,9 +113,11 @@ export function shower(lib: MaterialLibrary, width: number, depth: number, metal
   p.slabFromBase(metal, glassX, 0.033, frontZ, glassW, 0.024, 0.023)
   p.slabFromBase(metal, x, 0.033, 0.026, 0.019, glassHeight, 0.025)
   p.slabFromBase(metal, x, 0.033, frontZ, 0.019, glassHeight, 0.023)
-  p.slabFromBase(metal, 0, headY, 0.30, 0.024, 0.020, 0.58)
-  p.slabFromBase(metal, 0, headY - 0.014, 0.54, 0.21, 0.017, 0.16)
-  p.slabFromBase(metal, 0, 1.06, 0.025, 0.12, 0.11, 0.04)
+  if (!hardware) {
+    p.slabFromBase(metal, 0, headY, 0.30, 0.024, 0.020, 0.58)
+    p.slabFromBase(metal, 0, headY - 0.014, 0.54, 0.21, 0.017, 0.16)
+    p.slabFromBase(metal, 0, 1.06, 0.025, 0.12, 0.11, 0.04)
+  }
   p.slabFromBase(lib.bathStone, -width * 0.27, 1.25, 0.086, 0.25, 0.027, 0.16)
   const g = p.build('walk-in-shower')
   const panels = [
@@ -121,6 +131,11 @@ export function shower(lib: MaterialLibrary, width: number, depth: number, metal
   g.add(...panels)
   const wall = stoneWall(lib, width, wallHeight - 0.02, 0.02)
   g.add(wall)
+  if (hardware) {
+    hardware.position.set(0.045, headY - SHOWER_HARDWARE_HEIGHT, SHOWER_HARDWARE_DEPTH / 2 + 0.021)
+    g.add(hardware)
+    return g
+  }
   const handShower = new Piece()
   const hose = new THREE.CatmullRomCurve3([V3(0.04, 1.10, 0.08), V3(0.06, 0.82, 0.08), V3(0.17, 0.77, 0.09), V3(0.24, 1.30, 0.08)])
   handShower.add(metal, new THREE.TubeGeometry(hose, 20, 0.005, 6, false))
@@ -128,3 +143,6 @@ export function shower(lib: MaterialLibrary, width: number, depth: number, metal
   g.add(handShower.build('hand-shower'))
   return g
 }
+
+export const SHOWER_HARDWARE_DEPTH = 0.45
+export const SHOWER_HARDWARE_HEIGHT = 1.28

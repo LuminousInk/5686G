@@ -1,0 +1,170 @@
+{
+  "SheenChair": {
+    "title": "Sheen Chair",
+    "author": "Eric Chadwick for Wayfair, LLC",
+    "license": "CC0",
+    "provider": "Khronos",
+    "source": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/SheenChair"
+  },
+  "book_encyclopedia_set_01": {
+    "title": "Book Encyclopedia Set 01",
+    "author": "John Malcolm",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/book_encyclopedia_set_01"
+  },
+  "ceramic_vase_02": {
+    "title": "Ceramic Vase 02",
+    "author": "James Ray Cock",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/ceramic_vase_02"
+  },
+  "coffee_table_round_01": {
+    "title": "Coffee Table Round 01",
+    "author": "Ulan Cabanilla",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/coffee_table_round_01"
+  },
+  "fern_02": {
+    "title": "Fern 02",
+    "author": "Rob Tuytel, Rico Cilliers",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/fern_02"
+  },
+  "grass_medium_01": {
+    "title": "Grass Medium 01",
+    "author": "Rob Tuytel, Rico Cilliers",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/grass_medium_01"
+  },
+  "modern_arm_chair_01": {
+    "title": "Modern Arm Chair 01",
+    "author": "Vibrant Nordic",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/modern_arm_chair_01"
+  },
+  "modern_ceiling_lamp_01": {
+    "title": "Modern Ceiling Lamp 01",
+    "author": "James Ray Cock",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/modern_ceiling_lamp_01"
+  },
+  "modern_wooden_cabinet": {
+    "title": "Modern Wooden Cabinet",
+    "author": "Patrik Pangerl",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/modern_wooden_cabinet"
+  },
+  "namaqualand_boulder_02": {
+    "title": "Namaqualand Boulder 02",
+    "author": "Greg Zaal, Rico Cilliers",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/namaqualand_boulder_02"
+  },
+  "potted_plant_01": {
+    "title": "Potted Plant 01",
+    "author": "Rico Cilliers",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/potted_plant_01"
+  },
+  "potted_plant_02": {
+    "title": "Potted Plant 02",
+    "author": "Rico Cilliers",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/potted_plant_02"
+  },
+  "potted_plant_04": {
+    "title": "Potted Plant 04",
+    "author": "James Ray Cock",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/potted_plant_04"
+  },
+  "rock_07": {
+    "title": "Rock 07",
+    "author": "Jenelle van Heerden",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/rock_07"
+  },
+  "rock_09": {
+    "title": "Rock 09",
+    "author": "Jenelle van Heerden",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/rock_09"
+  },
+  "rock_moss_set_01": {
+    "title": "Rock Moss Set 01",
+    "author": "Kless Gyzen",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/rock_moss_set_01"
+  },
+  "rock_moss_set_02": {
+    "title": "Rock Moss Set 02",
+    "author": "Kless Gyzen",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/rock_moss_set_02"
+  },
+  "shrub_03": {
+    "title": "Shrub 03",
+    "author": "Rico Cilliers",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/shrub_03"
+  },
+  "shrub_04": {
+    "title": "Shrub 04",
+    "author": "Rico Cilliers",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/shrub_04"
+  },
+  "side_table_01": {
+    "title": "Side Table 01",
+    "author": "James Ray Cock",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/side_table_01"
+  },
+  "stone_01": {
+    "title": "Stone 01",
+    "author": "Dario Barresi, Rico Cilliers",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/stone_01"
+  },
+  "throw_pillows_01": {
+    "title": "Throw Pillows 01",
+    "author": "Serhii Khromov",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/throw_pillows_01"
+  },
+  "wooden_bowl_01": {
+    "title": "Wooden Bowl 01",
+    "author": "Oliver Harries",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/wooden_bowl_01"
+  },
+  "wooden_table_02": {
+    "title": "Wooden Table 02",
+    "author": "Serhii Khromov",
+    "license": "CC0",
+    "provider": "Poly Haven",
+    "source": "https://polyhaven.com/a/wooden_table_02"
+  }
+}

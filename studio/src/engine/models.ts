@@ -5,20 +5,25 @@ import { AssetPriority, assets, loadImage, yieldToBrowser } from './materials/te
 
 const cache = new Map<string, Promise<THREE.Group>>()
 const images = new Map<string, Promise<THREE.Texture>>()
-let folder = 'models'
+const MODEL_BASE = './assets/models/'
+let lowTextures = false
 let entryModels: ReadonlySet<string> = new Set()
 /** Models that could not be loaded this session. They are skipped so the rest of the home still appears. */
 export const skippedModels: string[] = []
 
 const roomModels: Partial<Record<RoomType, readonly string[]>> = {
-  living: ['sectional_grey', 'sofa_beige', 'SheenChair', 'coffee_table_round_01', 'sideboard_midcentury', 'potted_plant_01', 'ceramic_vase_02'],
-  kitchen: ['fridge_steel', 'bar_stool_wood', 'ceramic_vase_02', 'wooden_bowl_01'],
-  dining: ['dining_chair_bentwood', 'wooden_bowl_01', 'sideboard_midcentury', 'ceramic_vase_02'],
-  primary: ['bed_dark_headboard', 'dresser_tall'],
-  bedroom: ['bed_dark_headboard', 'dresser_tall'],
-  bath: ['toilet_modern'],
-  powder: ['toilet_modern'],
-  office: ['desk_lamp_black', 'dining_chair_bentwood'],
+  living: ['sectional_grey', 'sofa_beige', 'sofa_linen', 'SheenChair', 'modern_arm_chair_01', 'coffee_table_round_01',
+    'modern_wooden_cabinet', 'media_console_oak', 'floor_lamp_tripod', 'throw_pillows_01', 'potted_plant_01',
+    'potted_plant_02', 'ceramic_vase_02'],
+  kitchen: ['fridge_steel', 'oven_built_in', 'kitchen_faucet', 'bar_stool_wood', 'stool_counter_back',
+    'modern_ceiling_lamp_01', 'pendant_dome', 'wooden_bowl_01'],
+  dining: ['dining_table_trestle', 'wooden_table_02', 'dining_chair_bentwood', 'wooden_bowl_01', 'sideboard_midcentury'],
+  primary: ['bed_oak_linen', 'bed_dark_headboard', 'nightstand_oak', 'side_table_01', 'table_lamp_ceramic', 'bench_upholstered', 'dresser_tall'],
+  bedroom: ['bed_dark_headboard', 'bed_oak_linen', 'nightstand_oak', 'side_table_01', 'table_lamp_ceramic'],
+  bath: ['toilet_modern', 'shower_black', 'bath_angelo', 'vessel_sink_white'],
+  powder: ['toilet_modern', 'vessel_sink_white'],
+  office: ['desk_wood', 'desk_lamp_black', 'dining_chair_bentwood'],
+  gym: ['treadmill_gym', 'potted_plant_04'],
 }
 
 /** Only rank requests the builders actually make. Exterior views favor shared spaces behind glazing. */
@@ -35,9 +40,28 @@ export function prioritizeModels(plan: HomePlan, view?: CameraView) {
   return () => { if (entryModels === current) entryModels = previous }
 }
 
-/** Phones load the low-texture copies (256-512 px) to stay well inside mobile GPU memory. */
+/** Phones share the geometry files and keep smaller decoded textures. */
 export function setModelQuality(lo: boolean) {
-  folder = lo ? 'models-lo' : 'models'
+  lowTextures = lo
+}
+
+export function modelTextureSize(width: number, height: number, limit: number): [number, number] {
+  const scale = Math.min(1, limit / Math.max(width, height))
+  return [Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale))]
+}
+
+function resizeModelImage(image: ImageBitmap | HTMLImageElement, limit: number) {
+  const [width, height] = modelTextureSize(image.width, image.height, limit)
+  if (width === image.width && height === image.height) return image
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) return image
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(image, 0, 0, width, height)
+  if ('close' in image) image.close()
+  return canvas
 }
 
 interface GltfJson {
@@ -87,22 +111,23 @@ export function gltfJsonToGlb(json: GltfJson): ArrayBuffer {
   return out.buffer
 }
 
-function modelLoader(priority: number) {
+function modelLoader(priority: number, textureLimit: number) {
   const manager = new THREE.LoadingManager()
   manager.addHandler(/\.webp$/i, new class extends THREE.Loader<THREE.Texture> {
     override load(url: string, onLoad: (texture: THREE.Texture) => void, _onProgress?: unknown, onError?: (error: unknown) => void) {
-      let pending = images.get(url)
+      const key = `${textureLimit}:${url}`
+      let pending = images.get(key)
       if (!pending) {
         pending = loadImage(url, false, priority).then(image => {
-          const texture = new THREE.Texture(image)
+          const texture = new THREE.Texture(resizeModelImage(image, textureLimit))
           texture.flipY = false
           texture.needsUpdate = true
           return texture
         }).catch(error => {
-          images.delete(url)
+          images.delete(key)
           throw error
         })
-        images.set(url, pending)
+        images.set(key, pending)
       }
       // glTF samplers and transforms belong to each texture. The decoded image is shared.
       void pending.then(texture => onLoad(texture.clone()), error => onError?.(error))
@@ -123,9 +148,10 @@ export function loadModel(id: string): Promise<THREE.Group> {
     if (!lib) return Promise.reject(new Error('The studio material library is unavailable'))
     return import('./standins').then(({ standinModel }) => standinModel(lib, id, MODEL_YAW[id] ?? 0))
   }
-  const base = `./assets/${folder}/`
-  const url = `${base}${id}.json`
-  let p = cache.get(url)
+  const textureLimit = !lowTextures ? 1024 : /rock|stone|boulder|sofa|sectional|bed/i.test(id) ? 512 : 256
+  const url = `${MODEL_BASE}${id}.json`
+  const key = `${textureLimit}:${id}`
+  let p = cache.get(key)
   if (!p) {
     const priority = entryModels.has(id) ? AssetPriority.view : AssetPriority.rest
     p = assets.run(priority, async () => {
@@ -135,7 +161,7 @@ export function loadModel(id: string): Promise<THREE.Group> {
     })
       .then(async json => {
         await yieldToBrowser()
-        return modelLoader(priority).parseAsync(gltfJsonToGlb(json), base)
+        return modelLoader(priority, textureLimit).parseAsync(gltfJsonToGlb(json), MODEL_BASE)
       })
       .then(g => {
         g.scene.traverse(o => {
@@ -152,10 +178,10 @@ export function loadModel(id: string): Promise<THREE.Group> {
       .catch(err => {
         console.warn(`model ${id} skipped:`, err)
         skippedModels.push(id)
-        cache.delete(url) // allow a later plan or retry to fetch it afresh
+        cache.delete(key) // allow a later plan or retry to fetch it afresh
         return new THREE.Group()
       })
-    cache.set(url, p)
+    cache.set(key, p)
   }
   return p
 }
@@ -190,30 +216,40 @@ export async function modelPieces(id: string): Promise<THREE.Mesh[]> {
  * src/engine/interior): applied before measuring, so sizes refer to the corrected orientation.
  */
 export const MODEL_YAW: Record<string, number> = {
+  bed_oak_linen: -Math.PI / 2,
   bed_dark_headboard: Math.PI / 2,
-  bed_upholstered_white: -Math.PI / 2,
   dresser_tall: -Math.PI / 2,
-  vanity_floating: Math.PI / 2,
   toilet_modern: -Math.PI / 2,
   basin_mixer_dark: Math.PI / 2,
+  kitchen_faucet: -Math.PI / 2,
+  nightstand_oak: Math.PI,
+  treadmill_gym: Math.PI,
 }
+
+export type ModelSize = { size?: number; width?: number; depth?: number; height?: number }
+
+const modelBounds = new WeakMap<THREE.Group, Map<number, THREE.Box3>>()
 
 /**
  * Clone a model, turn it to face +z, and scale it uniformly: `size` = largest horizontal dimension, `width` = x
  * extent, `depth` = z extent, `height` = y extent (meters; the last one given wins). `width` and `depth` together fit
  * the footprint exactly (non-uniform). Rests on y = 0, centred on x and z.
  */
-export async function placeModel(id: string, opts: { size?: number; width?: number; depth?: number; height?: number } = {}): Promise<THREE.Group> {
-  const src = await loadModel(id)
-  const g = src.clone(true)
-  g.rotation.y = MODEL_YAW[id] ?? 0
-  g.updateMatrixWorld(true)
-  const box = new THREE.Box3().setFromObject(g)
+export function fitModel(source: THREE.Group, yaw: number, opts: ModelSize, id: string): THREE.Group {
   const wrap = new THREE.Group()
   wrap.name = id
-  // a skipped model is an empty group: nothing to measure or place
-  if (box.isEmpty()) return wrap
+  const facing = new THREE.Group()
+  facing.rotation.y = yaw
+  facing.add(source.clone(true))
+  let bounds = modelBounds.get(source)
+  if (!bounds) modelBounds.set(source, bounds = new Map())
+  let box = bounds.get(yaw)
+  if (!box) {
+    box = new THREE.Box3().setFromObject(facing, true)
+    bounds.set(yaw, box)
+  }
   const s = box.getSize(new THREE.Vector3())
+  if (s.x <= 0 || s.y <= 0 || s.z <= 0) return wrap
   let k = 1
   if (opts.size) k = opts.size / Math.max(s.x, s.z)
   if (opts.width) k = opts.width / s.x
@@ -223,12 +259,16 @@ export async function placeModel(id: string, opts: { size?: number; width?: numb
   const kx = opts.width && opts.depth ? opts.width / s.x : k
   const kz = opts.width && opts.depth ? opts.depth / s.z : k
   const ky = opts.width && opts.depth && !opts.height ? Math.sqrt(kx * kz) : k
-  // the scale applies before the facing turn: a quarter turn swaps x and z
-  const quarter = Math.abs(Math.sin(g.rotation.y)) > 0.5
-  g.scale.set(quarter ? kz : kx, ky, quarter ? kx : kz)
-  // rest on y=0, centred
+  // Scale in room axes after the facing correction, preserving the source node transforms.
+  const fitted = new THREE.Group()
+  fitted.scale.set(kx, ky, kz)
   const c = box.getCenter(new THREE.Vector3())
-  g.position.set(-c.x * kx, -box.min.y * ky, -c.z * kz)
-  wrap.add(g)
+  fitted.position.set(-c.x * kx, -box.min.y * ky, -c.z * kz)
+  fitted.add(facing)
+  wrap.add(fitted)
   return wrap
+}
+
+export async function placeModel(id: string, opts: ModelSize = {}): Promise<THREE.Group> {
+  return fitModel(await loadModel(id), MODEL_YAW[id] ?? 0, opts, id)
 }
