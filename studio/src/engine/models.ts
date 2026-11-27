@@ -129,9 +129,9 @@ export const MODEL_YAW: Record<string, number> = {
 
 /**
  * Clone a model, turn it to face +z, and scale it uniformly: `size` = largest horizontal dimension, `width` = x
- * extent, `height` = y extent (meters; the last one given wins). Rests on y = 0, centred on x and z.
+ * extent, `depth` = z extent, `height` = y extent (meters; the last one given wins). Rests on y = 0, centred on x and z.
  */
-export async function placeModel(id: string, opts: { size?: number; width?: number; height?: number } = {}): Promise<THREE.Group> {
+export async function placeModel(id: string, opts: { size?: number; width?: number; depth?: number; height?: number } = {}): Promise<THREE.Group> {
   const src = await loadModel(id)
   const g = src.clone(true)
   g.rotation.y = MODEL_YAW[id] ?? 0
@@ -145,6 +145,7 @@ export async function placeModel(id: string, opts: { size?: number; width?: numb
   let k = 1
   if (opts.size) k = opts.size / Math.max(s.x, s.z)
   if (opts.width) k = opts.width / s.x
+  if (opts.depth) k = opts.depth / s.z
   if (opts.height) k = opts.height / s.y
   g.scale.setScalar(k)
   // rest on y=0, centred
