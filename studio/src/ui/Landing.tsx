@@ -66,7 +66,7 @@ const Homes = memo(function Homes() {
 function Wordmark() {
   return (
     <a className="site-wordmark" href="#home">
-      <img src="./cuby.svg" alt="" width="28" height="28" /> Cuby Studio
+      <img src="./cuby.png" alt="" width="28" height="28" /> Cuby Studio
     </a>
   )
 }

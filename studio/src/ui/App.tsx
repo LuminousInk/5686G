@@ -515,7 +515,7 @@ export function App({ target, visible, requested, onLoad }: {
       {visible && <div className="hud">
         <header className="topbar">
           <a className="brand studio-home" href="#home" aria-label="Cuby Studio home">
-            <img src="./cuby.svg" alt="" width={28} height={28} />
+            <img src="./cuby.png" alt="" width={28} height={28} />
             <span className="brand-word">Cuby</span>
           </a>
           <div className="plan-switch">

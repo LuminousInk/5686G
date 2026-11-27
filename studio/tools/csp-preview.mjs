@@ -1,22 +1,22 @@
 // Serves dist/ the way a locked-down host would: a strict Content-Security-Policy, so features that a plain
 // `vite preview` allows but an artifact host may block (WebAssembly, fetching data: or blob: URLs) fail here too.
 //
-//   node tools/csp-preview.mjs [port]        then BASE=http://localhost:4174/ node tools/interact.mjs
+//   node tools/csp-preview.mjs [port] [distDir]   then BASE=http://localhost:4174/ node tools/interact.mjs
 //   CSP="..." node tools/csp-preview.mjs     to try a different policy
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 
 const port = Number(process.argv[2] ?? 4174)
-const root = path.resolve('dist')
+const root = path.resolve(process.argv[3] ?? 'dist')
 const csp =
   process.env.CSP ??
   [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'", // no 'wasm-unsafe-eval' / 'unsafe-eval'
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: blob:",
-    "font-src 'self' data:",
+    "font-src 'self' data: https://fonts.gstatic.com",
     "media-src 'self' data: blob:",
     "connect-src 'self'", // fetch() of data: or blob: URLs is refused
     "worker-src 'self' blob:",
@@ -39,7 +39,7 @@ http
   .createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
     let file = path.join(root, decodeURIComponent(url.pathname))
-    if (!file.startsWith(root)) {
+    if (file !== root && !file.startsWith(root + path.sep)) {
       res.writeHead(403).end()
       return
     }
@@ -55,4 +55,4 @@ http
     })
     fs.createReadStream(file).pipe(res)
   })
-  .listen(port, () => console.log(`dist/ with CSP on http://localhost:${port}/\n  ${csp}`))
+  .listen(port, () => console.log(`${path.relative(process.cwd(), root)}/ with CSP on http://localhost:${port}/\n  ${csp}`))

@@ -1,7 +1,36 @@
+import { cpSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vitest/config'
+import { defineConfig, type ViteUserConfig } from 'vitest/config'
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+  if (command === 'build' && mode === 'public') {
+    return {
+      ...studioConfig,
+      define: { 'import.meta.env.PUBLIC_BUILD': 'true' },
+      build: { ...studioConfig.build, outDir: 'dist-public', copyPublicDir: false },
+      plugins: [
+        ...studioConfig.plugins,
+        {
+          name: 'public-build-assets',
+          writeBundle({ dir }) {
+            if (!dir) throw new Error('The public build needs an output directory')
+            const source = resolve('public')
+            const modelDirs = new Set(['models', 'models-lo'].map(folder => join('assets', folder)))
+            cpSync(source, dir, {
+              recursive: true,
+              dereference: true,
+              filter: file => !modelDirs.has(relative(source, file)),
+            })
+          },
+        },
+      ],
+    }
+  }
+  return studioConfig
+})
+
+const studioConfig = {
   base: './',
   plugins: [react()],
   server: { host: true, port: 5173 },
@@ -23,4 +52,4 @@ export default defineConfig({
   },
   // Whole-house builds take seconds when several agents share the CPU: allow them, keep real hangs visible.
   test: { environment: 'node', include: ['src/**/*.test.ts'], testTimeout: 30_000 },
-})
+} satisfies ViteUserConfig
