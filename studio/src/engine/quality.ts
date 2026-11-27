@@ -24,6 +24,14 @@ export interface QualitySettings {
   /** Protect the frame budget by skipping more nearby pixels during low-tier navigation. */
   reducedMotionHaze: boolean
   treeDetail: number
+  refinement: {
+    auto: boolean
+    ssr: boolean
+    pixelBudget: number
+    atlasBudget: number
+    samples: number
+    photoSamples: number
+  }
 }
 
 export const TIERS: Record<Tier, QualitySettings> = {
@@ -45,6 +53,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
     bloom: true,
     reducedMotionHaze: true,
     treeDetail: 0.5,
+    refinement: { auto: false, ssr: false, pixelBudget: 180_000, atlasBudget: 32 * 2 ** 20, samples: 24, photoSamples: 96 },
   },
   medium: {
     tier: 'medium',
@@ -64,6 +73,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
     bloom: true,
     reducedMotionHaze: false,
     treeDetail: 0.8,
+    refinement: { auto: false, ssr: false, pixelBudget: 490_000, atlasBudget: 56 * 2 ** 20, samples: 40, photoSamples: 192 },
   },
   high: {
     tier: 'high',
@@ -83,6 +93,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
     bloom: true,
     reducedMotionHaze: false,
     treeDetail: 1,
+    refinement: { auto: true, ssr: true, pixelBudget: 830_000, atlasBudget: 80 * 2 ** 20, samples: 64, photoSamples: 384 },
   },
 }
 

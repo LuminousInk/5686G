@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import * as THREE from 'three'
 import { Engine } from '../engine/Engine'
 import { loadModel, MODEL_YAW, setModelQuality, skippedModels } from '../engine/models'
@@ -260,7 +260,10 @@ export function App({ target, visible, requested, onLoad }: {
     const stopTourForKey = (event: KeyboardEvent) => {
       const onControls = (event.target as HTMLElement | null)?.closest?.('[data-tour-control]')
       if (onControls && ['Tab', 'Enter', ' '].includes(event.key)) return
-      if (latest.current.visible) tour.stop()
+      if (latest.current.visible) {
+        tour.stop()
+        if (!getState().photo) engine?.interruptRefinement()
+      }
     }
     const trackScroll = () => { lastScroll.current = performance.now() }
     window.addEventListener('keydown', blockKeys)
@@ -277,6 +280,7 @@ export function App({ target, visible, requested, onLoad }: {
     }
     let hintTimer = 0
     nav.onInteract = () => {
+      if (!getState().photo) engine?.interruptRefinement()
       const wasTouring = tour.stop()
       if (getState().sheet === 'plans' && matchMedia('(max-width: 899px)').matches) setState({ sheet: null })
       if (!wasTouring && nav?.mode === 'walk' && getState().walkHint && !hintTimer) hintTimer = window.setTimeout(() => setState({ walkHint: false }), 4500)
@@ -639,13 +643,23 @@ export function App({ target, visible, requested, onLoad }: {
   const chips = mode === 'walk' ? walkViews : exteriorViews
   const touring = !!tour.state
 
+  const refinementAllowed = visible && !loading && !editing && !touring && !sheet && photo?.state !== 'done' &&
+    (takingPhoto || mode === 'orbit' || mode === 'walk')
+  useEffect(() => {
+    if (booted) engine?.setRefinementAllowed(refinementAllowed)
+  }, [booted, refinementAllowed])
+
   return (
     <div className={`app mode-${mode} ${sheet ? `has-${sheet}` : ''} ${editing && editorModule ? 'is-editing' : ''} ${designer && !designWalk ? 'is-designing' : ''}`}
       onPointerDownCapture={e => {
         const target = e.target as Element
+        if (!takingPhoto && !target.closest('[data-refinement-control]')) engine?.interruptRefinement()
         if (target !== canvasRef.current && !target.closest('[data-tour-control]')) tour.stop()
       }}
-      onWheelCapture={e => { if (e.target !== canvasRef.current) tour.stop() }}>
+      onWheelCapture={e => {
+        if (!takingPhoto) engine?.interruptRefinement()
+        if (e.target !== canvasRef.current) tour.stop()
+      }}>
       <canvas ref={canvasRef} className="stage" />
 
       {designer && designerModule && appliedTarget === target && <designerModule.Designer
@@ -710,6 +724,7 @@ export function App({ target, visible, requested, onLoad }: {
             className="icon-btn"
             onClick={() => setState({ photo: { state: 'rendering', samples: 0 }, sheet: null })}
             aria-label="Render a photo"
+            disabled={!!loading || editing}
           >
             <Icon.aperture />
           </button>
@@ -727,6 +742,7 @@ export function App({ target, visible, requested, onLoad }: {
           <button className="icon-btn" onClick={() => setState({ sheet: sheet === 'help' ? null : 'help' })} aria-label="Controls">
             <Icon.help />
           </button>
+          {engine && refinementAllowed && !takingPhoto && <RefinementControl engine={engine} />}
         </nav>}
 
         {!designer && engine && hotspots && !loading && !sheet && !editing && !takingPhoto && mode !== 'plan' && !touring &&
@@ -857,3 +873,28 @@ function readWalkPosition() {
 }
 
 export { THREE }
+
+function RefinementControl({ engine }: { engine: Engine }) {
+  const still = useSyncExternalStore(engine.subscribeRefinement, engine.getRefinement)
+  const [auto, setAuto] = useState(engine.autoRefinement)
+  const automatic = engine.autoRefinementCapable
+  const active = still.state === 'preparing' || still.state === 'rendering' || still.state === 'complete'
+  const label = still.state === 'preparing' ? 'Preparing…'
+    : still.state === 'rendering' ? `Rendering · ${still.samples}`
+    : still.state === 'complete' ? 'Rendered'
+    : still.state === 'unavailable' ? 'Render unavailable'
+    : automatic ? (auto ? 'Auto render' : 'Auto render off') : 'Render'
+  return (
+    <button type="button" className="btn btn-ghost" data-refinement-control
+      aria-label={automatic ? 'Automatic still rendering' : active ? 'Cancel still rendering' : 'Render still'}
+      aria-pressed={automatic ? auto : undefined}
+      title={still.samples ? `${still.samples} of ${still.target} samples` : label}
+      onClick={() => {
+        if (automatic) {
+          engine.setAutoRefinement(!auto)
+          setAuto(!auto)
+        } else if (active) engine.interruptRefinement()
+        else engine.requestRefinement()
+      }}>{label}</button>
+  )
+}

@@ -12,6 +12,7 @@ import { anchoredExposure, interiorExposureWeight, roomExposureEV } from './rend
 import { RoomProbes } from './env/roomProbes'
 import { roomVolumes, type RoomVolume } from './env/roomVolumes'
 import { RenderPipeline } from './render/pipeline'
+import { Refinement } from './render/refine'
 import { detectTier, TIERS, type QualitySettings } from './quality'
 import { Site } from './site/site'
 import { NightLights } from './env/lights'
@@ -39,12 +40,15 @@ export class Engine {
   readonly sky: SkyEnvironment
   readonly pipeline: RenderPipeline
   readonly lights: NightLights
+  readonly autoRefinementCapable: boolean
   house: HouseModel | null = null
   site: Site | null = null
   interior: Interior | null = null
   plan: HomePlan | null = null
   private raf = 0
   private atmospherePrecompute: 'initial' | 'scheduled' | 'started' = 'initial'
+  private readonly still: Refinement
+  private screenReflections: boolean
   private last = performance.now()
   private lastView = new THREE.Matrix4()
   private lastProj = new THREE.Matrix4()
@@ -107,7 +111,16 @@ export class Engine {
     this.lib = new MaterialLibrary(renderer, this.quality)
     this.sky = new SkyEnvironment(renderer, this.scene, this.quality)
     this.pipeline = new RenderPipeline(renderer, this.scene, this.camera, this.quality)
-    const toneMapping = new URLSearchParams(location.search).get('tm')
+    const query = new URLSearchParams(location.search)
+    this.screenReflections = this.quality.refinement.ssr && query.get('ssr') !== '0' &&
+      (query.get('gallery') !== '1' || query.get('ssr') === '1')
+    // Compiling the trace kernel synchronously can block the first input on software WebGL.
+    this.autoRefinementCapable = this.quality.refinement.auto &&
+      (renderer.extensions.has('KHR_parallel_shader_compile') || query.get('refine') === '1')
+    const autoRefinement = this.autoRefinementCapable && query.get('refine') !== '0' &&
+      (query.get('gallery') !== '1' || query.get('refine') === '1')
+    this.still = new Refinement(this, autoRefinement)
+    const toneMapping = query.get('tm')
     if (toneMapping) this.pipeline.setToneMapping(toneMapping)
     this.lights = new NightLights(this.scene, this.quality)
     this.dpr = this.dprTarget = Math.min(window.devicePixelRatio || 1, this.quality.maxPixelRatio)
@@ -120,6 +133,7 @@ export class Engine {
     this.renderer.setSize(this.width, this.height, false)
     this.camera.aspect = this.width / this.height
     this.camera.updateProjectionMatrix()
+    this.still.interrupt(performance.now())
     this.pipeline.setSize(this.width, this.height)
     this.invalidate()
   }
@@ -129,6 +143,38 @@ export class Engine {
     this.dirty = true
     this.pipeline.reset()
     if (!this.raf && !this.paused) this.start()
+  }
+
+  get refinement() { return this.still.status }
+  get autoRefinement() { return this.still.auto }
+  subscribeRefinement = (listener: () => void) => this.still.subscribe(listener)
+  getRefinement = () => this.still.status
+
+  setRefinementAllowed(allowed: boolean) {
+    this.still.setAllowed(allowed)
+    if (!allowed) this.invalidate()
+    else if (!this.paused) this.start()
+  }
+
+  setAutoRefinement(enabled: boolean) {
+    this.still.auto = enabled && this.autoRefinementCapable
+    if (!enabled) this.still.release(performance.now())
+    this.invalidate()
+  }
+
+  interruptRefinement() {
+    const wasShowing = this.refinement.samples > 0
+    this.still.interrupt(performance.now())
+    if (wasShowing) this.invalidate()
+  }
+
+  requestRefinement(photo = false) {
+    this.still.request(photo, performance.now())
+    if (!this.paused) this.start()
+  }
+
+  captureRefinement() {
+    try { return this.still.capture() } finally { this.interruptRefinement() }
   }
 
   addHook(h: FrameHook) {
@@ -143,6 +189,8 @@ export class Engine {
     view?: CameraView,
     pauseForBrowsing = yieldToBrowser,
   ) {
+    this.still.release(performance.now())
+    this.pipeline.disposeReflections()
     this.loading = true
     const resetPriority = prioritizeModels(plan, view)
     try {
@@ -244,6 +292,8 @@ export class Engine {
       interior.dispose()
       return
     }
+    this.still.release(performance.now())
+    this.pipeline.disposeReflections()
     this.lightmap.clear()
     this.probes.clear()
     if (this.house) {
@@ -301,12 +351,15 @@ export class Engine {
   }
 
   async setTime(id: string) {
+    this.still.release(performance.now())
     const seq = ++this.timeSeq
     const preset = TIME_PRESETS.find(t => t.id === id) ?? TIME_PRESETS[0]
     this.lightmap.clear('time of day changed')
     this.house?.cutaway.syncBindings()
     const changed = await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35)
     if (changed === false || seq !== this.timeSeq) return
+    this.lights.setLevel(preset.lamps)
+    this.lib.setLamps(preset.lamps)
     if (!changed) {
       // The legacy HDRI update can complete with a void result. Refresh its visible sky too.
       this.invalidate()
@@ -315,8 +368,6 @@ export class Engine {
     this.pipeline.exposure = this.sky.exposure
     this.pipeline.setLook(preset)
     this.pipeline.resetMotion()
-    this.lights.setLevel(preset.lamps)
-    this.lib.setLamps(preset.lamps)
     this.site?.setTime(preset)
     this.resetMeter()
     if (this.house && !this.loading) {
@@ -344,6 +395,7 @@ export class Engine {
     const house = this.house
     if (!house) return
     if (house.cutaway.update(floor, cut, this.camera.position, target)) {
+      this.still.release(performance.now())
       this.sky.sun.shadow.needsUpdate = true
       this.invalidate()
     }
@@ -351,6 +403,7 @@ export class Engine {
   }
 
   setDollhouse(on: boolean) {
+    if (on !== this.dollhouse) this.still.release(performance.now())
     this.dollhouse = on
     this.sky.sun.shadow.needsUpdate = true
     this.pipeline.resetMotion()
@@ -358,6 +411,8 @@ export class Engine {
   }
 
   setFinish(zone: string, option: string) {
+    this.still.release(performance.now())
+    this.pipeline.disposeReflections()
     if (zone === 'palette') this.lib.setPalette(option)
     else this.lib.setFinish(zone, option)
     this.lightmap.syncMaterials()
@@ -366,6 +421,7 @@ export class Engine {
     const house = this.house
     void this.lib.bank.ready().then(() => {
       if (finish !== this.finishSeq || this.house !== house) return
+      this.still.release(performance.now())
       this.probes.reset(180, true)
       this.sky.sun.shadow.needsUpdate = true
       this.pipeline.resetMotion()
@@ -417,6 +473,8 @@ export class Engine {
       this.sky.placeSun(this.sky.sunDir)
       if (this.probes.step(t, this.scene, this.camera)) this.dirty = true
     }
+    const navigation = this.keepAlive?.()
+    if (this.still.requested && (moved || this.liveMotion || navigation)) this.still.cameraActive(t)
     const active = moved || this.dirty || this.liveMotion
     const interiorWeight = this.plan && !this.dollhouse ? interiorExposureWeight(this.plan, this.camera.position) : 0
     const inside = interiorWeight > 0.045
@@ -466,10 +524,24 @@ export class Engine {
     const fadeAtmosphere = this.sky.preset.id !== 'night' && atmosphere.needsTransition(interiorView)
     const canStartAtmosphere = this.atmospherePrecompute === 'scheduled' && !this.paused && !this.loading
       && !interiorView && this.sky.preset.id !== 'night'
+    const mayTrace = (this.screenReflections || this.still.requested) && !this.paused && !this.loading && !!this.house && (!this.dollhouse || this.still.isPhoto) &&
+      !moved && !this.liveMotion && !navigation && !document.hidden
+    const rasterReady = mayTrace && !canStartAtmosphere && !fadeAtmosphere && !requestMeter && !active &&
+      this.pipeline.converged && !meter.pending
+    if (rasterReady && mayTrace && !this.dollhouse && this.screenReflections) {
+      try {
+        this.pipeline.reflectStill(this.renderer, [this.house?.group, this.interior?.group])
+      } catch (error) {
+        this.screenReflections = false
+        this.pipeline.disposeReflections()
+        console.warn('Still reflections unavailable', error)
+      }
+    }
+    const refining = mayTrace && this.still.frame(t, rasterReady)
     if (!canStartAtmosphere && !fadeAtmosphere && !requestMeter && !active
-      && this.pipeline.accumulationConverged && !this.keepAlive?.()) {
-      // Wait for a pending exposure read without drawing extra frames.
-      if ((!inside || !meter.pending) && (!this.probes.pending || this.dollhouse || this.liveMotion)) this.stop()
+      && this.pipeline.accumulationConverged && !navigation) {
+      // Wait for pending exposure, probe and refinement work without redrawing the scene.
+      if (!refining && (!inside || !meter.pending) && (!this.probes.pending || this.dollhouse || this.liveMotion)) this.stop()
       return
     }
     this.pipeline.exposure = this.sky.exposure * this.adapt
@@ -529,6 +601,7 @@ export class Engine {
     this.timeSeq++
     this.finishSeq++
     this.stop()
+    this.still.release(performance.now())
     this.lightmap.clear()
     this.probes.dispose()
     this.pipeline.dispose()
