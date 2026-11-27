@@ -29,11 +29,14 @@ export interface Segment2 {
   bottom?: number
 }
 
-interface Hole {
+interface WallCut {
   u0: number
   u1: number
   y0: number
   y1: number
+}
+
+interface Hole extends WallCut {
   op: Opening
   openingIndex: number
 }
@@ -171,21 +174,47 @@ function outline(p: Piece, u0: number, u1: number, bottom: (u: number) => number
   return pts
 }
 
-function shapeWithHoles(pts: [number, number][], holes: Hole[], pad = 0): THREE.Shape {
+function shapeWithHoles(pts: [number, number][], holes: WallCut[]): THREE.Shape {
   const shape = new THREE.Shape()
   shape.moveTo(pts[0][0], pts[0][1])
   for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1])
   shape.closePath()
   for (const h of holes) {
     const path = new THREE.Path()
-    path.moveTo(h.u0 - pad, h.y0 - pad)
-    path.lineTo(h.u0 - pad, h.y1 + pad)
-    path.lineTo(h.u1 + pad, h.y1 + pad)
-    path.lineTo(h.u1 + pad, h.y0 - pad)
+    path.moveTo(h.u0, h.y0)
+    path.lineTo(h.u0, h.y1)
+    path.lineTo(h.u1, h.y1)
+    path.lineTo(h.u1, h.y0)
     path.closePath()
     shape.holes.push(path)
   }
   return shape
+}
+
+/** Floor-level openings interrupt the outer contour. Enclosed holes must stay inside it. */
+export function partitionShape(u0: number, u1: number, floor: number, top: (u: number) => number, cuts: WallCut[]) {
+  const points: [number, number][] = []
+  const holes: WallCut[] = []
+  let u = u0
+  for (const cut of cuts) {
+    if (cut.y0 > floor) {
+      holes.push(cut)
+      continue
+    }
+    const start = Math.max(u0, cut.u0)
+    const end = Math.min(u1, cut.u1)
+    if (end <= start) continue
+    if (start > u) points.push([u, floor], [start, floor])
+    points.push([start, cut.y1], [end, cut.y1])
+    u = end
+  }
+  if (u < u1) points.push([u, floor], [u1, floor])
+  const steps = Math.max(1, Math.ceil((u1 - u0) / 0.25))
+  for (let i = steps; i >= 0; i--) {
+    const at = u0 + (i / steps) * (u1 - u0)
+    points.push([at, top(at)])
+  }
+  return shapeWithHoles(points, holes)
 }
 
 function extrude(shape: THREE.Shape, w0: number, w1: number, m: THREE.Matrix4): THREE.BufferGeometry {
@@ -409,24 +438,7 @@ function buildSharedWall(
     op,
     openingIndex: plan.openings.indexOf(op),
   })).sort((a, c) => a.u0 - c.u0)
-  const shape = new THREE.Shape()
-  shape.moveTo(u0, fy)
-  shape.lineTo(u1, fy)
-  const steps = Math.max(1, Math.ceil((u1 - u0) / 0.25))
-  for (let i = steps; i >= 0; i--) {
-    const u = u0 + (i / steps) * (u1 - u0)
-    shape.lineTo(u, top(u))
-  }
-  shape.closePath()
-  for (const h of holes) {
-    const path = new THREE.Path()
-    path.moveTo(h.u0, h.y0 - 0.01)
-    path.lineTo(h.u0, h.y1)
-    path.lineTo(h.u1, h.y1)
-    path.lineTo(h.u1, h.y0 - 0.01)
-    path.closePath()
-    shape.holes.push(path)
-  }
+  const shape = partitionShape(u0, u1, fy, top, holes)
   batch.add(lib.wall, extrude(shape, -INT_WALL_T / 2, INT_WALL_T / 2, m))
 
   let u = u0
