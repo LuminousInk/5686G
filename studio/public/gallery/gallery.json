@@ -1,0 +1,266 @@
+{
+  "homes": [
+    {
+      "id": "cedar-ridge",
+      "name": "Cedar Ridge",
+      "style": "Modern Woodland",
+      "area": 2310,
+      "beds": 3,
+      "baths": 2.5
+    },
+    {
+      "id": "coastal-modern",
+      "name": "Coastal Modern",
+      "style": "Coastal",
+      "area": 1400,
+      "beds": 3,
+      "baths": 2
+    },
+    {
+      "id": "woodland-modern",
+      "name": "Woodland Modern",
+      "style": "Woodland",
+      "area": 2273,
+      "beds": 3,
+      "baths": 2.5
+    },
+    {
+      "id": "aspen-custom",
+      "name": "Aspen Custom",
+      "style": "Mountain Modern",
+      "area": 4375,
+      "beds": 6,
+      "baths": 5.5
+    },
+    {
+      "id": "modern-farmhouse",
+      "name": "Modern Farmhouse",
+      "style": "Farmhouse",
+      "area": 2850,
+      "beds": 4,
+      "baths": 3.5
+    }
+  ],
+  "images": [
+    {
+      "id": "cedar-ridge-golden",
+      "plan": "cedar-ridge",
+      "home": "Cedar Ridge",
+      "kind": "exterior",
+      "space": "Garden elevation",
+      "style": "Natural Cedar · Charcoal",
+      "light": "Golden hour",
+      "share": "#c-0-0-0-0-0-0-0-0-0-0-6-v-cedar-ridge-golden"
+    },
+    {
+      "id": "coastal-modern-golden",
+      "plan": "coastal-modern",
+      "home": "Coastal Modern",
+      "kind": "exterior",
+      "space": "Entry elevation",
+      "style": "Chalk · Natural Cedar",
+      "light": "Golden hour",
+      "share": "#c-1-0-0-0-1-0-0-0-4-v-coastal-modern-golden"
+    },
+    {
+      "id": "woodland-modern-golden",
+      "plan": "woodland-modern",
+      "home": "Woodland Modern",
+      "kind": "exterior",
+      "space": "Garden elevation",
+      "style": "Natural Cedar · Charcoal",
+      "light": "Golden hour",
+      "share": "#c-2-0-0-0-0-0-1-1-2-v-woodland-modern-golden"
+    },
+    {
+      "id": "aspen-custom-golden",
+      "plan": "aspen-custom",
+      "home": "Aspen Custom",
+      "kind": "exterior",
+      "space": "Walkout elevation",
+      "style": "Natural Cedar · Charcoal",
+      "light": "Golden hour",
+      "share": "#c-3-0-0-0-0-0-1-1-0-1-v-aspen-custom-golden"
+    },
+    {
+      "id": "modern-farmhouse-golden",
+      "plan": "modern-farmhouse",
+      "home": "Modern Farmhouse",
+      "kind": "exterior",
+      "space": "Porch elevation",
+      "style": "Arctic White",
+      "light": "Golden hour",
+      "share": "#c-4-0-3-0-0-0-0-0-3-v-modern-farmhouse-golden"
+    },
+    {
+      "id": "cedar-great-room",
+      "plan": "cedar-ridge",
+      "home": "Cedar Ridge",
+      "kind": "interior",
+      "space": "Great room",
+      "style": "Light Oak & Limestone · Limewash",
+      "light": "Golden hour",
+      "share": "#c-0-0-0-0-0-0-0-0-0-0-6-v-cedar-great-room"
+    },
+    {
+      "id": "coastal-kitchen",
+      "plan": "coastal-modern",
+      "home": "Coastal Modern",
+      "kind": "interior",
+      "space": "Kitchen",
+      "style": "Light Oak & Limestone · Fog blue",
+      "light": "Afternoon",
+      "share": "#c-1-1-0-0-1-0-0-0-4-v-coastal-kitchen"
+    },
+    {
+      "id": "woodland-primary",
+      "plan": "woodland-modern",
+      "home": "Woodland Modern",
+      "kind": "interior",
+      "space": "Primary bedroom",
+      "style": "Walnut & Travertine · Sage",
+      "light": "Golden hour",
+      "share": "#c-2-0-0-0-0-0-1-1-2-v-woodland-primary"
+    },
+    {
+      "id": "aspen-lower-suite",
+      "plan": "aspen-custom",
+      "home": "Aspen Custom",
+      "kind": "interior",
+      "space": "Lower suite",
+      "style": "Light Oak & Limestone · Greige",
+      "light": "Golden hour",
+      "share": "#c-3-0-0-0-0-0-1-1-0-1-v-aspen-lower-suite"
+    },
+    {
+      "id": "farmhouse-great-room",
+      "plan": "modern-farmhouse",
+      "home": "Modern Farmhouse",
+      "kind": "interior",
+      "space": "Great room",
+      "style": "Light Oak & Limestone · Clay",
+      "light": "Golden hour",
+      "share": "#c-4-0-3-0-0-0-0-0-3-v-farmhouse-great-room"
+    },
+    {
+      "id": "cedar-charred",
+      "plan": "cedar-ridge",
+      "home": "Cedar Ridge",
+      "kind": "exterior",
+      "space": "Garden elevation",
+      "style": "Charred Cedar",
+      "light": "Golden hour",
+      "share": "#c-0-0-3-0-0-0-0-0-0-0-6-v-cedar-charred"
+    },
+    {
+      "id": "coastal-weathered",
+      "plan": "coastal-modern",
+      "home": "Coastal Modern",
+      "kind": "exterior",
+      "space": "Entry elevation",
+      "style": "Weathered Cedar",
+      "light": "Afternoon",
+      "share": "#c-1-1-2-0-1-0-0-0-4-v-coastal-weathered"
+    },
+    {
+      "id": "woodland-day",
+      "plan": "woodland-modern",
+      "home": "Woodland Modern",
+      "kind": "exterior",
+      "space": "Entry terrace",
+      "style": "Natural Cedar · Charcoal",
+      "light": "Afternoon",
+      "share": "#c-2-1-0-0-0-0-1-1-2-v-woodland-day"
+    },
+    {
+      "id": "aspen-dusk",
+      "plan": "aspen-custom",
+      "home": "Aspen Custom",
+      "kind": "exterior",
+      "space": "Walkout elevation",
+      "style": "Natural Cedar · Charcoal",
+      "light": "Dusk",
+      "share": "#c-3-2-0-0-0-0-1-1-0-1-v-aspen-dusk"
+    },
+    {
+      "id": "farmhouse-sage",
+      "plan": "modern-farmhouse",
+      "home": "Modern Farmhouse",
+      "kind": "exterior",
+      "space": "Porch elevation",
+      "style": "Sage",
+      "light": "Afternoon",
+      "share": "#c-4-1-4-0-0-0-0-0-3-v-farmhouse-sage"
+    },
+    {
+      "id": "cedar-dusk",
+      "plan": "cedar-ridge",
+      "home": "Cedar Ridge",
+      "kind": "exterior",
+      "space": "Terrace elevation",
+      "style": "Natural Cedar · Charcoal",
+      "light": "Dusk",
+      "share": "#c-0-2-0-0-0-0-0-0-0-0-6-v-cedar-dusk"
+    },
+    {
+      "id": "cedar-kitchen",
+      "plan": "cedar-ridge",
+      "home": "Cedar Ridge",
+      "kind": "interior",
+      "space": "Kitchen",
+      "style": "Walnut & Travertine · Limewash",
+      "light": "Golden hour",
+      "share": "#c-0-0-0-0-0-0-0-0-0-1-6-v-cedar-kitchen"
+    },
+    {
+      "id": "coastal-living",
+      "plan": "coastal-modern",
+      "home": "Coastal Modern",
+      "kind": "interior",
+      "space": "Great room",
+      "style": "Ash & Slate · Warm white",
+      "light": "Golden hour",
+      "share": "#c-1-0-0-0-1-0-0-2-0-v-coastal-living"
+    },
+    {
+      "id": "woodland-great-room",
+      "plan": "woodland-modern",
+      "home": "Woodland Modern",
+      "kind": "interior",
+      "space": "Great room",
+      "style": "Walnut & Travertine · Limewash",
+      "light": "Golden hour",
+      "share": "#c-2-0-0-0-0-0-1-1-6-v-woodland-great-room"
+    },
+    {
+      "id": "aspen-great-room",
+      "plan": "aspen-custom",
+      "home": "Aspen Custom",
+      "kind": "interior",
+      "space": "Great room",
+      "style": "Walnut & Travertine · Greige",
+      "light": "Golden hour",
+      "share": "#c-3-0-0-0-0-0-1-1-1-1-v-aspen-great-room"
+    },
+    {
+      "id": "farmhouse-kitchen",
+      "plan": "modern-farmhouse",
+      "home": "Modern Farmhouse",
+      "kind": "interior",
+      "space": "Kitchen",
+      "style": "Light Oak & Limestone · Greige",
+      "light": "Golden hour",
+      "share": "#c-4-0-3-0-0-0-0-0-1-v-farmhouse-kitchen"
+    },
+    {
+      "id": "cedar-primary-bath",
+      "plan": "cedar-ridge",
+      "home": "Cedar Ridge",
+      "kind": "interior",
+      "space": "Primary bath",
+      "style": "Light Oak & Limestone · Limewash",
+      "light": "Golden hour",
+      "share": "#c-0-0-0-0-0-0-0-0-0-0-6-v-cedar-primary-bath"
+    }
+  ]
+}

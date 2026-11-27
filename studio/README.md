@@ -42,6 +42,24 @@ Agents (optional): `tools/oc-agent.sh` runs a coding agent on an OpenCode Go mod
 `tools/gemini-ask.mjs` makes one-shot Gemini calls (text + images) for batch jobs such as rating asset thumbnails,
 which suits a free-tier key far better than an agent loop.
 
+## Website and render gallery
+
+The landing page preloads the studio while visitors browse. Use `#studio` to enter the current home or a
+`#c-…` share link to open a specific plan, light and finishes. Gallery links also carry a camera view.
+Returning to the landing keeps the 3D scene in memory.
+
+After a lighting bake, rebuild and preview the app, then regenerate the 1600 × 900 WebP gallery:
+
+```bash
+npx vite build --outDir dist-cx
+npx vite preview --outDir dist-cx --port 4187 --strictPort
+# In another terminal
+BASE=http://localhost:4187/ node tools/gallery.mjs
+```
+
+Pass image IDs to re-shoot individual views. The shot list lives in `src/ui/galleryShots.ts`, and the tool
+writes the renders and captions to `public/gallery/`. Rebuild again to include them in the published site.
+
 ## Controls
 
 | Mode | Touch | Mouse / keyboard |

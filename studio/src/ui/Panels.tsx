@@ -5,7 +5,7 @@ import { feetInches } from './FloorPlan'
 import { Icon } from './icons'
 import { setState, useStore, getState, toast, encodeDesign } from './store'
 import { useState } from 'react'
-import objaverse from '../../tools/objaverse.json'
+import { Credits } from './Credits'
 
 const sf = (n: number) => n.toLocaleString('en-US')
 
@@ -180,9 +180,6 @@ export function ShareSheet() {
   )
 }
 
-/** Sketchfab authors of the CC BY furniture (tools/objaverse.json) */
-const objaverseCredits = Object.entries(objaverse)
-
 export function HelpSheet() {
   const touch = matchMedia('(pointer: coarse)').matches
   return (
@@ -207,20 +204,10 @@ export function HelpSheet() {
         <dd>Tap a room to stand in it. Sizes are interior dimensions in feet.</dd>
       </dl>
       <p className="note">Hold still for a moment and the picture sharpens: shadows soften and edges clean up.</p>
+      <p><a className="studio-help-home" href="#home">Back to Cuby Studio <Icon.diagonal /></a></p>
       <details className="credits">
         <summary>Credits</summary>
-        <p className="note">
-          Skies, textures, plants and some furniture by Poly Haven (CC0). GlamVelvetSofa and SheenChair by Wayfair
-          via the Khronos glTF Sample Assets (CC BY 4.0). Trees by ez-tree (MIT).
-        </p>
-        <p className="note">
-          The bundled Sketchfab furniture and fixtures come from Objaverse and are licensed CC BY 4.0.
-        </p>
-        <p className="note">
-          {objaverseCredits.map(([id, { title, author, source }], i) => (
-            <span key={id}>{i ? ', ' : ''}<a href={source} target="_blank" rel="noreferrer">{title}</a> by {author}</span>
-          ))}.
-        </p>
+        <div className="note"><Credits /></div>
       </details>
     </aside>
   )

@@ -7,6 +7,8 @@ const S = ({ children, size = 20 }: { children: ReactNode; size?: number }) => (
 )
 
 export const Icon = {
+  arrow: () => <S><path d="M4 12h15m-6-6 6 6-6 6" /></S>,
+  diagonal: () => <S><path d="M6 18 18 6M8 6h10v10" /></S>,
   left: () => <S><path d="m15 5-7 7 7 7" /></S>,
   right: () => <S><path d="m9 5 7 7-7 7" /></S>,
   plans: () => (
