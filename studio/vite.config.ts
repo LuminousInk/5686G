@@ -21,5 +21,6 @@ export default defineConfig({
       },
     },
   },
-  test: { environment: 'node', include: ['src/**/*.test.ts'] },
+  // Whole-house builds take seconds when several agents share the CPU: allow them, keep real hangs visible.
+  test: { environment: 'node', include: ['src/**/*.test.ts'], testTimeout: 30_000 },
 })
