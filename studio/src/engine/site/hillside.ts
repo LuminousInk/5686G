@@ -53,13 +53,25 @@ export function shoreline(across: number, distance: number) {
 export function scrubCover(u: number, v: number) {
   const broad = Math.sin(u * 0.102 + 1.4 * Math.sin(v * 0.044)) * Math.cos(v * 0.072 - u * 0.031)
   const pockets = Math.sin(u * 0.32 + v * 0.19) * Math.cos(v * 0.29 - u * 0.12)
-  return clamp(0.58 + 0.26 * broad + 0.17 * pockets + 0.21 * canyonMoisture(u, v), 0, 1)
+  const stands = Math.sin(u * 0.048 + v * 0.028) * Math.sin(v * 0.054 - u * 0.019 + 1.2)
+  return clamp(0.56 + 0.22 * broad + 0.13 * pockets + 0.19 * stands + 0.25 * canyonMoisture(u, v), 0, 1)
 }
 
 export function canyonMoisture(u: number, v: number) {
   const channel = u + 68 - Math.sin(v * 0.021) * 29
   const tributary = u - 88 + Math.sin(v * 0.014 + 0.6) * 31
   return Math.max(Math.exp(-1 * (channel / 27) ** 2), Math.exp(-1 * (tributary / 22) ** 2))
+}
+
+/** The narrow washes follow the broader canyon floors and collect smaller side channels. */
+export function drainage(u: number, v: number) {
+  const sinuous = v * 0.034
+  const west = u + 68 - Math.sin(v * 0.021) * 29 - Math.sin(sinuous * 1.9) * 3.1
+  const east = u - 88 + Math.sin(v * 0.014 + 0.6) * 31 - Math.sin(sinuous + 1.6) * 4.2
+  const branch = west - Math.max(0, 23 + 0.33 * (v + 25)) - 5 * Math.sin(sinuous)
+  const channel = Math.max(Math.exp(-((west / 4.1) ** 2)), Math.exp(-((east / 5.3) ** 2)))
+  const tributary = Math.exp(-((branch / 3.2) ** 2)) * (1 - smoothstep(Math.abs(v + 32), 32, 95))
+  return Math.max(channel, tributary * 0.73)
 }
 
 export class Hillside {
@@ -72,7 +84,7 @@ export class Hillside {
   readonly seaLevel: number
   readonly oceanDistance?: number
   private readonly drivewayApproach: [number, number][]
-  private beds: NonNullable<HomePlan['landscape']['berms']>
+  private readonly beds: NonNullable<HomePlan['landscape']['berms']>
   private walkout?: { side: Side; drop: number; cuts: WalkoutCut[] }
   private grid?: { across: number[]; down: number[] }
 
@@ -134,9 +146,9 @@ export class Hillside {
   surfaceHeight(u: number, v: number) {
     if (!this.grid) return this.heightAt(...this.world(u, v))
     const { across, down } = this.grid
-    const i = across.findIndex(value => value > u)
-    const j = down.findIndex(value => value > v)
-    if (i < 1 || j < 1) return this.heightAt(...this.world(u, v))
+    const i = upperBound(across, u)
+    const j = upperBound(down, v)
+    if (i < 1 || j < 1 || i === across.length || j === down.length) return this.heightAt(...this.world(u, v))
     const a = across[i - 1], b = across[i], c = down[j - 1], d = down[j]
     const f = (u - a) / (b - a), g = (v - c) / (d - c)
     const origin = this.heightAt(...this.world(a, c))
@@ -167,6 +179,9 @@ export class Hillside {
     let h = uphill - this.grade * fall - retainingDrops + landBlend * undulation
     // Drainages cut through the side slopes, with wooded shoulders above their floors.
     h -= 8.8 * canyonMoisture(u, v) * outer
+    const ravine = drainage(u, v)
+    const ridges = Math.sin(u * 0.29 + 0.79 * Math.sin(v * 0.15)) * Math.cos(v * 0.22 - u * 0.08)
+    h += smoothstep(edge, 11, 36) * (ridges * 0.58 - ravine * (1.2 + outer * 1.6))
     // A broad shoulder rises beside the lot, leaving the middle of the view corridor open.
     h += smoothstep(side, 7, 70) * (4 + 18 * smoothstep(back, 10, 95)) * (1 - smoothstep(run, 15, 140))
 
@@ -198,7 +213,19 @@ export class Hillside {
         (1 - smoothstep(ends, 0, returnWidth)) * (1 - smoothstep(out, 11, 27))
       excavation = Math.max(excavation, exposure)
     }
-    return lerp(h, -drop, excavation)
+    h = lerp(h, -drop, excavation)
+    if (edge > 0) {
+      // Raised beds are low earth benches with a flatter crown and a soft outer batter.
+      for (const bed of this.beds) {
+        if (bed.h <= 0) continue
+        const dx = x - bed.x, dz = z - bed.z
+        const angle = bed.rot ?? 0
+        const r = Math.hypot((dx * Math.cos(angle) + dz * Math.sin(angle)) / bed.rx,
+          (dz * Math.cos(angle) - dx * Math.sin(angle)) / bed.rz)
+        h += bed.h * (1 - smoothstep(r, 0.62, 1.05)) * smoothstep(edge, 0, 2)
+      }
+    }
+    return h
   }
 
   private terrainColor(u: number, v: number, y: number, color: THREE.Color) {
@@ -209,7 +236,7 @@ export class Hillside {
     color.lerp(canyonGreen, moisture * smoothstep(d, 6, 35) * 0.75)
     color.lerp(garden, (1 - smoothstep(d, 0, 9)) * 0.43)
     let cover = 0
-    if (d < 18) {
+    if (d < 32) {
       const [x, z] = this.world(u, v)
       for (const bed of this.beds) {
         const angle = bed.rot ?? 0
@@ -232,7 +259,7 @@ export class Hillside {
       color.lerp(sand, beach)
       color.lerp(wetSand, (1 - smoothstep(y - this.seaLevel, 0.12, 0.78)) * (1 - smoothstep(inland, 4, 11)))
     }
-    return [cover, beach]
+    return [cover, beach, patch, drainage(u, v) * smoothstep(d, 8, 36)]
   }
 
   buildSurface(ground: THREE.Material, concrete: THREE.Material, low: boolean) {
@@ -302,9 +329,24 @@ export class Hillside {
         }
       }
     }
+    const curvature = new Float32Array(across.length * down.length)
+    for (let r = 1; r < down.length - 1; r++) {
+      for (let c = 1; c < stride - 1; c++) {
+        const edge = Math.max(u0 - across[c], across[c] - u1, v0 - down[r], down[r] - v1)
+        if (edge < 7) continue
+        const i = r * stride + c
+        const y = positions[i * 3 + 1]
+        const a = elevationCurve(positions[(i - 1) * 3 + 1], y, positions[(i + 1) * 3 + 1],
+          across[c] - across[c - 1], across[c + 1] - across[c])
+        const b = elevationCurve(positions[(i - stride) * 3 + 1], y, positions[(i + stride) * 3 + 1],
+          down[r] - down[r - 1], down[r + 1] - down[r])
+        curvature[i] = clamp((a + b) * 2.1, -1, 1) * smoothstep(edge, 7, 22)
+      }
+    }
     const terrain = surface(positions, uv, triangles, ground, 'Coastal canyon')
     terrain.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-    terrain.geometry.setAttribute('groundCover', new THREE.Float32BufferAttribute(cover, 2))
+    terrain.geometry.setAttribute('groundCover', new THREE.Float32BufferAttribute(cover, 4))
+    terrain.geometry.setAttribute('curvature', new THREE.BufferAttribute(curvature, 1))
     const wall = surface(wallPos, wallUv, wallIdx, concrete, 'Board-formed terrace walls')
     wall.castShadow = true
     const group = new THREE.Group()
@@ -320,6 +362,20 @@ const garden = new THREE.Color('#635b42')
 const mulch = new THREE.Color('#544032')
 const sand = new THREE.Color('#c9b28c')
 const wetSand = new THREE.Color('#9f9980')
+
+function elevationCurve(left: number, center: number, right: number, leftRun: number, rightRun: number) {
+  return ((right - center) / rightRun - (center - left) / leftRun) * 2 / (leftRun + rightRun)
+}
+
+function upperBound(values: number[], value: number) {
+  let lo = 0, hi = values.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (values[mid] <= value) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
 
 function axis(lo: number, hi: number, low: boolean, start: number, end: number, exact: number[], cuts: [number, number][] = []) {
   const values = [lo, hi, ...exact]

@@ -271,6 +271,12 @@ export function motionShadowBounds(box: THREE.Box3, lightView: THREE.Matrix4, ma
   return new THREE.Vector4(x - halfX, x + halfX, y - halfY, y + halfY)
 }
 
+/** Wider horizontal coverage keeps yard and tree shadows in the same stabilized sun map. */
+export function coastalShadowRegion(box: THREE.Box3, tier: QualitySettings['tier']) {
+  const yard = tier === 'high' ? 9 : tier === 'medium' ? 5 : 0
+  return box.clone().expandByVector(new THREE.Vector3(yard, 0, yard))
+}
+
 export class SkyEnvironment {
   readonly sun: THREE.DirectionalLight
   readonly sunTarget = new THREE.Object3D()
@@ -327,9 +333,15 @@ export class SkyEnvironment {
   private shadowRadius = 30
   private motionShadowRegion = new THREE.Box3()
   private motionShadowActive = false
+  private coastalShadowBounds = new THREE.Vector4()
+  private coastalShadowDirection = new THREE.Vector3()
+  private coastalShadowView = new THREE.Matrix4()
+  private coastalShadowEye = new THREE.Vector3()
+  private coastalShadowValid = false
 
   setMotionShadowRegion(box: THREE.Box3) {
     this.motionShadowRegion.copy(box)
+    this.coastalShadowValid = false
     this.restoreStillShadowBounds()
   }
 
@@ -347,7 +359,7 @@ export class SkyEnvironment {
     const shadow = this.sun.shadow
     if (!this.motionShadowActive) {
       this.placeSun(this.sunDir)
-      if (!this.motionShadowRegion.isEmpty()) {
+      if (!this.useCoastalShadowFit && !this.motionShadowRegion.isEmpty()) {
         this.sunTarget.updateMatrixWorld()
         shadow.updateMatrices(this.sun)
         const cam = shadow.camera
@@ -369,11 +381,36 @@ export class SkyEnvironment {
     this.sun.shadow.autoUpdate = true
   }
 
+  private get useCoastalShadowFit() {
+    return this.quality.tier !== 'low' && !this.motionShadowRegion.isEmpty() &&
+      this.scene.children.find(child => child.name === 'site')?.userData.coastalShadow === true
+  }
+
+  private applyCoastalShadowFit() {
+    if (!this.coastalShadowValid || !this.coastalShadowDirection.equals(this.sunDir)) {
+      const region = coastalShadowRegion(this.motionShadowRegion, this.quality.tier)
+      const eye = this.coastalShadowEye.copy(this.shadowCenter).addScaledVector(this.sunDir, this.shadowRadius * 2 + 20)
+      const shadow = this.sun.shadow
+      const view = this.coastalShadowView.lookAt(eye, this.shadowCenter, shadow.camera.up).setPosition(eye).invert()
+      this.coastalShadowBounds.copy(motionShadowBounds(region, view, shadow.mapSize))
+      this.coastalShadowDirection.copy(this.sunDir)
+      this.coastalShadowValid = true
+    }
+    const { x, y, z, w } = this.coastalShadowBounds
+    const cam = this.sun.shadow.camera
+    cam.left = x
+    cam.right = y
+    cam.bottom = z
+    cam.top = w
+    cam.updateProjectionMatrix()
+  }
+
   /** Position the light along a direction (used per frame to jitter for soft accumulated shadows). */
   placeSun(dir: THREE.Vector3) {
     this.restoreStillShadowBounds()
     this.sun.position.copy(this.shadowCenter).addScaledVector(dir, this.shadowRadius * 2 + 20)
     this.sun.updateMatrixWorld()
+    if (this.useCoastalShadowFit) this.applyCoastalShadowFit()
   }
 
   private presetRevision = 0

@@ -14,14 +14,16 @@ import json
 import os
 import sys
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 from zipfile import ZipFile
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, '.cache', 'raw')
 RAW = os.environ.get('CUBY_ASSET_CACHE', RAW)
 API = 'https://api.polyhaven.com/files/'
 UA = {'User-Agent': 'cuby-studio-asset-fetch/2.0'}
+AMBIENT_LAWN = 'Grass001'
+LAWN_ARCHIVE = f'{AMBIENT_LAWN}_1K-JPG.zip'
 
 # id -> (kind, resolutions)
 HDRIS = {
@@ -47,6 +49,8 @@ TEXTURES = {
     'ash_veneer': '1k',
     'rough_linen': '1k',               # upholstery, bedding
     'withered_grass': '1k',            # dry summer grasses on coastal slopes
+    'gravelly_sand': '1k',            # compacted decomposed-granite proxy
+    'coast_sand_rocks_02': '1k',       # sedimentary outcrops and bluffs
     'wood_chip_path': '1k',            # bark-mulched garden beds
 }
 AMBIENT_CG = {
@@ -55,7 +59,7 @@ AMBIENT_CG = {
     'ambientcg_plaster001': 'Plaster001',
 }
 TEX_MAPS = ('Diffuse', 'nor_gl', 'arm')
-COASTAL_DIFFUSE = {'withered_grass', 'wood_chip_path'}
+COASTAL_SURFACES = {'withered_grass', 'wood_chip_path', 'gravelly_sand', 'coast_sand_rocks_02'}
 MODELS = [
     # rock garden
     'boulder_01', 'rock_moss_set_01', 'rock_moss_set_02', 'namaqualand_boulder_02', 'namaqualand_boulders_01',
@@ -107,7 +111,7 @@ def jobs_for(asset: str) -> list[tuple[str, str, int | None]]:
             jobs.append((e['url'], os.path.join(RAW, 'hdri', f'{asset}_{r}.hdr'), e['size']))
     elif asset in TEXTURES:
         for r in TEXTURES[asset].split(','):
-            for m in ('Diffuse',) if asset in COASTAL_DIFFUSE else TEX_MAPS:
+            for m in ('Diffuse', 'nor_gl', 'Rough') if asset in COASTAL_SURFACES else TEX_MAPS:
                 e = files[m][r]['jpg']
                 jobs.append((e['url'], os.path.join(RAW, 'tex', asset, r, f'{m}.jpg'), e['size']))
     else:
@@ -144,7 +148,7 @@ def unpack_ambient_cg(asset: str) -> None:
 def main() -> int:
     wanted = sys.argv[1:] or [*HDRIS, *TEXTURES, *AMBIENT_CG, *MODELS, *KHRONOS]
     with ThreadPoolExecutor(6) as ex:
-        plans = list(ex.map(jobs_for, wanted))
+        plans = list(ex.map(jobs_for, (asset for asset in wanted if asset != AMBIENT_LAWN)))
     jobs = [j for p in plans for j in p]
     fails = 0
     with ThreadPoolExecutor(6) as ex:

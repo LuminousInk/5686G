@@ -4,8 +4,10 @@ import { PLANS } from '../../plans'
 import { cedarRidge } from '../../plans/cedarRidge'
 import { coastalModern } from '../../plans/coastalModern'
 import { aspenCustom } from '../../plans/aspenCustom'
-import { Hillside, shoreline, siteFootprints } from './hillside'
+import { drainage, Hillside, shoreline, siteFootprints } from './hillside'
 import { Terrain } from './terrain'
+import { buildGardenSteps } from './gravelPaths'
+import type { CoastalMaps } from './groundMaterials'
 import type { HomePlan } from '../house/types'
 
 describe('hillside lots', () => {
@@ -76,12 +78,44 @@ describe('hillside lots', () => {
     expect(hill.heightAt(...hill.world(-270, beach + 55))).toBeGreaterThan(hill.seaLevel)
   })
 
+  it('concentrates drainage in a branching wash outside the house pad', () => {
+    expect(drainage(-68, 0)).toBeGreaterThan(0.9)
+    expect(drainage(0, 0)).toBeLessThan(0.05)
+    const hill = new Hillside(cedarRidge, cedarRidge.landscape.site!)
+    expect(hill.heightAt(...hill.world(-68, 0))).toBeLessThan(hill.heightAt(...hill.world(-62, 0)))
+  })
+
+  it('lifts at least one bed above the existing Aspen walkout grade', () => {
+    const bare = { ...aspenCustom, landscape: { ...aspenCustom.landscape, berms: [] } }
+    const before = new Hillside(bare, bare.landscape.site!)
+    const after = new Hillside(aspenCustom, aspenCustom.landscape.site!)
+    const gains = aspenCustom.landscape.berms!.filter(bed => bed.h > 0)
+      .map(({ x, z }) => after.heightAt(x, z) - before.heightAt(x, z))
+    expect(Math.max(...gains)).toBeGreaterThan(0.2)
+  })
+
+  it('places sandstone steps along the Aspen garden path', () => {
+    const hill = new Hillside(aspenCustom, aspenCustom.landscape.site!)
+    const texture = new THREE.Texture()
+    const rock = { color: texture, normal: texture }
+    const maps: CoastalMaps = { grass: rock, soil: rock, gravel: rock, rock, bark: rock, lawn: rock }
+    const mesh = buildGardenSteps(aspenCustom.landscape.paths!, hill, maps)
+    expect(mesh?.geometry.index?.count).toBeGreaterThan(30)
+    mesh?.geometry.dispose()
+    mesh?.material.dispose()
+    texture.dispose()
+  })
+
   it('builds two retaining faces and a lower-resolution terrain for phones', () => {
     const hill = new Hillside(cedarRidge, { downhill: 0, grade: 0.16, oceanDistance: 190 })
     const mat = new THREE.MeshStandardMaterial()
     const low = hill.buildSurface(mat, mat, true).children as THREE.Mesh[]
     const high = hill.buildSurface(mat, mat, false).children as THREE.Mesh[]
     expect(low[0].geometry.index!.count).toBeLessThan(high[0].geometry.index!.count)
+    const curves = Array.from(low[0].geometry.getAttribute('curvature').array)
+    expect(curves).toContain(0)
+    expect(curves.some(value => value > 0.08)).toBe(true)
+    expect(curves.some(value => value < -0.08)).toBe(true)
     const wall = low[1].geometry.getAttribute('position')
     const stations = new Set<number>()
     for (let i = 0; i < wall.count; i++) stations.add(Math.round(hill.local(wall.getX(i), wall.getZ(i))[1] * 100))

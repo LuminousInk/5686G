@@ -19,7 +19,7 @@ const tex = (name: string, srgb: boolean) => {
 
 const barkMats = new Map<BarkKind, THREE.MeshStandardMaterial>()
 type BarkKind = 'pine' | 'oak' | 'sycamore'
-type LeafKind = 'pine' | 'aspen' | 'oak' | 'sycamore' | 'olive'
+type LeafKind = 'pine' | 'aspen' | 'oak' | 'sycamore' | 'olive' | 'eucalyptus'
 const leafMats = new Map<string, THREE.MeshStandardMaterial>()
 
 function windPatch(m: THREE.MeshStandardMaterial, key: string, strength: number, canopy = false) {
@@ -76,10 +76,10 @@ export function barkMaterial(kind: BarkKind = 'pine') {
 export function leafMaterial(kind: LeafKind) {
   let m = leafMats.get(kind)
   if (!m) {
-    const texture = kind === 'sycamore' ? 'aspen' : kind === 'olive' ? 'oak' : kind
+    const texture = kind === 'sycamore' || kind === 'eucalyptus' ? 'aspen' : kind === 'olive' ? 'oak' : kind
     m = new THREE.MeshStandardMaterial({
       map: tex(`${texture}_leaves.webp`, true),
-      color: { pine: '#7f9a66', aspen: '#c9b46a', oak: '#788f5f', sycamore: '#a5ac72', olive: '#a3b4a0' }[kind],
+      color: { pine: '#7f9a66', aspen: '#c9b46a', oak: '#788f5f', sycamore: '#a5ac72', olive: '#a3b4a0', eucalyptus: '#91a385' }[kind],
       roughness: 0.82,
       side: THREE.DoubleSide,
       alphaTest: 0.42,
@@ -102,24 +102,31 @@ export interface TreeVariant {
   height: number
 }
 
-export type CoastalTree = 'live-oak' | 'sycamore' | 'stone-pine' | 'canary-pine' | 'olive'
+export type CoastalTree = 'live-oak' | 'sycamore' | 'stone-pine' | 'canary-pine' | 'olive' | 'eucalyptus'
 
 export function coastalTreeVariant(kind: CoastalTree, seed: number, detail: number) {
   const preset = {
     'live-oak': 'Oak Medium', sycamore: 'Aspen Medium', 'stone-pine': 'Oak Medium',
-    'canary-pine': 'Pine Medium', olive: 'Oak Medium',
+    'canary-pine': 'Pine Medium', olive: 'Oak Medium', eucalyptus: 'Aspen Medium',
   }[kind]
-  const variant = makeVariant(preset, seed, detail, {
-    'live-oak': 'oak', sycamore: 'sycamore', 'stone-pine': 'pine', 'canary-pine': 'pine', olive: 'olive',
-  }[kind] as LeafKind)
-  variant.barkKind = kind === 'sycamore' ? 'sycamore' : kind.endsWith('pine') ? 'pine' : 'oak'
-  const width = { 'live-oak': 1.48, sycamore: 1.48, 'stone-pine': 1.7, 'canary-pine': 0.87, olive: 1.1 }[kind]
+  const leaves: Record<CoastalTree, LeafKind> = {
+    'live-oak': 'oak', sycamore: 'sycamore', 'stone-pine': 'pine', 'canary-pine': 'pine',
+    olive: 'olive', eucalyptus: 'eucalyptus',
+  }
+  const variant = makeVariant(preset, seed, detail, leaves[kind])
+
+  variant.barkKind = kind === 'sycamore' || kind === 'eucalyptus' ? 'sycamore' : kind.endsWith('pine') ? 'pine' : 'oak'
+  const width = { 'live-oak': 1.48, sycamore: 1.48, 'stone-pine': 1.7, 'canary-pine': 0.87, olive: 1.36, eucalyptus: 0.94 }[kind]
   for (const geometry of [variant.branches, variant.leaves]) {
     geometry.scale(width, 1, width)
-    if (kind === 'stone-pine') {
-      // Lift the lower branches toward a broad umbrella crown while leaving the trunk base in place.
+    if (kind === 'stone-pine' || kind === 'eucalyptus' || kind === 'olive') {
+      // Adjust crown height and trunk lean without floating the roots.
       const p = geometry.getAttribute('position')
-      for (let i = 0; i < p.count; i++) p.setY(i, Math.pow(Math.max(0, p.getY(i)), 0.56))
+      for (let i = 0; i < p.count; i++) {
+        const y = Math.max(0, p.getY(i))
+        if (kind === 'eucalyptus') p.setX(i, p.getX(i) + Math.sin(y * 3.6) * y * 0.18)
+        else p.setY(i, Math.pow(y, kind === 'olive' ? 0.72 : 0.56))
+      }
       geometry.computeVertexNormals()
       geometry.computeBoundingBox()
       geometry.computeBoundingSphere()
@@ -200,17 +207,31 @@ export function treeInstances(v: TreeVariant, places: TreePlacement[], castShado
  * trees for the cost of a few hundred triangles.
  */
 export function impostorForest(renderer: THREE.WebGLRenderer, v: TreeVariant, places: TreePlacement[], seed: number): THREE.Mesh {
-  const rt = new THREE.WebGLRenderTarget(256, 256, { colorSpace: THREE.SRGBColorSpace })
+  // Offscreen shaders write linear color. Sampling an sRGB-marked target would darken the baked leaves.
+  const rt = new THREE.WebGLRenderTarget(256, 256, {
+    colorSpace: THREE.LinearSRGBColorSpace, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter,
+  })
   const scene = new THREE.Scene()
   const tree = new THREE.Group()
-  const bark = new THREE.MeshStandardMaterial({ color: '#5b4a3f', roughness: 1 })
+  const bark = new THREE.MeshStandardMaterial({ color: '#837467', roughness: 1 })
   tree.add(new THREE.Mesh(v.branches, bark))
   const lm = leafMaterial(v.leafKind).clone()
-  lm.onBeforeCompile = () => {}
+  lm.onBeforeCompile = shader => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vBakedLeaf;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBakedLeaf = position;')
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vBakedLeaf;')
+      .replace('#include <color_fragment>', /* glsl */`
+        #include <color_fragment>
+        float pocket = 0.5 + 0.5 * sin(vBakedLeaf.x * 37.0 + vBakedLeaf.y * 23.0) * cos(vBakedLeaf.z * 32.0);
+        diffuseColor.rgb *= mix(0.70, 1.33, pocket * 0.60 + smoothstep(0.2, 0.9, vBakedLeaf.y) * 0.40);
+      `)
+  }
   tree.add(new THREE.Mesh(v.leaves, lm))
   scene.add(tree)
-  scene.add(new THREE.HemisphereLight('#c9d6e6', '#4a4236', 2.2))
-  const d = new THREE.DirectionalLight('#fff1dd', 2.4)
+  scene.add(new THREE.HemisphereLight('#e3edff', '#988167', 2.8))
+  const d = new THREE.DirectionalLight('#fff3e3', 0.65)
   d.position.set(-1, 2, 2)
   scene.add(d)
   const box = new THREE.Box3().setFromObject(tree)
@@ -244,32 +265,48 @@ export function impostorForest(renderer: THREE.WebGLRenderer, v: TreeVariant, pl
   geo.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1], 3))
   geo.setIndex([0, 1, 2, 0, 2, 3])
   const ip = new Float32Array(n * 4)
-  const it = new Float32Array(n)
+  const it = new Float32Array(n * 3)
   places.forEach((p, i) => {
     ip.set([p.x, p.y - 0.3, p.z, p.height], i * 4)
-    it[i] = 0.75 + rand() * 0.4
+    it.set([0.76 + rand() * 0.40, 0.78 + rand() * 0.39, rand()], i * 3)
   })
   geo.setAttribute('iPos', new THREE.InstancedBufferAttribute(ip, 4))
-  geo.setAttribute('iTone', new THREE.InstancedBufferAttribute(it, 1))
+  geo.setAttribute('iTone', new THREE.InstancedBufferAttribute(it, 3))
   geo.instanceCount = n
-  const mat = new THREE.MeshStandardMaterial({ map: rt.texture, alphaTest: 0.35, roughness: 1, side: THREE.DoubleSide, color: '#6f8064' })
+  const mat = new THREE.MeshStandardMaterial({ map: rt.texture, alphaTest: 0.29, roughness: 0.97, side: THREE.DoubleSide })
   mat.onBeforeCompile = shader => {
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 iPos; attribute float iTone; varying float vTone;')
+      .replace('#include <common>', '#include <common>\nattribute vec4 iPos; attribute vec3 iTone; varying vec3 vTone; varying vec3 vCardDirection;')
       .replace(
         '#include <begin_vertex>',
         `// cylindrical billboard facing the camera
         vec3 toCam = cameraPosition - iPos.xyz; toCam.y = 0.0; toCam = normalize(toCam);
         vec3 right = normalize(vec3(toCam.z, 0.0, -toCam.x));
-        vec3 transformed = iPos.xyz + right * position.x * iPos.w * ${aspect.toFixed(4)} + vec3(0.0, position.y * iPos.w, 0.0);
-        vTone = iTone;`,
+        vec3 transformed = iPos.xyz + right * position.x * iPos.w * ${aspect.toFixed(4)} * (0.83 + 0.34 * iTone.z) + vec3(0.0, position.y * iPos.w, 0.0);
+        vTone = iTone; vCardDirection = toCam;`,
       )
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vTone;')
-      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= vTone;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vTone; varying vec3 vCardDirection;')
+      .replace('#include <map_fragment>', /* glsl */`
+        #include <map_fragment>
+        // The clear part of the bake is black. Unassociate coverage before tinting the filtered edge.
+        diffuseColor.rgb /= max(diffuseColor.a, 0.27);
+      `)
+      .replace('#include <color_fragment>', /* glsl */`
+        #include <color_fragment>
+        diffuseColor.rgb *= vec3(vTone.x, (vTone.x + vTone.y) * 0.53, vTone.y * 0.82);
+      `)
+      .replace('#include <normal_fragment_begin>', /* glsl */`
+        #include <normal_fragment_begin>
+        vec2 crown = vec2(vMapUv.x * 2.0 - 1.0, (vMapUv.y - 0.58) * 2.0);
+        vec3 tangent = vec3(vCardDirection.z, 0.0, -vCardDirection.x);
+        vec3 canopyNormal = tangent * crown.x * 0.94 + vec3(0.0, 0.77 + crown.y * 0.84, 0.0)
+          + vCardDirection * max(0.10, 0.67 - dot(crown, crown) * 0.52);
+        normal = normalize(mat3(viewMatrix) * canopyNormal);
+      `)
   }
-  mat.customProgramCacheKey = () => 'impostor'
+  mat.customProgramCacheKey = () => `lit-impostor-${aspect.toFixed(4)}`
   const mesh = new THREE.Mesh(geo, mat)
   mesh.frustumCulled = false
   mesh.name = 'forest'

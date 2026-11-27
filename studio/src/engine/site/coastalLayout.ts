@@ -2,7 +2,7 @@ import { MathUtils } from 'three'
 import type { HomePlan, Rect } from '../house/types'
 import { rng } from '../materials/textures'
 import type { Tier } from '../quality'
-import { Hillside, scrubCover, shoreline, siteFootprints } from './hillside'
+import { drainage, Hillside, scrubCover, shoreline, siteFootprints } from './hillside'
 
 const { clamp, smoothstep } = MathUtils
 
@@ -111,10 +111,10 @@ export function coastalPlantLayout(plan: HomePlan, hill: Hillside, tier: Tier, n
       blocked(x, z, r))
   }
   const spot = (x: number, z: number, size: number, radius: number, yaw: number): PlantSpot =>
-    ({ x, z, size, radius, yaw, y: hill.heightAt(x, z) - 0.025 })
+    ({ x, z, size, radius, yaw, y: hill.surfaceHeight(...hill.local(x, z)) - 0.025 })
 
   const near: PlantSpot[] = [], far: PlantSpot[] = []
-  const [nearBudget, farBudget] = { low: [690, 2220], medium: [900, 2980], high: [1110, 3610] }[tier]
+  const [nearBudget, farBudget] = { low: [620, 1810], medium: [900, 2920], high: [1160, 3890] }[tier]
   // Sample the two bands independently to preserve the silhouettes and colour balance on phone.
   for (const [list, budget, range, isFar] of [[near, nearBudget, 88, false], [far, farBudget, 242, true]] as const) {
     const rand = rng(seed + (isFar ? 101 : 0))
@@ -124,7 +124,7 @@ export function coastalPlantLayout(plan: HomePlan, hill: Hillside, tier: Tier, n
       const distance = Math.hypot(Math.max(u0 - u, u - u1, 0), Math.max(v0 - v, v - v1, 0))
       if ((distance >= 54) !== isFar || (isFar && distance < 73 && rand() < 0.24)) continue
       const cover = scrubCover(u, v)
-      if (rand() > smoothstep(cover, 0.30, 0.78)) continue
+      if (rand() > smoothstep(cover - drainage(u, v) * 0.20, 0.30, 0.78)) continue
       const size = (isFar ? 1.4 : 0.68) + rand() ** 1.25 * (isFar ? 3.1 : 1.9)
       const radius = size * 0.93
       const [x, z] = hill.world(u, v)
@@ -164,26 +164,44 @@ export function coastalPlantLayout(plan: HomePlan, hill: Hillside, tier: Tier, n
     occupied.push(item)
   }
   const beds = plan.landscape.berms ?? []
+  const gardenGrass: PlantSpot[] = []
   for (const bed of beds) {
     const c = Math.cos(bed.rot ?? 0)
     const s = Math.sin(bed.rot ?? 0)
+    if (bed.h > 0 && plan.landscape.site?.walkout) {
+      for (let i = 0; i < 5; i++) {
+        const a = i * 2.39996 + bed.x
+        const x = bed.x + Math.cos(a) * bed.rx * 0.67
+        const z = bed.z + Math.sin(a) * bed.rz * 0.54
+        addGarden(6, x, z, 0.88 + rand() * 0.86, 0.67)
+      }
+    }
     for (let i = 0; i < (low ? 70 : 105); i++) {
       const a = rand() * Math.PI * 2
       const radius = Math.sqrt(rand()) * 0.93
-      const form = [0, 1, 2, 3, 3, 4, 6, 7, 7, 8][i % 10]
+      const form = [7, 1, 2, 3, 6, 4, 6, 0, 7, 8][i % 10]
       const dx = Math.cos(a) * bed.rx * radius
       const dz = Math.sin(a) * bed.rz * radius
       const x = bed.x + dx * c - dz * s
       const z = bed.z + dx * s + dz * c
-      addGarden(form, x, z, 0.50 + rand() * 0.73)
+      addGarden(form, x, z, (form < 2 ? 0.39 : 0.57) + rand() * 0.62)
+    }
+    const count = low ? 10 : 16
+    for (let i = 0; i < count; i++) {
+      const a = i * 2.39996
+      const dx = Math.cos(a) * bed.rx * (0.64 + rand() * 0.30)
+      const dz = Math.sin(a) * bed.rz * (0.60 + rand() * 0.34)
+      const x = bed.x + dx * c - dz * s
+      const z = bed.z + dx * s + dz * c
+      if (open(x, z, 0.37, true)) gardenGrass.push(spot(x, z, 0.7 + rand() * 0.69, 0.37, a))
     }
   }
   for (let i = 0; i < (low ? 290 : 430); i++) {
     const u = u0 - 4 + rand() * (u1 - u0 + 8)
     const v = i % 5 === 0 ? v0 - (0.4 + rand() * 6) : v1 + (i % 2 === 0 ? 1.1 + rand() * 4.0 : 6.8 + rand() * 4.4)
-    const form = [0, 1, 2, 3, 4, 6, 7, 8][i % 8]
+    const form = [7, 1, 2, 3, 4, 6, 0, 8, 7, 2][i % 10]
     const [x, z] = hill.world(u, v)
-    addGarden(form, x, z, 0.46 + rand() * 0.70)
+    addGarden(form, x, z, (form < 2 ? 0.32 : 0.50) + rand() * 0.61)
   }
   for (const u of [u0 + 2.5, u1 - 2.5]) {
     for (let i = 0; i < 5; i++) {
@@ -191,5 +209,5 @@ export function coastalPlantLayout(plan: HomePlan, hill: Hillside, tier: Tier, n
       addGarden(5, x, z, 0.95, 0.72)
     }
   }
-  return { near, far, hedges, dryGrass, garden: forms, lawn, open, spot }
+  return { near, far, hedges, dryGrass, gardenGrass, garden: forms, lawn, open, spot }
 }
