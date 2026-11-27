@@ -19,6 +19,10 @@ export function Credits() {
         <a href="https://ambientcg.com/view?id=Plaster001" target="_blank" rel="noreferrer">Plaster 001</a> by ambientCG.
       </p>
       <p>
+        Atmosphere by Takram three-geospatial (MIT) and Eric Bruneton / INRIA, Precomputed Atmospheric
+        Scattering (BSD-3-Clause).
+      </p>
+      <p>
         Furniture and fixtures from Sketchfab creators via Objaverse, CC BY 4.0:{' '}
         {objaverseCredits.map(([id, { title, author, source }], i) => (
           <span key={id}>

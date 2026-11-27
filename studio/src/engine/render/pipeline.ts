@@ -14,6 +14,7 @@ import {
   VignetteEffect,
 } from 'postprocessing'
 import { N8AOPostPass } from 'n8ao'
+import { CoastalAtmosphere } from '../env/atmosphere'
 import type { TimePreset } from '../env/environment'
 import type { QualitySettings } from '../quality'
 import { Meter } from './meter'
@@ -49,6 +50,7 @@ class AccumulatePass extends Pass {
   readonly history = new MotionHistory()
   temporal = false
   moving = false
+  fading = false
   private stillMat: THREE.ShaderMaterial
   private copyMat: THREE.ShaderMaterial
   private motionMat: THREE.ShaderMaterial
@@ -121,7 +123,7 @@ class AccumulatePass extends Pass {
     }
     const write = this.targets[this.index]
     const read = this.targets[1 - this.index]
-    const m = this.temporal ? this.motionMat : this.stillMat
+    const m = this.temporal && !this.fading ? this.motionMat : this.stillMat
     this.fullscreenMaterial = m
     m.uniforms.tCurrent.value = inputBuffer.texture
     m.uniforms.tHistory.value = read.texture
@@ -131,13 +133,13 @@ class AccumulatePass extends Pass {
       m.uniforms.clipPlanes.value.set(this.view.near, this.view.far)
       m.uniforms.exposureRatio.value = this.history.update(this.view, this.exposure, m.uniforms.reproject.value)
     } else {
-      m.uniforms.weight.value = 1 / (this.count + 1)
+      m.uniforms.weight.value = this.fading ? 1 : 1 / (this.count + 1)
     }
     const output = this.renderToScreen ? null : outputBuffer
-    if (this.moving && !this.temporal) {
+    if (this.fading || (this.moving && !this.temporal)) {
       renderer.setRenderTarget(output)
       renderer.render(this.scene, this.camera)
-      this.count++
+      if (!this.fading) this.count++
       return
     }
     renderer.setRenderTarget(write)
@@ -217,6 +219,7 @@ export class RenderPipeline {
   readonly bloom: BloomEffect
   readonly grade: GradeEffect
   readonly tone: ToneMappingEffect
+  readonly atmosphere: CoastalAtmosphere
   private accumulate: AccumulatePass
   private renderPass: RenderPass
   /** frames to accumulate while still (0 = off) */
@@ -225,9 +228,9 @@ export class RenderPipeline {
 
   constructor(
     renderer: THREE.WebGLRenderer,
-    scene: THREE.Scene,
+    private scene: THREE.Scene,
     private camera: THREE.PerspectiveCamera,
-    q: QualitySettings,
+    private q: QualitySettings,
   ) {
     this.maxFrames = q.accumulateFrames
     this.composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType, multisampling: 0 })
@@ -246,6 +249,9 @@ export class RenderPipeline {
     c.gammaCorrection = false
     c.color = new THREE.Color(0, 0, 0)
     this.composer.addPass(this.ao)
+    // Scatter the AO-lit HDR frame using the render pass's depth before metering and accumulation.
+    this.atmosphere = new CoastalAtmosphere(camera)
+    this.composer.addPass(this.atmosphere.pass)
     this.accumulate = new AccumulatePass(camera)
     this.composer.addPass(this.accumulate)
     this.bloom = new BloomEffect({
@@ -291,8 +297,12 @@ export class RenderPipeline {
     this.accumulate.meterNext = true
   }
 
+  get accumulationConverged() {
+    return !this.accumulate.fading && this.maxFrames > 0 && this.accumulate.count >= this.maxFrames
+  }
+
   get converged() {
-    return this.maxFrames > 0 && this.accumulate.count >= this.maxFrames
+    return this.accumulationConverged && this.atmosphere.settled
   }
 
   reset() {
@@ -337,12 +347,31 @@ export class RenderPipeline {
     return out.copy(dir).addScaledVector(t, Math.cos(a) * r).addScaledVector(b, Math.sin(a) * r).normalize()
   }
 
-  render(dt: number) {
-    this.composer.render(dt)
+  render(dt: number, inside: boolean) {
+    const atmosphere = this.atmosphere
+    const fadeFinished = atmosphere.setView(inside, this.q.reducedMotionHaze && this.accumulate.moving, dt)
+    this.accumulate.fading = atmosphere.needsTransition(inside)
+    if (fadeFinished) {
+      this.reset()
+      this.resetMotion()
+    }
+    if (!atmosphere.pass.enabled) {
+      this.composer.render(dt)
+      return
+    }
+    this.scene.userData.coastalAtmosphere = atmosphere.weight
+    this.scene.add(atmosphere.mesh)
+    try {
+      this.composer.render(dt)
+    } finally {
+      this.scene.remove(atmosphere.mesh)
+      delete this.scene.userData.coastalAtmosphere
+    }
   }
 
   dispose() {
     this.accumulate.meter.dispose()
     this.composer.dispose()
+    this.atmosphere.dispose()
   }
 }

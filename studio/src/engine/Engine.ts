@@ -44,6 +44,7 @@ export class Engine {
   interior: Interior | null = null
   plan: HomePlan | null = null
   private raf = 0
+  private atmospherePrecompute: 'initial' | 'scheduled' | 'started' = 'initial'
   private last = performance.now()
   private lastView = new THREE.Matrix4()
   private lastProj = new THREE.Matrix4()
@@ -304,7 +305,13 @@ export class Engine {
     const preset = TIME_PRESETS.find(t => t.id === id) ?? TIME_PRESETS[0]
     this.lightmap.clear('time of day changed')
     this.house?.cutaway.syncBindings()
-    if (!await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35) || seq !== this.timeSeq) return
+    const changed = await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35)
+    if (changed === false || seq !== this.timeSeq) return
+    if (!changed) {
+      // The legacy HDRI update can complete with a void result. Refresh its visible sky too.
+      this.invalidate()
+      return
+    }
     this.pipeline.exposure = this.sky.exposure
     this.pipeline.setLook(preset)
     this.pipeline.resetMotion()
@@ -365,6 +372,11 @@ export class Engine {
       this.invalidate()
     })
     this.invalidate()
+  }
+
+  /** Called after the entry camera has rendered and the studio has reported ready. */
+  enableAtmospherePrecompute() {
+    if (this.atmospherePrecompute === 'initial') this.atmospherePrecompute = 'scheduled'
   }
 
   start() {
@@ -449,7 +461,13 @@ export class Engine {
     const moving = moved && this.pipeline.maxFrames > 0
     const temporal = moving && this.dpr >= this.quality.temporalMinDpr
     this.pipeline.prepareMotion(moving, temporal, this.lightmapped ? interiorWeight : 0)
-    if (!requestMeter && !active && this.pipeline.converged && !this.keepAlive?.()) {
+    const interiorView = inside || this.isInside(this.camera.position)
+    const atmosphere = this.pipeline.atmosphere
+    const fadeAtmosphere = this.sky.preset.id !== 'night' && atmosphere.needsTransition(interiorView)
+    const canStartAtmosphere = this.atmospherePrecompute === 'scheduled' && !this.paused && !this.loading
+      && !interiorView && this.sky.preset.id !== 'night'
+    if (!canStartAtmosphere && !fadeAtmosphere && !requestMeter && !active
+      && this.pipeline.accumulationConverged && !this.keepAlive?.()) {
       // Wait for a pending exposure read without drawing extra frames.
       if ((!inside || !meter.pending) && (!this.probes.pending || this.dollhouse || this.liveMotion)) this.stop()
       return
@@ -465,7 +483,10 @@ export class Engine {
       this.sky.placeSun(this.sunTmp)
     }
     try {
-      this.pipeline.render(dt)
+      const hill = this.site?.terrain.hillside
+      atmosphere.configure(this.sky.preset, this.sky.sunDir,
+        hill?.oceanDistance === undefined ? undefined : hill.seaLevel)
+      this.pipeline.render(dt, interiorView)
     } finally {
       if (cacheShadows) this.sky.endMotionShadows()
       this.camera.clearViewOffset()
@@ -475,6 +496,13 @@ export class Engine {
     this.stats.calls = info.calls
     this.stats.frames = this.pipeline.frames
     this.onRendered?.()
+    if (canStartAtmosphere) {
+      this.atmospherePrecompute = 'started'
+      // Yield out of the studio frame before doing any shader compilation or GPU work.
+      void yieldToBrowser().then(async () => {
+        if (await atmosphere.prepare(this.renderer) && !this.paused) this.start()
+      })
+    }
   }
 
   private trackPerf(dt: number, accumulating: boolean) {
