@@ -10,10 +10,18 @@ import { rng } from '../materials/textures'
 import { placeModel } from '../models'
 import type { QualitySettings } from '../quality'
 import type { Segment2 } from '../house/walls'
-import { baseCabinets, COUNTER_TOP, inductionHob, ISLAND_TOP, kitchenIsland, openShelf, ovenTower, rangeHood, TALL_D, TALL_W } from './kitchenParts'
+import { oakSlats, shower as showerParts, showerOpening, stoneWall, vanity as vanityParts } from './bathParts'
+import { ceilingFan, diningLight, kitchenPendant, ovalTub, plumbingArc, tallCurtain } from './catalogFixtures'
+import { interiorStyle } from './catalogStyle'
+import { openWardrobe, WARDROBE_DEPTH } from './closetParts'
 import {
-  bathVanity, bench, bookStack, diningTable, floorLamp, mediaConsole, nightstand, platformBed, towelRail, wardrobe,
+  baseCabinets, COUNTER_TOP, fridgeSurround, inductionHob, ISLAND_TOP, kitchenIsland, openShelf, ovenTower,
+  rangeHood, TALL_D, TALL_W,
+} from './kitchenParts'
+import {
+  bench, bookStack, diningTable, floorLamp, linenBench, mediaConsole, nightstand, platformBed, towelRail,
 } from './modern'
+import { eucalyptus, sofaCushions } from './styling'
 
 type Dir = Side
 
@@ -63,7 +71,7 @@ const WALKWAY = 0.9
 const FIT_EPSILON = 1e-4
 const RUG_HEIGHT = 0.008
 const SLIDES = [0, -0.15, 0.15, -0.3, 0.3, -0.45, 0.45, -0.6, 0.6, -0.9, 0.9]
-const SOFA_DEPTH: Record<string, number> = { GlamVelvetSofa: 1.023 / 2.188, sectional_grey: 1.812 / 3.12, sofa_beige: 1.104 / 3.385 }
+const SOFA_DEPTH: Record<string, number> = { sectional_grey: 1.812 / 3.12, sofa_beige: 1.104 / 3.385 }
 
 /** Clip a shell collider to a furniture footprint, including walls inside edited room rectangles. */
 function segmentCrossesBox({ ax, az, bx, bz }: Segment2, x0: number, z0: number, x1: number, z1: number) {
@@ -97,10 +105,11 @@ export class Interior {
   private boundaries = new Map<string, RoomSide[]>()
   private openings = new Map<string, RoomOpening[]>()
   private barriers: readonly Segment2[] = []
+  private pictureMaterials: THREE.MeshStandardMaterial[] = []
 
   constructor(
     private lib: MaterialLibrary,
-    _quality?: QualitySettings,
+    private quality?: QualitySettings,
   ) {
     this.group.name = 'interior'
   }
@@ -108,8 +117,9 @@ export class Interior {
   async build(plan: HomePlan, house: HouseModel) {
     if (plan.levels || plan.blocks.some(b => b.yaw)) {
       await buildInteriorLevels(plan, this, house.colliders, async (local, barriers) => {
-        const child = new Interior(this.lib)
+        const child = new Interior(this.lib, this.quality)
         await child.buildRooms(local, barriers)
+        this.pictureMaterials.push(...child.pictureMaterials)
         return child
       })
       return
@@ -381,14 +391,9 @@ export class Interior {
 
   /** Fit a sofa at its real aspect ratio. The plan id selects one repeatable look for the whole home. */
   private fitSofa(r: RoomDef, spots: { x: number; z: number; yaw: number }[], maxW: number, minW: number, greatRoom: boolean) {
-    const glam = this.plan.id === 'coastal-modern'
-    let hash = 0
-    for (const ch of this.plan.id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
-    const ids = glam
-      ? ['GlamVelvetSofa']
-      : greatRoom && hash % 2 === 0
-        ? ['sectional_grey', 'sofa_beige']
-        : ['sofa_beige']
+    const ids = greatRoom && interiorStyle(this.plan.id).pendant !== 'ivory'
+      ? ['sectional_grey', 'sofa_beige']
+      : ['sofa_beige']
     for (const id of ids) {
       for (const p of spots) {
         for (let w = maxW; w >= minW - 1e-4; w -= 0.1) {
@@ -507,58 +512,84 @@ export class Interior {
     }
   }
 
-  private pendant(x: number, y: number, z: number, r = 0.18, drop = 0.9) {
-    if (drop < r * 0.42 + 0.035) return
-    const shade = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.35, r, r * 0.9, 32, 1, true), this.lib.blackMetal)
-    shade.name = 'pendant'
-    shade.position.set(x, y - drop, z)
-    shade.castShadow = true
-    this.group.add(shade)
-    const bulb = new THREE.Mesh(new THREE.CircleGeometry(r * 0.95, 24), this.lib.lamp('pendant', '#ffd9a8', 14))
-    bulb.rotation.x = Math.PI / 2
-    bulb.position.set(x, y - drop - r * 0.44, z)
-    this.group.add(bulb)
-    const cordLength = drop - r * 0.42
-    const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, cordLength, 8), this.lib.blackMetal)
-    cord.position.set(x, y - cordLength / 2, z)
-    const canopy = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.05, 0.035, 16), this.lib.blackMetal)
-    canopy.position.set(x, y - 0.011, z)
-    this.group.add(cord, canopy)
-  }
-
   private ceiling(x: number, z: number) {
     const block = blockAt(this.plan.blocks, x, z)
     return block ? ceilingAt(block, x, z) : 2.7
   }
 
-  private art(x: number, y: number, z: number, w: number, h: number, nx: number, nz: number, seed: number) {
+  private curtains(r: RoomDef) {
+    const [x0, z0, x1, z1] = this.inner(r)
+    for (const o of this.roomOpenings(r)) {
+      if (!o.exterior || o.kind === 'clerestory' || o.kind === 'entry' || o.kind === 'door' || o.kind === 'garage' || o.width < 1.05) continue
+      const side = this.roomSides(r).find(s => s.side === o.side)!
+      const horizontal = side.inX === 0
+      const [lo, hi] = horizontal ? [x0, x1] : [z0, z1]
+      const face = { n: z0, s: z1, w: x0, e: x1 }[o.side]
+      const yaw = this.yaw(side.inX, side.inZ)
+      for (const sign of [-1, 1]) {
+        const edge = o.at + sign * (o.width / 2 + (this.isPassage(o.kind) ? 0.09 : 0.025))
+        const w = Math.min(0.38, sign < 0 ? edge - lo - 0.015 : hi - edge - 0.015)
+        if (w < 0.19) continue
+        const u = edge + sign * w / 2
+        const x = (horizontal ? u : face) + side.inX * 0.039
+        const z = (horizontal ? face : u) + side.inZ * 0.039
+        if (!this.canPlace(r, x, z, w, 0.062, yaw)) continue
+        const h = Math.min(this.ceiling(x, z), this.ceiling(x + (horizontal ? w / 2 : 0), z + (horizontal ? 0 : w / 2)),
+          this.ceiling(x - (horizontal ? w / 2 : 0), z - (horizontal ? 0 : w / 2)))
+        this.kit(tallCurtain(this.lib, w, h - 0.10), x, z, yaw, 0.012)
+      }
+    }
+  }
+
+  private art(x: number, y: number, z: number, w: number, h: number, nx: number, nz: number, seed: number, mount = 0) {
     const cv = document.createElement('canvas')
     cv.width = 256
     cv.height = Math.round((256 * h) / w)
     const ctx = cv.getContext('2d')!
     const r = rng(seed)
-    const hue = Math.floor(r() * 60) + 20
-    ctx.fillStyle = `hsl(${hue}, 18%, ${80 + r() * 10}%)`
-    ctx.fillRect(0, 0, cv.width, cv.height)
-    for (let i = 0; i < 3; i++) {
-      ctx.fillStyle = `hsla(${hue + r() * 40 - 20}, ${20 + r() * 25}%, ${35 + r() * 35}%, 0.85)`
-      ctx.beginPath()
-      ctx.ellipse(r() * cv.width, r() * cv.height, 30 + r() * 90, 20 + r() * 70, r() * 3, 0, Math.PI * 2)
-      ctx.fill()
+    const hpx = cv.height
+    ctx.fillStyle = '#E1D9C9'
+    ctx.fillRect(0, 0, cv.width, hpx)
+    const colors = ['#C2B6AA', '#A39A8B', '#746F61', '#85806F', '#B6A583']
+    for (const [layer, color] of colors.entries()) {
+      ctx.fillStyle = color
+      const y = hpx * (0.62 + layer * 0.10)
+      for (let i = 0; i < 7; i++) {
+        ctx.beginPath()
+        ctx.ellipse(i * 46 - 6, y + r() * 8, 41 + r() * 50, hpx * (0.1 + r() * 0.11), (r() - 0.5) * 0.15, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      ctx.fillRect(0, y + 2, cv.width, hpx - y)
     }
+    // The pale paper mat sits inside the timber frame.
+    ctx.fillStyle = '#EBE3D7'
+    ctx.fillRect(0, 0, cv.width, 6)
+    ctx.fillRect(0, hpx - 6, cv.width, 6)
+    ctx.fillRect(0, 0, 6, hpx)
+    ctx.fillRect(cv.width - 6, 0, 6, hpx)
     const tex = new THREE.CanvasTexture(cv)
     tex.colorSpace = THREE.SRGBColorSpace
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, h + 0.04, 0.03), this.lib.blackMetal)
-    const canvas = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 }))
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, h + 0.04, 0.03), this.lib.darkWood)
+    const material = new THREE.MeshStandardMaterial({ color: '#E6DFD2', map: tex, roughness: 1, envMapIntensity: 0.3 })
+    this.pictureMaterials.push(material)
+    const canvas = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material)
     const g = new THREE.Group()
+    g.name = 'framed-landscape'
     g.add(frame, canvas)
     canvas.position.z = 0.016
-    g.position.set(x + nx * 0.02, y, z + nz * 0.02)
+    g.position.set(x + nx * (0.02 + mount), y, z + nz * (0.02 + mount))
     g.rotation.y = this.yaw(nx, nz)
     this.group.add(g)
   }
 
   // ------------------------------------------------------------------ rooms
+
+  // Local, unshadowed practicals for the two enclosed rooms that receive little daylight.
+  private practical(x: number, y: number, z: number, distance: number, intensity: number) {
+    const light = new THREE.PointLight('#FFE0BD', intensity, distance, 2)
+    light.position.set(x, this.fy + y, z)
+    this.group.add(light)
+  }
 
   private async living(r: RoomDef) {
     const [x0, z0, x1, z1] = this.inner(r)
@@ -598,9 +629,12 @@ export class Interior {
     if (!sofaFit) return this.livingView(r)
     this.occupy(r, media, true)
     this.kit(mediaConsole(this.lib, media.w), media.x, media.z, media.yaw)
+    const [panelX, panelZ] = this.localPoint(media.x, media.z, media.yaw, 0, -media.d / 2 - 0.008)
+    const panelW = Math.min(a.len - 0.08, media.w + 0.42)
+    this.kit(oakSlats(this.lib, panelW, Math.min(2.19, this.ceiling(panelX, panelZ) - 0.07)), panelX, panelZ, media.yaw)
     const sofa = sofaFit.footprint
     this.occupy(r, sofa, true)
-    jobs.push(this.model(sofaFit.id, sofa.x, sofa.z, sofa.yaw, { width: sofa.w, depth: sofa.d }))
+    jobs.push(this.stageSofa(sofaFit.id, sofa))
 
     const sofaU = along(sofa.x, sofa.z)
     const sofaV = into(sofa.x, sofa.z)
@@ -651,6 +685,7 @@ export class Interior {
     if (against && oppSolid && sofaWall === oppSolid) {
       this.art(oppSolid.x, this.fy + 1.55, oppSolid.z, 1.4, 0.9, oppSolid.inX, oppSolid.inZ, 3)
     }
+    this.curtains(r)
     await Promise.all(jobs)
   }
 
@@ -681,7 +716,7 @@ export class Interior {
     const sofa = sofaFit.footprint
     this.occupy(r, sofa, true)
     const jobs: Promise<unknown>[] = [
-      this.model(sofaFit.id, sofa.x, sofa.z, sofa.yaw, { width: sofa.w, depth: sofa.d }),
+      this.stageSofa(sofaFit.id, sofa),
     ]
     const rugD = Math.min(2.25, sofaDist - 0.3)
     const rugW = Math.min(2.8, width - 0.6)
@@ -714,7 +749,18 @@ export class Interior {
     }
     this.livingEntry(r)
     jobs.push(this.livingPlant(r, this.anchors(r)))
+    this.curtains(r)
     await Promise.all(jobs)
+  }
+
+  private async stageSofa(id: string, sofa: Footprint) {
+    const model = await this.model(id, sofa.x, sofa.z, sofa.yaw, { width: sofa.w, depth: sofa.d })
+    if (model) this.kit(sofaCushions(this.lib, sofa.w, sofa.d, id === 'sectional_grey'), sofa.x, sofa.z, sofa.yaw)
+  }
+
+  private async botanical(x: number, z: number, yaw: number, y: number, size: number) {
+    const vase = await this.model('ceramic_vase_02', x, z, yaw, { height: size * 0.52, y })
+    if (vase) this.kit(eucalyptus(this.lib, size), x, z, yaw, y + size * 0.50)
   }
 
   private seatingRug(r: RoomDef, x: number, z: number, w: number, d: number, yaw: number) {
@@ -733,6 +779,8 @@ export class Interior {
     const bounds = new THREE.Box3().setFromObject(table)
     const [x, z] = this.localPoint(f.x, f.z, f.yaw, 0.08, 0.05)
     this.kit(bookStack(this.lib), x, z, f.yaw + 0.12, bounds.max.y - this.fy)
+    const [vx, vz] = this.localPoint(f.x, f.z, f.yaw, -0.14, -0.05)
+    await this.botanical(vx, vz, f.yaw + 0.45, bounds.max.y - this.fy, 0.21)
   }
 
   private livingEntry(r: RoomDef) {
@@ -818,8 +866,11 @@ export class Interior {
       return this.model('dining_chair_bentwood', chair.x, chair.z, chair.yaw, { height: 0.84 })
     })
     const h = this.ceiling(table.x, table.z)
-    this.pendant(table.x, this.fy + h, table.z, 0.24, h - 1.72)
-    jobs.push(this.model('wooden_bowl_01', table.x, table.z, 0, { size: 0.28, y: 0.75 }))
+    this.kit(diningLight(this.lib, interiorStyle(this.plan.id), table.w, Math.max(0.35, h - 1.72), this.quality?.tier === 'low'), table.x, table.z, table.yaw, h)
+    const [vx, vz] = this.localPoint(table.x, table.z, table.yaw, -table.w * 0.11, 0)
+    jobs.push(this.botanical(vx, vz, table.yaw, 0.75, 0.38))
+    const [bx, bz] = this.localPoint(table.x, table.z, table.yaw, table.w * 0.21, 0.04)
+    jobs.push(this.model('wooden_bowl_01', bx, bz, table.yaw, { size: 0.21, y: 0.75 }))
 
     for (const a of this.anchors(r)) {
       const sb = this.fitSideboard(r, a, Math.min(1.6, a.len - 0.2), 0.8)
@@ -834,6 +885,8 @@ export class Interior {
 
   private async kitchen(r: RoomDef) {
     const lib = this.lib
+    const style = interiorStyle(this.plan.id)
+    const finish = lib[style.kitchen]
     const d = 0.62
     const slots = this.anchors(r, 0.97)
     const windows = this.roomOpenings(r).filter(o => o.exterior && !this.isPassage(o.kind))
@@ -865,12 +918,16 @@ export class Interior {
       return this.kit(g, x, z, yaw, y)
     }
     const [fridgeX, fridgeZ] = this.localPoint(run.x, run.z, yaw, fridgeU, -0.003)
-    jobs.push(this.model('fridge_steel', fridgeX, fridgeZ, yaw, { height: 1.8 }))
+    jobs.push(this.model('fridge_steel', fridgeX, fridgeZ, yaw, { height: 1.8, width: 0.835, depth: 0.80 }))
+    const fridgeHeight = Math.min(2.30, this.ceiling(fridgeX, fridgeZ) - 0.07)
+    if (fridgeHeight >= 2.05 && !coversWindow(fridgeU, 0.91, fridgeHeight)) {
+      place(fridgeSurround(lib, fridgeHeight), fridgeU, run.d / 2 - 0.02)
+    }
     if (oven) place(ovenTower(lib), ovenU, TALL_D / 2)
     const baseW = w - 0.92 - (oven ? TALL_W : 0)
     const mid = sign * (w - baseW) / 2
     const backsplash = coversWindow(mid, baseW, 1.5) ? 0.06 : 0.58
-    place(baseCabinets(lib, baseW, d, backsplash), mid, d / 2)
+    place(baseCabinets(lib, baseW, d, backsplash, finish), mid, d / 2)
     const hoodU = [mid, mid - baseW * 0.25, mid + baseW * 0.25].find(u => !coversWindow(u, 0.9, 2.6))
     const hobU = hoodU ?? mid
     place(inductionHob(), hobU, d / 2 + 0.02, COUNTER_TOP)
@@ -883,7 +940,12 @@ export class Interior {
       const shelfW = Math.min(1.15, open - 0.04)
       const u = hobU + k * (0.5 + shelfW / 2)
       if (shelfW < 0.57 || coversWindow(u, shelfW, 1.8)) continue
-      place(openShelf(lib, shelfW), u, 0.14, 1.62)
+      for (const y of [1.52, 1.82]) {
+        if (coversWindow(u, shelfW, y + 0.27)) continue
+        place(openShelf(lib, shelfW, 0.28, lib.diffuser), u, 0.14, y)
+        const [vx, vz] = this.localPoint(run.x, run.z, yaw, u + k * shelfW * 0.26, 0.14 - run.d / 2)
+        jobs.push(this.model('ceramic_vase_02', vx, vz, yaw, { height: y < 1.6 ? 0.14 : 0.18, y: y + 0.036 }))
+      }
     }
 
     let island: Footprint | undefined
@@ -911,18 +973,21 @@ export class Interior {
     }
     if (island) {
       const f = this.occupy(r, island, true)
-      this.kit(kitchenIsland(lib, f.w, f.d, true), f.x, f.z, yaw)
+      this.kit(kitchenIsland(lib, f.w, f.d, true, finish), f.x, f.z, yaw)
       for (const s of stools) {
         this.occupy(r, s, true)
         jobs.push(this.model('bar_stool_wood', s.x, s.z, s.yaw, { height: 0.68 }))
       }
-      for (const k of [-1, 1]) {
-        const [x, z] = this.localPoint(f.x, f.z, yaw, k * f.w * 0.25, 0)
+      const lights = f.w >= 2.15 ? [-1, 0, 1] : [-0.57, 0.57]
+      for (const k of lights) {
+        const [x, z] = this.localPoint(f.x, f.z, yaw, k * f.w * 0.30, 0)
         const h = this.ceiling(x, z)
-        this.pendant(x, this.fy + h, z, 0.145, h - 1.78)
+        if (h > 2.06) this.kit(kitchenPendant(lib, style, h - 1.79), x, z, yaw, h)
       }
       const [x, z] = this.localPoint(f.x, f.z, yaw, f.w * 0.27, 0.03)
-      jobs.push(this.model('wooden_bowl_01', x, z, yaw, { size: 0.3, y: ISLAND_TOP }))
+      jobs.push(this.model('wooden_bowl_01', x, z, yaw, { size: 0.26, y: ISLAND_TOP }))
+      const [vx, vz] = this.localPoint(f.x, f.z, yaw, f.w * 0.12, -0.22)
+      jobs.push(this.botanical(vx, vz, yaw, ISLAND_TOP, 0.33))
     }
     await Promise.all(jobs)
   }
@@ -974,7 +1039,8 @@ export class Interior {
     const along = a.inX === 0 ? bed.x : bed.z
     const sill = Math.min(Infinity, ...windows.filter(o => o.side === a.side &&
       Math.abs(o.at - along) < (o.width + bed.w) / 2).map(o => o.sill))
-    if (primary) {
+    const style = interiorStyle(this.plan.id)
+    if (primary && style.bedAccent) {
       const height = Math.min(bed.w * 110 / 214.789, sill - 0.035)
       jobs.push(this.model('bed_dark_headboard', bed.x, bed.z, yaw, { width: bed.w, depth: bed.d, height }))
     } else {
@@ -988,7 +1054,7 @@ export class Interior {
     const lamp = stands.find(f => !hasWindowAbove(f)) ?? stands[0]
     for (const stand of stands) {
       this.occupy(r, stand, true)
-      this.kit(nightstand(this.lib, stand.w, stand === lamp), stand.x, stand.z, yaw)
+      this.kit(nightstand(this.lib, stand.w, stand === lamp || (primary && !hasWindowAbove(stand))), stand.x, stand.z, yaw)
     }
 
     // Start the rug below the nightstands. For a tight bedroom, use a bedside runner.
@@ -1004,15 +1070,35 @@ export class Interior {
       break
     }
 
+    if (primary) {
+      const d = 0.42
+      const w = Math.min(1.35, bed.w * 0.78)
+      const [x, z] = this.localPoint(bed.x, bed.z, yaw, 0, bed.d / 2 + d / 2 + 0.035)
+      const footGap = depthOf(a) - bed.d - d - 0.06
+      if (footGap >= 0.72 && this.canPlace(r, x, z, w, d, yaw)) {
+        this.occupy(r, { x, z, w, d, yaw }, true)
+        this.kit(linenBench(this.lib, w), x, z, yaw)
+      }
+      const [fx, fz] = this.localPoint(bed.x, bed.z, yaw, 0, bed.d * 0.28)
+      const h = this.ceiling(fx, fz)
+      if (h > 2.5) this.kit(ceilingFan(this.lib, style.pendant === 'brass'), fx, fz, yaw, h)
+    }
     if (primary || (x1 - x0) * (z1 - z0) >= 16) {
       for (const wall of solid) {
         if (wall.side === a.side) continue
-        const w = primary ? 0.9 : Math.min(1.32, wall.len - 0.14)
-        const d = primary ? 0.48 : w / 3
+        const open = primary && !this.plan.rooms.some(other => other.type === 'closet' && /closet/i.test(other.name))
+        const w = open ? Math.min(1.64, wall.len - 0.12) : primary ? 0.9 : Math.min(1.32, wall.len - 0.14)
+        const d = open ? WARDROBE_DEPTH : primary ? 0.48 : w / 3
         if (w < 0.88 || wall.len < w + 0.12) continue
         const p = this.wallPoint(wall, d)
         if (!this.canPlace(r, p.x, p.z, w, d, p.yaw, WALKWAY)) continue
         const storage = this.occupy(r, { ...p, w, d }, true)
+        if (open) {
+          const h = this.wardrobeHeight(p, w)
+          if (h >= 2.05) this.kit(openWardrobe(this.lib, w, h), p.x, p.z, p.yaw)
+          else jobs.push(this.model('dresser_tall', p.x, p.z, p.yaw, { width: w, depth: d }))
+          break
+        }
         jobs.push(primary
           ? this.model('dresser_tall', p.x, p.z, p.yaw, { width: w, depth: d })
           : this.modelSideboard(storage, w * 0.26))
@@ -1020,100 +1106,116 @@ export class Interior {
       }
     }
     const [artX, artZ] = this.localPoint(a.x, a.z, yaw, shift, 0)
-    const artW = primary ? 1.2 : 0.92
-    if (solid.some(w => w.side === a.side && Math.abs((w.x - artX) * a.inZ - (w.z - artZ) * a.inX) + artW / 2 < w.len / 2)) {
-      this.art(artX, this.fy + 1.62, artZ, artW, 0.56, a.inX, a.inZ, primary ? 11 : 17)
+    const artW = primary ? 1.36 : 0.92
+    const available = solid.find(w => w.side === a.side &&
+      Math.abs((w.x - artX) * a.inZ - (w.z - artZ) * a.inX) + artW / 2 < w.len / 2)
+    if (available) {
+      const accentW = bed.w + 0.22
+      const offset = Math.abs((available.x - artX) * a.inZ - (available.z - artZ) * a.inX)
+      const accent = primary && style.bedAccent && offset + accentW / 2 <= available.len / 2
+      if (accent) this.kit(oakSlats(this.lib, accentW, 2.14), artX, artZ, yaw)
+      this.art(artX, this.fy + 1.57, artZ, artW, 0.57, a.inX, a.inZ, primary ? 11 : 17, accent ? 0.036 : 0)
     }
+    this.curtains(r)
     await Promise.all(jobs)
   }
 
   private async bath(r: RoomDef, powder: boolean) {
     const walls = this.anchors(r)
     const lib = this.lib
+    const style = interiorStyle(this.plan.id)
+    const metal = lib[style.metal]
     const tileY = r.floor === 'tile' ? 0.004 : 0
-    const fy = this.fy + tileY
-    const candidates = (sizes: number[], d: number, inset: number) => walls.flatMap(wall =>
+    const primary = r.type === 'bath' && /primary/i.test(r.name)
+    const candidates = (sizes: number[], d: number, inset: number, slots = walls, screen = false) => slots.flatMap(wall =>
       sizes.flatMap(w => {
         const slack = (wall.len - w) / 2
         if (slack < 0.015) return []
         return [0, -slack + 0.012, slack - 0.012, -slack / 2, slack / 2].flatMap(shift => {
           const p = this.wallPoint(wall, d, shift)
           const f = { ...p, w, d }
-          const [x, z] = this.localPoint(p.x, p.z, p.yaw, 0, d / 2 + inset / 2)
-          const access = { x, z, yaw: p.yaw, w: Math.min(w, 0.59), d: inset }
-          return this.canPlace(r, f.x, f.z, f.w, f.d, f.yaw) &&
-            this.canPlace(r, x, z, access.w, access.d, access.yaw, 0, { ignoreFurniture: true, allowDoorLanding: true }) ? [{ f, wall, access }] : []
+          if (!this.canPlace(r, f.x, f.z, f.w, f.d, f.yaw)) return []
+          return (screen ? [-1, 1] : [0]).flatMap(side => {
+            const open = screen ? showerOpening(w) : Math.min(w, 0.59)
+            const [x, z] = this.localPoint(p.x, p.z, p.yaw, -side * (w - open) / 2, d / 2 + inset / 2)
+            const access = { x, z, yaw: p.yaw, w: open, d: inset }
+            return this.canPlace(r, x, z, access.w, access.d, access.yaw, 0, { ignoreFurniture: true, allowDoorLanding: true })
+              ? [{ f, access, side }] : []
+          })
         })
       }))
     const fixture = r.furnish?.bath
     const toilets = !fixture || fixture === 'toilet' ? candidates([0.439], 0.623, 0.53) : [null]
     const [x0, z0, x1, z1] = this.inner(r)
     const narrow = Math.min(x1 - x0, z1 - z0) < 1.45
+    const vanityWidths = powder ? [0.68, 0.55] : narrow ? [0.75, 0.63, 0.55] :
+      primary ? [1.84, 1.64, 1.43, 1.12, 0.99, 0.85, 0.68] : [1.12, 0.99, 0.85, 0.68]
     const vanities = !fixture || fixture === 'vanity'
-      ? candidates(powder ? [0.63, 0.55] : narrow ? [0.68, 0.63, 0.55] : [1.12, 0.99, 0.85, 0.68],
-        powder || narrow ? 0.37 : 0.46, powder ? 0.44 : 0.55)
+      ? candidates(vanityWidths, powder || narrow ? 0.37 : 0.46, powder ? 0.44 : 0.55)
       : [null]
     const showers = !powder && (!fixture || fixture === 'shower')
-      ? candidates(narrow ? [1.02, 0.88, 0.80] : [1.38, 1.19, 1.02, 0.88], 0.83, 0.47) : [null]
-    let best: { vanity: typeof vanities[number]; toilet: typeof toilets[number]; shower: typeof showers[number]; score: number } | undefined
+      ? candidates(narrow ? [1.02, 0.88, 0.80] : [1.38, 1.19, 1.02, 0.88], 0.83, 0.47, walls, true) : [null]
+    const tubs = primary && !fixture && Math.min(x1 - x0, z1 - z0) >= 2.65
+      ? candidates([1.68], 0.86, 0.50, this.anchors(r, 0.83)) : []
+    type Fit = NonNullable<typeof vanities[number]>
+    let best: { vanity: Fit | null; toilet: Fit | null; shower: Fit | null; tub?: Fit; score: number } | undefined
+    const conflicts = (a: Fit, b: Fit) =>
+      this.clearance(a.f, b.f) < 0.028 || this.clearance(a.access, b.f) < -FIT_EPSILON ||
+      this.clearance(b.access, a.f) < -FIT_EPSILON
     for (const vanity of vanities) {
       for (const toilet of toilets) {
+        if (vanity && toilet && conflicts(vanity, toilet)) continue
         for (const shower of showers) {
-          const set = [vanity, toilet, shower].filter(f => f !== null)
-          if (set.some(a => set.some(b => a !== b && (
-            this.clearance(a.f, b.f) < 0.03 || this.clearance(a.access, b.f) < -FIT_EPSILON
-          )))) continue
+          if (shower && ((vanity && conflicts(shower, vanity)) || (toilet && conflicts(shower, toilet)))) continue
           const score = (vanity?.f.w ?? 0) * 1.25 + (shower?.f.w ?? 0) +
             Math.min(0.7, vanity && toilet ? this.clearance(vanity.f, toilet.f) : 0) * 0.45 +
             Math.min(0.6, vanity && shower ? this.clearance(vanity.f, shower.f) : 0) * 0.3
-          if (!best || score > best.score) best = { vanity, toilet, shower, score }
+          if (best && score + (tubs.length ? 1.55 : 0) <= best.score) continue
+          const tub = tubs.find(t => [vanity, toilet, shower].every(f => !f || !conflicts(t, f)))
+          const total = score + (tub ? 1.55 : 0)
+          if (!best || total > best.score) best = { vanity, toilet, shower, tub, score: total }
         }
       }
     }
     if (!best) return
 
-    const { vanity, toilet, shower } = best
-    const v = vanity && this.occupy(r, vanity.f, true)
-    if (v) {
-      this.kit(bathVanity(lib, v.w, v.d), v.x, v.z, v.yaw, tileY)
-      const [mx, mz] = this.localPoint(v.x, v.z, v.yaw, 0, -v.d / 2 + 0.005)
-      this.box(lib.blackMetal, mx, fy + 1.12, mz, v.w * 0.87 + 0.022, 0.75, 0.022, v.yaw, 0.008)
-      const mirror = new THREE.Mesh(new THREE.PlaneGeometry(v.w * 0.87, 0.72), lib.mirror)
-      const [mirrorX, mirrorZ] = this.localPoint(mx, mz, v.yaw, 0, 0.012)
-      mirror.position.set(mirrorX, fy + 1.495, mirrorZ)
-      mirror.rotation.y = v.yaw
-      this.group.add(mirror)
+    const { vanity, toilet, shower, tub } = best
+    if (primary) {
+      const cx = (x0 + x1) / 2
+      const cz = (z0 + z1) / 2
+      const radius = Math.min(3.15, Math.hypot(x1 - x0, z1 - z0) / 2 + 0.62)
+      this.practical(cx, Math.min(2.05, this.ceiling(cx, cz) - 0.18), cz, radius, 6.4)
     }
     const jobs: Promise<unknown>[] = []
+    const v = vanity && this.occupy(r, vanity.f, true)
+    if (v) {
+      const [x, z] = this.localPoint(v.x, v.z, v.yaw, 0, -v.d / 2)
+      const sectionHeight = Math.min(2.13, this.ceiling(x, z) - 0.06)
+      this.kit(stoneWall(lib, v.w, sectionHeight), x, z, v.yaw, tileY)
+      this.kit(vanityParts(lib, v.w, v.d, !primary && style.pendant === 'brass', metal), x, z, v.yaw, tileY)
+      const [vx, vz] = this.localPoint(x, z, v.yaw, v.w >= 1.43 ? -v.w * 0.41 : -v.w * 0.36, v.d * 0.43)
+      jobs.push(this.botanical(vx, vz, v.yaw, tileY + 0.863, 0.18))
+    }
     if (toilet) {
       const t = this.occupy(r, toilet.f, true)
       jobs.push(this.model('toilet_modern', t.x, t.z, t.yaw, { height: 0.776, width: t.w, depth: t.d, y: tileY }))
     }
     if (shower) {
       const f = this.occupy(r, shower.f)
-      const [wx, wz] = this.localPoint(f.x, f.z, f.yaw, 0, -f.d / 2 + 0.005)
-      this.box(lib.tileWall, wx, fy, wz, f.w, 2.13, 0.02, f.yaw)
-      this.box(lib.porcelain, f.x, fy, f.z, f.w, 0.045, f.d, f.yaw, 0.008)
-      const spaceBesideShower = (side: number) => {
-        const [x, z] = this.localPoint(f.x, f.z, f.yaw, side * f.w, 0)
-        return v ? this.clearance({ ...f, x, z }, v) : 0
-      }
-      const screenSide = spaceBesideShower(1) < spaceBesideShower(-1) ? 1 : -1
-      const screenX = screenSide * (f.w / 2 - 0.012)
-      const [gx, gz] = this.localPoint(f.x, f.z, f.yaw, screenX, 0)
-      const glass = new THREE.Mesh(new THREE.BoxGeometry(0.009, 1.94, f.d - 0.034), lib.glass)
-      glass.position.set(gx, fy + 1.018, gz)
-      glass.rotation.y = f.yaw
-      this.group.add(glass)
-      this.box(lib.fixtureMetal, gx, fy + 0.045, gz, 0.023, 0.023, f.d - 0.02, f.yaw)
-      const [jambX, jambZ] = this.localPoint(gx, gz, f.yaw, 0, -f.d / 2 + 0.019)
-      this.box(lib.fixtureMetal, jambX, fy + 0.045, jambZ, 0.023, 1.95, 0.023, f.yaw)
-      const fixtureH = 1.76
-      const fixtureD = 50.287 / 120.912 * fixtureH
-      const [sx, sz] = this.localPoint(f.x, f.z, f.yaw, 0, (fixtureD - f.d) / 2 + 0.015)
-      jobs.push(this.model('shower_black', sx, sz, f.yaw, { height: fixtureH, y: tileY + 0.29 }))
-      const [drainX, drainZ] = this.localPoint(f.x, f.z, f.yaw, 0, 0.2)
-      this.box(lib.fixtureMetal, drainX, fy + 0.045, drainZ, 0.09, 0.003, 0.09, f.yaw, 0.001)
+      const [x, z] = this.localPoint(f.x, f.z, f.yaw, 0, -f.d / 2)
+      const height = Math.min(2.28, this.ceiling(f.x, f.z) - 0.04)
+      this.kit(showerParts(lib, f.w, f.d, metal, shower.side, height), x, z, f.yaw, tileY)
+      const open = showerOpening(f.w)
+      const [ax, az] = this.localPoint(x, z, f.yaw, shower.side * (open - f.w / 2), f.d - 0.013)
+      const [bx, bz] = this.localPoint(x, z, f.yaw, shower.side * (f.w / 2 - 0.013), f.d - 0.013)
+      const [cx, cz] = this.localPoint(x, z, f.yaw, shower.side * (f.w / 2 - 0.013), 0.025)
+      this.colliders.push({ ax, az, bx, bz }, { ax: bx, az: bz, bx: cx, bz: cz })
+    }
+    if (tub) {
+      const f = this.occupy(r, tub.f, true)
+      this.kit(ovalTub(lib), f.x, f.z, f.yaw, tileY)
+      const [x, z] = this.localPoint(f.x, f.z, f.yaw, -f.w * 0.34, -0.39)
+      this.kit(plumbingArc(lib, 0.81, 0.29, metal), x, z, f.yaw, tileY)
     }
 
     let towel = false
@@ -1211,14 +1313,42 @@ export class Interior {
     }
   }
 
+  private wardrobeHeight(f: Pick<Footprint, 'x' | 'z' | 'yaw'>, w: number) {
+    const heights = [-1, 0, 1].map(k => {
+      const [x, z] = this.localPoint(f.x, f.z, f.yaw, k * w / 2, -WARDROBE_DEPTH / 2)
+      return this.ceiling(x, z)
+    })
+    return Math.min(2.31, ...heights.map(h => h - 0.075))
+  }
+
   private closet(r: RoomDef) {
+    const d = WARDROBE_DEPTH
+    const [x0, z0, x1, z1] = this.inner(r)
+    const runs: Anchor[] = []
     for (const a of this.anchors(r)) {
-      const d = 0.59
-      const f = this.fitWidth(r, this.wallPoint(a, d), Math.min(a.len - 0.08, 2.55), d, 0.66)
+      if (runs.length && (runs[0].side === a.side || runs[0].inX * a.inX + runs[0].inZ * a.inZ !== -1)) continue
+      const roomDepth = a.inX ? x1 - x0 : z1 - z0
+      if (roomDepth - (runs.length + 1) * d < 0.76) continue
+      const w = Math.min(a.len - 0.08, 3.34)
+      const shifts = [0, (a.len - w) / 2 - 0.035, -(a.len - w) / 2 + 0.035]
+      const f = shifts.map(shift => this.fitWidth(r, this.wallPoint(a, d, shift), w, d, 0.66)).find(p => p)
       if (!f) continue
+      const h = this.wardrobeHeight(f, f.w)
+      if (h < 2.05) continue
       this.occupy(r, f, true)
-      this.kit(wardrobe(this.lib, f.w, d - 0.02), f.x, f.z, f.yaw)
-      break
+      this.kit(openWardrobe(this.lib, f.w, h), f.x, f.z, f.yaw)
+      runs.push(a)
+      if (runs.length === 2) break
+    }
+    if (runs.length && (r.id === 'closet' || r.id === 'primary-closet')) {
+      const cx = (x0 + x1) / 2
+      const cz = (z0 + z1) / 2
+      this.practical(cx, 1.60, cz, 1.46, 2.6)
+      const alongX = x1 - x0 > z1 - z0
+      const w = Math.min(0.72, (alongX ? z1 - z0 : x1 - x0) - runs.length * d - 0.12)
+      const len = Math.min(2.45, (alongX ? x1 - x0 : z1 - z0) - 0.30)
+      const yaw = alongX ? Math.PI / 2 : 0
+      if (w >= 0.52 && this.canPlace(r, cx, cz, w, len, yaw, 0.04)) this.rug(cx, cz, w, len, yaw)
     }
   }
 
@@ -1258,6 +1388,11 @@ export class Interior {
   }
 
   dispose() {
+    for (const m of this.pictureMaterials) {
+      m.map?.dispose()
+      m.dispose()
+    }
+    this.pictureMaterials.length = 0
     this.group.traverse(o => {
       const m = o as THREE.Mesh
       if (m.isMesh) m.geometry.dispose()

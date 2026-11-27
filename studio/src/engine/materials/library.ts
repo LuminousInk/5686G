@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { PALETTES, ZONES, zoneOption, type InteriorPalette, type MaterialParams } from './catalog'
-import { limewashTexture, noiseTexture, solarTexture, TextureBank, type TextureSetId } from './textures'
+import { limestoneTexture, limewashTexture, noiseTexture, solarTexture, TextureBank, type TextureSetId } from './textures'
 import type { QualitySettings } from '../quality'
 
 type Std = THREE.MeshStandardMaterial
@@ -16,6 +16,7 @@ export class MaterialLibrary {
   private noise: THREE.Texture
   private fineNoise: THREE.Texture
   private limewash: THREE.Texture
+  private limestone: THREE.Texture
   /** emissive materials that turn on at dusk/night: material -> full emissive intensity */
   private lamps = new Map<THREE.MeshStandardMaterial, number>()
   palette: InteriorPalette = PALETTES.light
@@ -30,6 +31,7 @@ export class MaterialLibrary {
     this.fineNoise = noiseTexture(256, 4, 9, 1.4)
     this.fineNoise.repeat.set(2, 2)
     this.limewash = limewashTexture()
+    this.limestone = limestoneTexture(0.95)
   }
 
   /** Every material created so far (named by its library key). */
@@ -114,7 +116,7 @@ export class MaterialLibrary {
       m.map = this.limewash
       m.normalMap = null
       m.aoMap = null
-      // evenly matte: a noise roughness map made glossy patches that mirrored the sky in camouflage blotches
+      // Keep plaster evenly matte under the baked diffuse light.
       m.roughnessMap = null
       m.userData.tex = null
     } else if (p.tex) {
@@ -128,8 +130,7 @@ export class MaterialLibrary {
       m.map = null
       m.normalMap = null
       m.aoMap = null
-      // painted metal outside: subtle roughness breakup so large panels don't look CG-flat. Interior paint stays evenly
-      // matte: the breakup made glossy patches that mirrored the windows as smudges
+      // painted metal: subtle roughness breakup so large panels don't look CG-flat
       m.roughnessMap = zone === 'walls' ? null : this.noise
       m.userData.tex = null
     }
@@ -250,7 +251,9 @@ export class MaterialLibrary {
   }
 
   get tileFloor(): Std {
-    return this.put('tileFloor', () => this.pbr('large_grey_tiles', { color: '#E9E6E1', roughness: 0.7 }, 0.8))
+    return this.put('tileFloor', () => new THREE.MeshStandardMaterial({
+      color: '#CCBEAA', map: limestoneTexture(0.72, true), roughness: 0.77, bumpMap: this.fineNoise, bumpScale: 0.004,
+    }))
   }
 
   get tileWall(): Std {
@@ -273,7 +276,7 @@ export class MaterialLibrary {
   }
 
   get ceilingWood(): Std {
-    return this.put('ceilingWood', () => this.pbr('laminate_floor_02', { color: this.palette.ceilingWood.color, roughness: 0.8 }, 1.2, Math.PI / 2))
+    return this.put('ceilingWood', () => this.pbr('white_oak_veneer', { color: this.palette.ceilingWood.color, roughness: 0.89 }, 1.8, Math.PI / 2))
   }
 
   get cabinet(): Std {
@@ -282,7 +285,7 @@ export class MaterialLibrary {
 
   get counter(): Phys {
     return this.put('counter', () =>
-      new THREE.MeshPhysicalMaterial({ color: this.palette.counter.color, roughness: this.palette.counter.roughness, roughnessMap: this.fineNoise, clearcoat: 0.3, clearcoatRoughness: 0.2 }),
+      new THREE.MeshPhysicalMaterial({ color: this.palette.counter.color, roughness: this.palette.counter.roughness, map: this.limestone, bumpMap: this.fineNoise, bumpScale: 0.003, clearcoat: 0.14, clearcoatRoughness: 0.35 }),
     )
   }
 
@@ -295,7 +298,7 @@ export class MaterialLibrary {
   }
 
   get rug(): Std {
-    return this.put('rug', () => this.pbr('rough_linen', { color: this.palette.rug, roughness: 1 }, 2.5))
+    return this.put('rug', () => this.pbr('rough_linen', { color: this.palette.rug, roughness: 1 }, 0.36))
   }
 
   get fixtureMetal(): Std {
@@ -306,12 +309,70 @@ export class MaterialLibrary {
     return this.put('stone', () => new THREE.MeshStandardMaterial({ color: this.palette.stone, roughness: 0.6, roughnessMap: this.noise }))
   }
 
+  /** Shared materials for casework, linen styling and catalog fixtures. */
+  private interiorFinish(key: string, color: string, roughness = 0.67, metalness = 0): Std {
+    const m = this.put(`interior:${key}`, () => new THREE.MeshStandardMaterial({ color, roughness, metalness }))
+    this.interiorExtra.add(m)
+    return m
+  }
+
+  get sageCabinet(): Std { return this.interiorFinish('sage-cabinet', '#7C8663', 0.78) }
+  get oliveCabinet(): Std { return this.interiorFinish('olive-cabinet', '#6B6D50', 0.78) }
+  get sageVanity(): Std { return this.interiorFinish('sage-vanity', '#626D51', 0.76) }
+  get bronze(): Std { return this.interiorFinish('bronze', '#887052', 0.39, 0.62) }
+  get brass(): Std { return this.interiorFinish('brass', '#C19257', 0.37, 0.62) }
+  get agedBrass(): Std { return this.interiorFinish('aged-brass', '#A3794E', 0.38, 0.62) }
+  get ivoryShade(): Std { return this.interiorFinish('ivory-shade', '#EDE0C8', 0.38) }
+  get rattan(): Std { return this.interiorFinish('rattan', '#B68D59', 0.87) }
+  get rustLinen(): Std { return this.interiorFinish('rust-linen', '#9A6B51', 0.93) }
+  get foliageStem(): Std { return this.interiorFinish('foliage-stem', '#786844', 0.91) }
+
+  get foliage(): Std {
+    const m = this.interiorFinish('foliage', '#687650', 0.85)
+    m.side = THREE.DoubleSide
+    return m
+  }
+
+  get drapery(): Std {
+    const m = this.interiorFinish('drapery', '#E4DAC9', 0.95)
+    m.side = THREE.DoubleSide
+    return m
+  }
+
+  get bathStone(): Std {
+    const m = this.put('bathStone', () => new THREE.MeshStandardMaterial({
+      color: '#D5C5AD', map: this.limestone, roughness: 0.76, bumpMap: this.fineNoise, bumpScale: 0.006,
+    }))
+    this.interiorExtra.add(m)
+    return m
+  }
+
+  get oliveLinen(): Std {
+    const m = this.put('oliveLinen', () => this.pbr('rough_linen', { color: '#77795A', roughness: 0.94 }, 0.45))
+    this.interiorExtra.add(m)
+    return m
+  }
+
+  /** Low-output practicals remain visibly warm in daylight. */
+  get diffuser(): Std {
+    return this.put('interior:diffuser', () => new THREE.MeshStandardMaterial({
+      color: '#FFF1D5', roughness: 0.72, emissive: '#FFD29C', emissiveIntensity: 0.68,
+    }))
+  }
+
+  get showerGlass(): Phys {
+    return this.put('showerGlass', () => new THREE.MeshPhysicalMaterial({
+      color: '#E8EAE1', roughness: 0.14, transparent: true, opacity: 0.082, depthWrite: false,
+      envMapIntensity: 0.03, specularIntensity: 0.25, ior: 1.48, side: THREE.DoubleSide,
+    }))
+  }
+
   get porcelain(): Phys {
     return this.put('porcelain', () => new THREE.MeshPhysicalMaterial({ color: '#F7F7F4', roughness: 0.12, clearcoat: 0.8, clearcoatRoughness: 0.05 }))
   }
 
   get mirror(): Std {
-    return this.put('mirror', () => new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.02, metalness: 1 }))
+    return this.put('mirror', () => new THREE.MeshStandardMaterial({ color: '#eeeae3', roughness: 0.085, metalness: 1 }))
   }
 
   get blackMetal(): Std {

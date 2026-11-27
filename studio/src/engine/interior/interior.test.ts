@@ -131,7 +131,7 @@ describe.each(sections)('$name interior', ({ plan }) => {
       const objects = interior.group.children.filter(o => inRoom(room, o))
       const byName = (name: string) => objects.filter(o => o.name === name)
       if (room.type === 'living') {
-        expect(objects.some(o => ['GlamVelvetSofa', 'sectional_grey', 'sofa_beige'].includes(o.name)), room.id).toBe(true)
+        expect(objects.some(o => ['sectional_grey', 'sofa_beige'].includes(o.name)), room.id).toBe(true)
         expect(byName('areaRug'), room.id).toHaveLength(1)
         expect(byName('coffee_table_round_01'), room.id).toHaveLength(1)
       }
@@ -182,13 +182,36 @@ describe.each(sections)('$name interior', ({ plan }) => {
       }
       if (room.type === 'bath' || room.type === 'powder') {
         const fixture = room.furnish?.bath
-        expect(byName('bathVanity'), room.id).toHaveLength(!fixture || fixture === 'vanity' ? 1 : 0)
+        expect(byName('floating-vanity'), room.id).toHaveLength(!fixture || fixture === 'vanity' ? 1 : 0)
         expect(byName('toilet_modern'), room.id).toHaveLength(!fixture || fixture === 'toilet' ? 1 : 0)
         if (fixture !== 'toilet') expect(byName('towelRail'), room.id).toHaveLength(1)
-        expect(byName('shower_black'), room.id).toHaveLength(room.type === 'bath' && (!fixture || fixture === 'shower') ? 1 : 0)
+        expect(byName('walk-in-shower'), room.id).toHaveLength(room.type === 'bath' && (!fixture || fixture === 'shower') ? 1 : 0)
         const floor = plan.floorY + (room.floor === 'tile' ? 0.004 : 0)
-        for (const fixture of [...byName('bathVanity'), ...byName('toilet_modern')]) {
-          expect(new THREE.Box3().setFromObject(fixture, true).min.y, room.id).toBeCloseTo(floor, 3)
+        for (const piece of [...byName('floating-vanity'), ...byName('walk-in-shower'), ...byName('toilet_modern')]) {
+          expect(piece.position.y, room.id).toBeCloseTo(floor, 3)
+        }
+        for (const vanity of byName('floating-vanity')) {
+          expect(vanity.getObjectByName('vanity-mirror'), room.id).toBeDefined()
+          expect(new THREE.Box3().setFromObject(vanity, true).min.y, room.id).toBeGreaterThan(floor + 0.25)
+        }
+        for (const shower of byName('walk-in-shower')) {
+          expect(shower.getObjectByName('shower-screen'), room.id).toBeDefined()
+          expect(new THREE.Box3().setFromObject(shower, true).min.y, room.id).toBeCloseTo(floor, 3)
+        }
+      }
+      if (room.type === 'bath' && /primary/i.test(room.name)) {
+        const bathtub = byName('freestanding-oval-tub')
+        expect(bathtub, room.id).toHaveLength(['cedar-ridge', 'woodland-modern'].includes(plan.id) ? 1 : 0)
+        for (const tub of bathtub) {
+          expect(tub.position.y, room.id).toBeCloseTo(plan.floorY + 0.004, 3)
+        }
+      }
+      if (room.type === 'closet' && (room.id === 'closet' || room.id === 'primary-closet')) {
+        const wardrobes = byName('open-oak-wardrobe')
+        expect(wardrobes.length, room.id).toBeGreaterThan(0)
+        for (const unit of wardrobes) {
+          expect(unit.position.y, room.id).toBeCloseTo(plan.floorY, 3)
+          expect(unit.getObjectByName('hung-and-folded-linen'), room.id).toBeDefined()
         }
       }
       if (room.type === 'office') {

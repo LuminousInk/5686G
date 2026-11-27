@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { MaterialLibrary } from '../materials/library'
 import {
   COUNTER_TOP, HOB, ISLAND_TOP, OVEN_H, OVEN_Y0, REVEAL, SHELF_LED, SHELF_T, TALL_D, TALL_H, TALL_W, TOE_H,
-  baseCabinets, baseFronts, fridgeColumn, fridgeFronts, inductionHob, islandFronts, kitchenIsland, openShelf, ovenTower,
+  baseCabinets, baseFronts, fridgeColumn, fridgeFronts, fridgeSurround, inductionHob, islandFronts, kitchenIsland, openShelf, ovenTower,
   ovenTowerFronts, rangeHood, type Front,
 } from './kitchenParts'
 
@@ -87,6 +87,7 @@ const pieces: [string, () => THREE.Group, [Range, Range, Range]][] = [
   // depth: carcass + fronts, then the counter's 20 mm overhang, then the pulls (36 mm off the fronts)
   ['baseCabinets', () => baseCabinets(makeLib(), 2.4), [[2.39, 2.41], [1.49, 1.51], [0.64, 0.67]]],
   ['openShelf', () => openShelf(makeLib(), 1.15), [[1.14, 1.16], [0.03, 0.04], [0.27, 0.29]]],
+  ['fridgeSurround', () => fridgeSurround(makeLib(), 2.3), [[0.90, 0.92], [2.29, 2.31], [0.77, 0.79]]],
   ['fridgeColumn', () => fridgeColumn(makeLib()), [[0.59, 0.61], [2.29, 2.31], [0.66, 0.71]]],
   ['ovenTower', () => ovenTower(makeLib()), [[0.59, 0.61], [2.29, 2.31], [0.66, 0.71]]],
   ['inductionHob', () => inductionHob(), [[0.575, 0.585], [0.005, 0.009], [0.495, 0.505]]],
