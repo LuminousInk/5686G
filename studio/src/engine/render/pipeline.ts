@@ -17,6 +17,7 @@ import { N8AOPostPass } from 'n8ao'
 import type { TimePreset } from '../env/environment'
 import type { QualitySettings } from '../quality'
 import { Meter } from './meter'
+import { MotionHistory, motionResolveFragment } from './motionAA'
 
 // Three's 2D PCF rotates its five-tap disk per screen pixel. The pattern survives temporal averaging,
 // particularly on high-contrast sun patches. Keep the PCF disk fixed and let the sun jitter do the averaging.
@@ -24,6 +25,13 @@ const screenSpacePcfPhase = /float phi = interleavedGradientNoise\( gl_FragCoord
 THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment.replace(
   screenSpacePcfPhase, 'const float phi = 0.0;',
 )
+
+const fullscreenVertex = 'varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 1.0, 1.0); }'
+const stillAO = 3.3
+
+export function motionAOIntensity(moving: boolean, lightmappedInteriorWeight: number) {
+  return moving ? THREE.MathUtils.lerp(2.5, 1.35, lightmappedInteriorWeight) : stillAO
+}
 
 /**
  * Accumulates jittered frames while the camera holds still: anti-aliasing, soft sun shadows (the sun is jittered
@@ -38,16 +46,21 @@ class AccumulatePass extends Pass {
   /** meters the next frame (before exposure) when set */
   meterNext = false
   readonly meter = new Meter()
+  readonly history = new MotionHistory()
+  temporal = false
+  moving = false
+  private stillMat: THREE.ShaderMaterial
   private copyMat: THREE.ShaderMaterial
+  private motionMat: THREE.ShaderMaterial
 
-  constructor() {
+  constructor(private view: THREE.PerspectiveCamera) {
     super('AccumulatePass')
     const mk = () =>
       new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter })
     this.targets = [mk(), mk()]
-    this.fullscreenMaterial = new THREE.ShaderMaterial({
+    this.fullscreenMaterial = this.stillMat = new THREE.ShaderMaterial({
       uniforms: { tCurrent: { value: null }, tHistory: { value: null }, weight: { value: 1 }, exposure: { value: 1 } },
-      vertexShader: 'varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 1.0, 1.0); }',
+      vertexShader: fullscreenVertex,
       fragmentShader: `
         uniform sampler2D tCurrent; uniform sampler2D tHistory; uniform float weight; uniform float exposure;
         varying vec2 vUv;
@@ -62,10 +75,29 @@ class AccumulatePass extends Pass {
       depthTest: false,
       depthWrite: false,
     })
+    this.needsDepthTexture = true
+    this.motionMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tCurrent: { value: null }, tHistory: { value: null }, tDepth: { value: null },
+        exposure: { value: 1 }, exposureRatio: { value: 1 }, hasHistory: { value: false },
+        reproject: { value: new THREE.Matrix4() },
+        clipPlanes: { value: new THREE.Vector2(view.near, view.far) },
+        texel: { value: new THREE.Vector2() },
+      },
+      vertexShader: fullscreenVertex,
+      fragmentShader: motionResolveFragment,
+      depthTest: false,
+      depthWrite: false,
+    })
     this.copyMat = new THREE.ShaderMaterial({
-      uniforms: { tMap: { value: null } },
-      vertexShader: 'varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 1.0, 1.0); }',
-      fragmentShader: 'uniform sampler2D tMap; varying vec2 vUv; void main(){ gl_FragColor = texture2D(tMap, vUv); }',
+      uniforms: { tMap: { value: null }, temporal: { value: false } },
+      vertexShader: fullscreenVertex,
+      fragmentShader: `
+        uniform sampler2D tMap; uniform bool temporal; varying vec2 vUv;
+        void main() {
+          gl_FragColor = texture2D(tMap, vUv);
+          if (temporal) gl_FragColor.a = 1.0;
+        }`,
       depthTest: false,
       depthWrite: false,
     })
@@ -74,6 +106,12 @@ class AccumulatePass extends Pass {
   override setSize(w: number, h: number) {
     for (const t of this.targets) t.setSize(w, h)
     this.count = 0
+    this.history.reset()
+    this.motionMat.uniforms.texel.value.set(1 / w, 1 / h)
+  }
+
+  override setDepthTexture(texture: THREE.Texture | null) {
+    this.motionMat.uniforms.tDepth.value = texture
   }
 
   override render(renderer: THREE.WebGLRenderer, inputBuffer: THREE.WebGLRenderTarget, outputBuffer: THREE.WebGLRenderTarget | null) {
@@ -81,24 +119,45 @@ class AccumulatePass extends Pass {
       this.meterNext = false
       this.meter.measure(renderer, inputBuffer.texture)
     }
-    const m = this.fullscreenMaterial as THREE.ShaderMaterial
     const write = this.targets[this.index]
     const read = this.targets[1 - this.index]
+    const m = this.temporal ? this.motionMat : this.stillMat
+    this.fullscreenMaterial = m
     m.uniforms.tCurrent.value = inputBuffer.texture
     m.uniforms.tHistory.value = read.texture
-    m.uniforms.weight.value = 1 / (this.count + 1)
     m.uniforms.exposure.value = this.exposure
+    if (this.temporal) {
+      m.uniforms.hasHistory.value = this.history.hasHistory
+      m.uniforms.clipPlanes.value.set(this.view.near, this.view.far)
+      m.uniforms.exposureRatio.value = this.history.update(this.view, this.exposure, m.uniforms.reproject.value)
+    } else {
+      m.uniforms.weight.value = 1 / (this.count + 1)
+    }
+    const output = this.renderToScreen ? null : outputBuffer
+    if (this.moving && !this.temporal) {
+      renderer.setRenderTarget(output)
+      renderer.render(this.scene, this.camera)
+      this.count++
+      return
+    }
     renderer.setRenderTarget(write)
     renderer.render(this.scene, this.camera)
-    // copy the accumulated image on to the next pass
-    const fs = this.fullscreenMaterial
+    // Copy the accumulated image on to the next pass.
     this.copyMat.uniforms.tMap.value = write.texture
+    this.copyMat.uniforms.temporal.value = this.temporal
     this.fullscreenMaterial = this.copyMat
-    renderer.setRenderTarget(this.renderToScreen ? null : outputBuffer)
+    renderer.setRenderTarget(output)
     renderer.render(this.scene, this.camera)
-    this.fullscreenMaterial = fs
+    this.fullscreenMaterial = this.stillMat
     this.index = 1 - this.index
     this.count++
+  }
+
+  override dispose() {
+    this.stillMat.dispose()
+    this.motionMat.dispose()
+    this.copyMat.dispose()
+    for (const target of this.targets) target.dispose()
   }
 }
 
@@ -179,7 +238,7 @@ export class RenderPipeline {
     const c = this.ao.configuration
     c.aoRadius = 0.46
     c.distanceFalloff = 1.1
-    c.intensity = 3.3
+    c.intensity = stillAO
     c.halfRes = q.aoHalfRes
     c.aoSamples = q.aoSamples
     c.denoiseSamples = 6
@@ -187,7 +246,7 @@ export class RenderPipeline {
     c.gammaCorrection = false
     c.color = new THREE.Color(0, 0, 0)
     this.composer.addPass(this.ao)
-    this.accumulate = new AccumulatePass()
+    this.accumulate = new AccumulatePass(camera)
     this.composer.addPass(this.accumulate)
     this.bloom = new BloomEffect({
       blendFunction: BlendFunction.ADD, intensity: 0, luminanceSmoothing: 0.24,
@@ -240,16 +299,29 @@ export class RenderPipeline {
     this.accumulate.count = 0
   }
 
-  /** Sub-pixel jitter for the next accumulated frame (call before render). */
+  resetMotion() {
+    this.accumulate.history.reset()
+  }
+
+  prepareMotion(moving: boolean, temporal: boolean, lightmappedInteriorWeight: number) {
+    this.ao.configuration.intensity = motionAOIntensity(moving, lightmappedInteriorWeight)
+    if (this.accumulate.moving && !moving) this.reset()
+    if (this.accumulate.temporal && !temporal) this.resetMotion()
+    this.accumulate.moving = moving
+    this.accumulate.temporal = temporal
+  }
+
+  /** Sub-pixel jitter for the next frame (call before render). */
   jitter(w: number, h: number) {
     const n = this.accumulate.count
-    if (n === 0 || this.maxFrames === 0) {
+    if (this.accumulate.temporal) {
+      const i = this.accumulate.history.nextSample()
+      this.camera.setViewOffset(w, h, halton(i, 2) - 0.5, halton(i, 3) - 0.5, w, h)
+    } else if (n === 0 || this.maxFrames === 0) {
       this.camera.clearViewOffset()
-      return
+    } else {
+      this.camera.setViewOffset(w, h, halton(n + 1, 2) - 0.5, halton(n + 1, 3) - 0.5, w, h)
     }
-    const jx = halton(n + 1, 2) - 0.5
-    const jy = halton(n + 1, 3) - 0.5
-    this.camera.setViewOffset(w, h, jx, jy, w, h)
   }
 
   /** A point on the sun disk for soft-shadow accumulation (unit vector near `dir`). */

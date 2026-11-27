@@ -29,6 +29,7 @@ export class Site {
   terrain!: Terrain
   private disposables: { dispose(): void }[] = []
   private lawn: GrassField | null = null
+  private grassMotion = { value: 0 }
   private plants: { fern: THREE.Mesh[]; shrub: THREE.Mesh[] } = { fern: [], shrub: [] }
   /** pieces the path tracer cannot read directly (see bakeForPhoto) */
   private instanced: THREE.InstancedMesh[] = []
@@ -66,7 +67,7 @@ export class Site {
       this.coastalMaps = await loadCoastalMaps()
       const neighbors = coastalNeighbors(t.hillside)
       this.buildCoastalGround(plan, t.hillside, neighbors)
-      const planting = await plantHillside(plan, t.hillside, this.quality, neighbors, this.coastalSky, this.renderer)
+      const planting = await plantHillside(plan, t.hillside, this.quality, neighbors, this.coastalSky, this.renderer, this.grassMotion)
       this.disposables.push(...planting.materials)
       this.group.add(...planting.meshes, ...planting.impostors)
       this.instanced.push(...planting.meshes)
@@ -539,8 +540,9 @@ export class Site {
     wind.uWind.value = preset.id === 'night' ? 0.4 : 1
   }
 
-  update(time: number, camera: THREE.Camera) {
+  update(time: number, camera: THREE.Camera, moving = false) {
     wind.uTime.value = time
+    this.grassMotion.value = moving ? 1 : 0
     this.lawn?.update(camera)
   }
 

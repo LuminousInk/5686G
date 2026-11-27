@@ -261,6 +261,8 @@ export class Engine {
     this.lights.setup(house, interior)
     this.lights.setLevel(this.sky.preset.lamps)
     this.site?.updateFootprint(plan, house)
+    this.sky.setMotionShadowRegion(house.bounds.clone().expandByScalar(9))
+    this.pipeline.resetMotion()
     this.updateLightingRooms()
     this.invalidate()
     await this.refreshLightmap()
@@ -291,6 +293,7 @@ export class Engine {
     if (!this.house || !this.plan) return
     await this.lightmap.apply(this.house, this.interior?.group ?? null, this.site, this.sky.preset, this.quality.tier === 'low')
     if (this.house) this.probes.prepareMaterials(this.house, this.interior?.group ?? null, this.lib)
+    this.pipeline.resetMotion()
   }
 
   async setTime(id: string) {
@@ -300,6 +303,7 @@ export class Engine {
     if (!await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35) || seq !== this.timeSeq) return
     this.pipeline.exposure = this.sky.exposure
     this.pipeline.setLook(preset)
+    this.pipeline.resetMotion()
     this.lights.setLevel(preset.lamps)
     this.lib.setLamps(preset.lamps)
     this.site?.setTime(preset)
@@ -327,6 +331,8 @@ export class Engine {
 
   setDollhouse(on: boolean) {
     this.dollhouse = on
+    this.sky.sun.shadow.needsUpdate = true
+    this.pipeline.resetMotion()
     this.invalidate()
   }
 
@@ -334,11 +340,14 @@ export class Engine {
     if (zone === 'palette') this.lib.setPalette(option)
     else this.lib.setFinish(zone, option)
     this.lightmap.syncMaterials()
+    this.pipeline.resetMotion()
     const finish = ++this.finishSeq
     const house = this.house
     void this.lib.bank.ready().then(() => {
       if (finish !== this.finishSeq || this.house !== house) return
       this.probes.reset(180, true)
+      this.sky.sun.shadow.needsUpdate = true
+      this.pipeline.resetMotion()
       this.invalidate()
     })
     this.invalidate()
@@ -386,6 +395,7 @@ export class Engine {
     const interiorWeight = this.plan && !this.dollhouse ? interiorExposureWeight(this.plan, this.camera.position) : 0
     const inside = interiorWeight > 0.045
     const jumped = this.camera.position.distanceToSquared(this.lastCamPos) > 1
+    if (jumped) this.pipeline.resetMotion()
     if (!inside || jumped || (this.dirty && !moved)) this.resetMeter()
     this.lastCamPos.copy(this.camera.position)
     if (active) {
@@ -420,23 +430,32 @@ export class Engine {
       this.meterRequestView = this.meterView
       this.meteredStill = !active
       this.pipeline.requestMeter()
-    } else if (!active && this.pipeline.converged && !this.keepAlive?.()) {
+    }
+    this.trackPerf(dt, this.pipeline.frames > 0)
+    const moving = moved && this.pipeline.maxFrames > 0
+    const temporal = moving && this.dpr >= this.quality.temporalMinDpr
+    this.pipeline.prepareMotion(moving, temporal, this.lightmapped ? interiorWeight : 0)
+    if (!requestMeter && !active && this.pipeline.converged && !this.keepAlive?.()) {
       // Wait for a pending exposure read without drawing extra frames.
       if ((!inside || !meter.pending) && (!this.probes.pending || this.dollhouse || this.liveMotion)) this.stop()
       return
     }
     this.pipeline.exposure = this.sky.exposure * this.adapt
-    const accumulating = this.pipeline.frames > 0
-    // adaptive resolution: lower while moving, full when still
-    this.trackPerf(dt, accumulating)
-    this.site?.update(this.time, this.camera)
+    this.site?.update(this.time, this.camera, moving)
     this.pipeline.jitter(this.width * this.dpr, this.height * this.dpr)
-    if (this.sky.sun.visible) {
+    const cacheShadows = moving && this.sky.sun.visible
+    if (cacheShadows) {
+      this.sky.beginMotionShadows(this.liveMotion)
+    } else if (this.sky.sun.visible) {
       this.pipeline.sunSample(this.sky.sunDir, THREE.MathUtils.degToRad(this.sky.preset.sunRadius), this.sunTmp)
       this.sky.placeSun(this.sunTmp)
     }
-    this.pipeline.render(dt)
-    this.camera.clearViewOffset()
+    try {
+      this.pipeline.render(dt)
+    } finally {
+      if (cacheShadows) this.sky.endMotionShadows()
+      this.camera.clearViewOffset()
+    }
     const info = this.renderer.info.render
     this.stats.triangles = info.triangles
     this.stats.calls = info.calls

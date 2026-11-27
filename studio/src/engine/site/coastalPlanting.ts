@@ -257,7 +257,7 @@ const heights: Record<CoastalTree, number> = {
 }
 
 export async function plantHillside(plan: HomePlan, hill: Hillside, quality: QualitySettings,
-  neighbors: Neighbor[], sky: CoastalSky, renderer: THREE.WebGLRenderer) {
+  neighbors: Neighbor[], sky: CoastalSky, renderer: THREE.WebGLRenderer, grassMotion: THREE.IUniform<number>) {
   const rand = rng(116 + plan.id.length * 34)
   const low = quality.tier === 'low'
   const material = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.88 })
@@ -280,7 +280,26 @@ export async function plantHillside(plan: HomePlan, hill: Hillside, quality: Qua
   if (hedges.length) {
     meshes.push(instances(woodyFoliage(3, 2, true), scrubMaterial, hedges, true, 'Lot line hedges'))
   }
-  if (dryGrass.length) meshes.push(instances(dryGrassClump(), material, dryGrass, false, 'Summer grass drifts'))
+  const materials = [material, scrubMaterial]
+  if (dryGrass.length) {
+    const grassMaterial = material.clone()
+    grassMaterial.onBeforeCompile = shader => {
+      shader.uniforms.grassMotion = grassMotion
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float grassMotion;')
+        .replace('#include <begin_vertex>', /* glsl */ `
+          #include <begin_vertex>
+          if (grassMotion > 0.0) {
+            vec3 root = (modelMatrix * instanceMatrix[3]).xyz;
+            float distanceToCamera = length(root - cameraPosition);
+            transformed *= 1.0 - grassMotion * smoothstep(14.0, 30.0, distanceToCamera);
+          }
+        `)
+    }
+    grassMaterial.customProgramCacheKey = () => 'coastal-grass-distance'
+    materials.push(grassMaterial)
+    meshes.push(instances(dryGrassClump(), grassMaterial, dryGrass, false, 'Summer grass drifts'))
+  }
 
   grasses.push(...forms[8].slice(0, quality.ornamentalClumps).map(({ x, y, z, size }): Grass => [x, y, z, size]))
 
@@ -398,5 +417,5 @@ export async function plantHillside(plan: HomePlan, hill: Hillside, quality: Qua
       meshes.push(instances(geometry, plantMaterial, places, true, i === 0 ? 'Scanned garden shrubs' : 'Scanned ornamental grasses'))
     })
   })
-  return { meshes, grasses, impostors, materials: [material, scrubMaterial] }
+  return { meshes, grasses, impostors, materials }
 }

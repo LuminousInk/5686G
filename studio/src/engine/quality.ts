@@ -7,6 +7,8 @@ export interface QualitySettings {
   tier: Tier
   maxPixelRatio: number
   shadowMapSize: number
+  /** Fall back to SMAA once adaptive resolution drops below this ratio. */
+  temporalMinDpr: number
   /** PCF filter radius in shadow-map texels. */
   shadowFilterRadius: number
   aoHalfRes: boolean
@@ -26,6 +28,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
   low: {
     tier: 'low',
     maxPixelRatio: 1.5,
+    temporalMinDpr: 0.85,
     shadowMapSize: 2048,
     shadowFilterRadius: 2.1,
     aoHalfRes: true,
@@ -43,6 +46,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
   medium: {
     tier: 'medium',
     maxPixelRatio: 1.75,
+    temporalMinDpr: 0.75,
     shadowMapSize: 3072,
     shadowFilterRadius: 3.0,
     aoHalfRes: true,
@@ -60,6 +64,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
   high: {
     tier: 'high',
     maxPixelRatio: 2,
+    temporalMinDpr: 0.75,
     shadowMapSize: 4096,
     shadowFilterRadius: 3.8,
     aoHalfRes: false,
