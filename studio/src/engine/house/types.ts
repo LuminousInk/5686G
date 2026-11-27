@@ -36,7 +36,22 @@ export type Roof =
       overhang?: number | Partial<Record<Side, number>>
       thickness?: number
     }
-  | { type: 'flat'; height: number; overhang?: number | Partial<Record<Side, number>>; thickness?: number; parapet?: number }
+  | {
+      type: 'hip'
+      eave: number
+      ridge: number
+      overhang?: number | Partial<Record<Side, number>>
+      thickness?: number
+    }
+  | {
+      type: 'flat'
+      height: number
+      overhang?: number | Partial<Record<Side, number>>
+      thickness?: number
+      parapet?: number
+      /** Flat slab under a storey. The walking floor above replaces the standing seams. */
+      bearing?: boolean
+    }
 
 export interface Block {
   id: string
@@ -122,6 +137,8 @@ export interface RoomDef {
   frame?: string
   /** floor finish zone: 'floor' (palette wood) or 'tile' */
   floor?: 'wood' | 'tile' | 'concrete'
+  /** Designer room edges generate partitions where they meet interior space. */
+  enclosed?: boolean
   /** furniture layout hints */
   furnish?: Record<string, unknown> & { bath?: 'vanity' | 'shower' | 'toilet' }
 }
@@ -258,6 +275,8 @@ export interface HomePlan {
   facts: PlanFacts
   /** finished floor height above grade */
   floorY: number
+  /** Use the live interior lighting path for a design with no baked assets. */
+  liveLighting?: boolean
   levels?: FloorLevel[]
   blocks: Block[]
   walls: InteriorWall[]

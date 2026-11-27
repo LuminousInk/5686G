@@ -46,6 +46,7 @@ export interface AppState {
   fps: number
   /** plans edited in the editor (saved in this browser) */
   customPlans: Record<string, HomePlan>
+  designerPlan: HomePlan | null
 }
 
 const listeners = new Set<() => void>()
@@ -63,6 +64,7 @@ let state: AppState = {
   walkHint: true,
   fps: 0,
   customPlans: loadCustom(),
+  designerPlan: null,
 }
 
 export function getState() {
@@ -125,9 +127,9 @@ export function decodeDesign(hash: string): Partial<AppState> | null {
 }
 
 export function currentPlan(): HomePlan {
-  return state.customPlans[state.planId] ?? planById(state.planId)!
+  return planFor(state.planId)
 }
 
 export function planFor(id: string): HomePlan {
-  return state.customPlans[id] ?? planById(id)!
+  return state.designerPlan?.id === id ? state.designerPlan : state.customPlans[id] ?? planById(id)!
 }

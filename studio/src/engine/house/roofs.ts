@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { GeoBuilder, MeshBatch, V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
 import { subtractRect } from './levels'
-import { overhangs, roofHeightAt, roofThickness, sideIntervals } from './massing'
+import { hipPlanes, overhangs, roofHeightAt, roofThickness, sideIntervals } from './massing'
 import type { Block, HomePlan, Rect, Side } from './types'
 
 export interface RoofOutput {
@@ -78,6 +78,8 @@ function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatc
     under(soffit, ax0, Math.max(az0, z1), ax1, az1) // south strip
     under(soffit, ax0, iz0, Math.min(ax1, x0), iz1) // west strip
     under(soffit, Math.max(ax0, x1), iz0, ax1, iz1) // east strip
+    // Leave the upper floor clear where a lower flat slab bears a storey.
+    if (r.type === 'flat' && r.bearing) return
     // standing seams
     const n = new THREE.Vector3().subVectors(tp[1], tp[0]).cross(new THREE.Vector3().subVectors(tp[3], tp[0])).normalize()
     const lift = n.clone().multiplyScalar(0.018)
@@ -90,6 +92,74 @@ function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatc
         ribs.beam(P(x, az0 + 0.01, T).add(lift), P(x, az1 - 0.01, T).add(lift), 0.022, 0.036, n)
       }
     }
+  }
+
+  const hip = () => {
+    const planes = hipPlanes(b)
+    const outline: Rect = [ex0, ez0, ex1, ez1]
+    const polygon = (rect: Rect, index: number) => {
+      const [a, c, d, e] = rect
+      const plane = planes[index]
+      let points: [number, number][] = [[a, e], [d, e], [d, c], [a, c]]
+      for (const other of planes) {
+        if (other === plane) continue
+        points = points.flatMap((point, i, ring) => {
+          const next = ring[(i + 1) % ring.length]
+          const h = other(...point) - plane(...point)
+          const j = other(...next) - plane(...next)
+          const keep = h >= 0
+          const cross = keep !== (j >= 0)
+          const result = keep ? [point] : []
+          if (cross) {
+            const t = h / (h - j)
+            result.push([point[0] + (next[0] - point[0]) * t, point[1] + (next[1] - point[1]) * t])
+          }
+          return result
+        })
+      }
+      return points
+    }
+    for (let i = 0; i < planes.length; i++) {
+      const P = (x: number, z: number, y: number) => V3(x, fy + planes[i](x, z) + y, z)
+      const face = (g: GeoBuilder, rect: Rect, up: number, reverse = false) => {
+        const vertices = polygon(rect, i).map(([x, z]) => P(x, z, up))
+        if (reverse) vertices.reverse()
+        for (let k = 1; k < vertices.length - 1; k++) {
+          const [a, c, d] = [vertices[0], vertices[k], vertices[k + 1]]
+          if (c.clone().sub(a).cross(d.clone().sub(a)).lengthSq() > 1e-12) g.tri(a, c, d)
+        }
+        return vertices
+      }
+      const vertices = face(top, outline, T)
+      face(blocker, outline, T / 2)
+      for (const strip of subtractRect(outline, b.rect)) face(soffit, strip, 0, true)
+      if (vaulted) face(ceil, b.rect, 0, true)
+      // Standing seams terminate at the hips. Use the projected polygon to clip each seam.
+      const horizontal = i === 0 || i === 2
+      const axis = horizontal ? 'x' : 'z'
+      const run = horizontal ? 'z' : 'x'
+      const lo = horizontal ? ex0 : ez0
+      const hi = horizontal ? ex1 : ez1
+      for (let u = lo + RIB_PITCH / 2; u < hi; u += RIB_PITCH) {
+        const hits: number[] = []
+        vertices.forEach((v, k) => {
+          const w = vertices[(k + 1) % vertices.length]
+          if ((v[axis] <= u) === (w[axis] <= u)) return
+          hits.push(v[run] + (w[run] - v[run]) * (u - v[axis]) / (w[axis] - v[axis]))
+        })
+        if (hits.length < 2) continue
+        const start = Math.min(...hits) + 0.025
+        const end = Math.max(...hits) - 0.025
+        if (end <= start) continue
+        const at = (v: number) => horizontal ? P(u, v, T + 0.014) : P(v, u, T + 0.014)
+        ribs.beam(at(start), at(end), 0.022, 0.036)
+      }
+    }
+    const corners = [[ex0, ez1], [ex1, ez1], [ex1, ez0], [ex0, ez0]]
+    corners.forEach(([x, z], i) => {
+      const [nx, nz] = corners[(i + 1) % corners.length]
+      fascia.quad(V3(x, U(x, z), z), V3(nx, U(nx, nz), nz), V3(nx, U(nx, nz) + T, nz), V3(x, U(x, z) + T, z))
+    })
   }
 
   if (r.type === 'shed') {
@@ -120,6 +190,8 @@ function buildBlockRoof(plan: HomePlan, b: Block, lib: MaterialLibrary, roofBatc
       gutterAndDownspouts(plan, b, lib, roofBatch, 'e', { ex0, ex1, ez0, ez1 }, U, T)
       gutterAndDownspouts(plan, b, lib, roofBatch, 'w', { ex0, ex1, ez0, ez1 }, U, T)
     }
+  } else if (r.type === 'hip') {
+    hip()
   } else {
     for (const [a, c, d, e] of withoutOpenings([ex0, ez0, ex1, ez1])) {
       const interiorEdges: Side[] = []
@@ -178,6 +250,7 @@ function gutterAndDownspouts(
   const gw = 0.11
   const gh = 0.1
   const cladOut = 0.06
+  const drainBase = plan.liveLighting ? plan.floorY + 0.05 : 0.05
   // only along stretches that are actually exterior at this side (no gutters dumping onto a neighbour wall)
   const { intervals } = sideIntervals(b, side, plan.blocks)
   if (!intervals.some(iv => !iv.neighbour)) return
@@ -190,7 +263,7 @@ function gutterAndDownspouts(
     for (const x of [x0 + 0.18, x1 - 0.18]) {
       const zc = (z + zo) / 2
       gb.beam(V3(x, yTop - gh, zc), V3(x, yTop - gh - 0.25, wallZ + (side === 's' ? 0.05 : -0.05)), 0.075, 0.075)
-      gb.box(x - 0.04, 0.05, Math.min(wallZ, wallZ + (side === 's' ? 0.09 : -0.09)), x + 0.04, yTop - gh - 0.2, Math.max(wallZ, wallZ + (side === 's' ? 0.09 : -0.09)))
+      gb.box(x - 0.04, drainBase, Math.min(wallZ, wallZ + (side === 's' ? 0.09 : -0.09)), x + 0.04, yTop - gh - 0.2, Math.max(wallZ, wallZ + (side === 's' ? 0.09 : -0.09)))
     }
   } else {
     const x = side === 'e' ? e.ex1 : e.ex0
@@ -201,7 +274,7 @@ function gutterAndDownspouts(
     for (const z of [z0 + 0.18, z1 - 0.18]) {
       const xc = (x + xo) / 2
       gb.beam(V3(xc, yTop - gh, z), V3(wallX + (side === 'e' ? 0.05 : -0.05), yTop - gh - 0.25, z), 0.075, 0.075)
-      gb.box(Math.min(wallX, wallX + (side === 'e' ? 0.09 : -0.09)), 0.05, z - 0.04, Math.max(wallX, wallX + (side === 'e' ? 0.09 : -0.09)), yTop - gh - 0.2, z + 0.04)
+      gb.box(Math.min(wallX, wallX + (side === 'e' ? 0.09 : -0.09)), drainBase, z - 0.04, Math.max(wallX, wallX + (side === 'e' ? 0.09 : -0.09)), yTop - gh - 0.2, z + 0.04)
     }
   }
   batch.add(lib.zone('trim'), gb.build())

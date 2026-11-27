@@ -4,6 +4,13 @@ const studioFlags = ['plan', 'time', 'view', 'quality', 'frames', 'tm', 'ui', 's
 
 const homePrefix = '#home-'
 const tourPrefix = '#tour-'
+export const DESIGN_ROUTE = '#design'
+export const PRESENTATION_ROUTE = '#presentation-homes'
+export const DRAFT_CODE = 'd1-'
+export const designerRoute = (source?: string) => source ? `${DESIGN_ROUTE}-${source}` : DESIGN_ROUTE
+export const isDesignerRoute = (hash: string) => hash === DESIGN_ROUTE
+  || hash.startsWith(`#${DRAFT_CODE}`) || (hash.startsWith(`${DESIGN_ROUTE}-`) && !!planById(hash.slice(DESIGN_ROUTE.length + 1)))
+export const designerSource = (hash: string) => hash.startsWith(`${DESIGN_ROUTE}-`) ? planById(hash.slice(DESIGN_ROUTE.length + 1))?.id : undefined
 
 export const homeRoute = (id: string) => homePrefix + id
 export const tourRoute = (id: string) => tourPrefix + id
@@ -31,7 +38,7 @@ export function shareCode(hash: string) {
 
 /** Hashes that request a specific studio load, including a home's tour. */
 export function designCode(hash: string) {
-  return !!(shareCode(hash) || tourFromRoute(hash))
+  return !!(hash === PRESENTATION_ROUTE || isDesignerRoute(hash) || shareCode(hash) || tourFromRoute(hash))
 }
 
 export function isStudioRoute(hash: string, search: string): boolean {

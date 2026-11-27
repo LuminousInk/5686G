@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Engine } from '../engine/Engine'
 import { loadModel, MODEL_YAW, setModelQuality, skippedModels } from '../engine/models'
@@ -14,7 +14,8 @@ import { decodeDesign, encodeDesign, getState, planFor, setState, toast, useStor
 import { GALLERY_SHOTS, designView, galleryView, type GalleryCatalog, type GalleryImage } from './galleryShots'
 import { ZONES } from '../engine/materials/catalog'
 import { TIME_PRESETS } from '../engine/env/environment'
-import { isStudioRoute, tourFromRoute, type StudioLoad, type StudioTarget } from './routes'
+import { designerRoute, isDesignerRoute, isStudioRoute, PRESENTATION_ROUTE, tourFromRoute, type StudioLoad, type StudioTarget } from './routes'
+import type { HomePlan } from '../engine/house/types'
 import { TourControls, useTour } from './Tour'
 import { FinishHotspots, useFinishHotspots } from './FinishHotspots'
 import manifest from '../../public/gallery/gallery.json'
@@ -92,6 +93,17 @@ export function App({ target, visible, requested, onLoad }: {
   const walkHint = useStore(s => s.walkHint)
   const photo = useStore(s => s.photo)
   const editing = useStore(s => s.editing)
+  const designer = isDesignerRoute(target.hash)
+  const activeDraft = useStore(s => s.designerPlan)
+  const [designerModule, setDesignerModule] = useState<typeof import('./designer/Designer')>()
+  const [designWalk, setDesignWalk] = useState(false)
+  const [phoneScene, setPhoneScene] = useState(false)
+  const [requestedDraft, setRequestedDraft] = useState<string>()
+  const pendingWalk = useRef<string | undefined>(undefined)
+  const [designError, setDesignError] = useState<string>()
+  const [narrowDesigner, setNarrowDesigner] = useState(() => matchMedia('(max-width: 760px)').matches)
+  const canBuildDraft = !designer || !narrowDesigner || requestedDraft === planId
+  const designerCanvasVisible = visible && (!designer || !!activeDraft && (designWalk || !narrowDesigner || phoneScene))
   const [editorModule, setEditorModule] = useState<typeof import('./Editor')>()
   const [photoModule, setPhotoModule] = useState<typeof import('./PhotoMode')>()
   const [you, setYou] = useState<{ x: number; z: number; yaw: number; level?: string } | null>(null)
@@ -111,7 +123,53 @@ export function App({ target, visible, requested, onLoad }: {
     return () => window.removeEventListener('resize', f)
   }, [])
   const custom = useStore(s => s.customPlans[s.planId])
-  const plan = custom ?? planById(planId)!
+  const plan = activeDraft?.id === planId ? activeDraft : custom ?? planById(planId) ?? PLANS[0]
+
+  useEffect(() => {
+    const query = matchMedia('(max-width: 760px)')
+    const sync = () => setNarrowDesigner(query.matches)
+    query.addEventListener('change', sync)
+    return () => query.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    if (!designer || designerModule) return
+    let cancelled = false
+    import('./designer/Designer').then(module => { if (!cancelled) setDesignerModule(module) }).catch(error => {
+      if (!cancelled) onLoad({ target, progress: 0, error: String(error) })
+    })
+    return () => { cancelled = true }
+  }, [designer, designerModule, target, onLoad])
+
+  // The chooser is usable before the first draft's 3D scene is built.
+  useEffect(() => {
+    if (!designer || !designerModule || appliedTarget !== target) return
+    reportedTarget.current = target
+    onLoad({ target, progress: 100 })
+  }, [designer, designerModule, appliedTarget, target, onLoad])
+
+  const openDraft = useCallback((draft: HomePlan) => {
+    if (getState().designerPlan?.id === draft.id) return
+    pendingWalk.current = undefined
+    setDesignError(undefined)
+    setDesignWalk(false)
+    setState({
+      designerPlan: draft,
+      planId: draft.id,
+      mode: 'orbit', sheet: null, viewId: null, pose: undefined, editing: false, photo: null,
+      loading: { p: 0, label: 'Building your home' },
+    })
+  }, [])
+
+  const showPhoneScene = useCallback((show: boolean) => {
+    if (show) setRequestedDraft(getState().designerPlan?.id)
+    setPhoneScene(show)
+  }, [])
+
+  const updateDraft = useCallback((draft: HomePlan) => {
+    if (getState().planId !== draft.id) return
+    setState({ designerPlan: draft })
+  }, [])
 
   useEffect(() => {
     if (!editing || editorModule) return
@@ -248,31 +306,42 @@ export function App({ target, visible, requested, onLoad }: {
     reportedTarget.current = null
     const touring = tourFromRoute(target.hash)
     const design = decodeDesign(target.hash)
-    const plan = !touring && !design ? params.get('plan') : null
-    const time = !touring && !design ? params.get('time') : null
-    const view = !touring && !design ? params.get('view') : null
+    const plan = !designer && !touring && !design && target.hash !== PRESENTATION_ROUTE ? params.get('plan') : null
+    const time = !designer && !touring && !design ? params.get('time') : null
+    const view = !designer && !touring && !design ? params.get('view') : null
+    pendingWalk.current = undefined
+    setDesignWalk(false)
+    setDesignError(undefined)
+    setPhoneScene(false)
+    setRequestedDraft(undefined)
     setState({
       pose: undefined,
       ...design,
+      ...(designer ? { planId: PLANS[0].id, designerPlan: null, loading: null, sheet: null, viewId: null, mode: 'orbit' as const }
+        : target.hash === PRESENTATION_ROUTE ? { planId: PLANS[0].id, designerPlan: null, viewId: null, sheet: 'plans' as const } : {}),
       ...(plan && planById(plan) ? { planId: plan, sheet: null } : {}),
       ...(time ? { time } : {}),
       ...(view ? { viewId: view } : {}),
-      ...(params.get('sheet') === 'none' || !isStudioRoute('', location.search) ? { sheet: null } : {}),
+      ...(target.hash !== PRESENTATION_ROUTE && (params.get('sheet') === 'none' || !isStudioRoute('', location.search)) ? { sheet: null } : {}),
       ...(touring ? { planId: touring.id, viewId: touring.tour![0].view, sheet: null } : {}),
       editing: false,
       photo: null,
     })
     setAppliedTarget(target)
-  }, [booted, target])
+  }, [booted, target, designer])
 
   useEffect(() => {
-    if (!booted || appliedTarget !== target) return
+    if (!booted || appliedTarget !== target || !canBuildDraft || (designer && !planId.startsWith('draft-'))) return
     let cancelled = false
     const report = (progress: number, error?: string) => {
       if (!cancelled && reportedTarget.current !== target) onLoad({ target, progress, error })
     }
     report(9)
     window.__ready = false
+    if (designer) {
+      setDesignError(undefined)
+      setRequestedDraft(planId)
+    }
     loadQueue.current = loadQueue.current.then(async () => {
       const waitForPage = async () => {
         do {
@@ -298,7 +367,7 @@ export function App({ target, visible, requested, onLoad }: {
       engineProgress.current = progress
       progress(0, 'Building the house')
       try {
-        const finishes = s.finishes[p.id] ?? p.finishes
+        const finishes = p.liveLighting ? p.finishes : s.finishes[p.id] ?? p.finishes
         const previous = loaded.current
         loaded.current = null
         const reusePlan = currentEngine.plan === p && previous
@@ -317,7 +386,11 @@ export function App({ target, visible, requested, onLoad }: {
         if (cancelled) return
         fitToCanvas.current?.()
         currentNav.setBounds(currentEngine.house!.bounds)
-        if (s.pose) currentNav.goToPose(s.pose)
+        const openingWalk = pendingWalk.current === p.id
+        if (openingWalk) {
+          pendingWalk.current = undefined
+          currentNav.goToView((getState().designerPlan ?? p).views.find(view => view.kind === 'walk') ?? start, false)
+        } else if (s.pose) currentNav.goToPose(s.pose)
         else {
           if (currentNav.mode === 'dollhouse') currentNav.setMode('orbit', false)
           currentNav.goToView(start, false)
@@ -353,29 +426,64 @@ export function App({ target, visible, requested, onLoad }: {
         if (cancelled) return
         const why = error instanceof Error ? error.message : String(error)
         setState({ loading: { p: 1, label: 'Could not load this home.', error: why.slice(0, 180) } })
-        report(94, why)
+        if (designer) setDesignError(why)
+        else report(94, why)
       }
     })
     return () => {
       cancelled = true
     }
-  }, [booted, appliedTarget, target, planId, attempt, onLoad])
+  }, [booted, appliedTarget, target, planId, attempt, onLoad, designer, canBuildDraft])
 
   useEffect(() => {
     if (!engine || !nav) return
-    if (visible) fitToCanvas.current?.()
-    if (!visible && !firstFrame.current) {
+    if (designerCanvasVisible) fitToCanvas.current?.()
+    if (!designerCanvasVisible && !firstFrame.current) {
       engine.paused = true
       engine.stop()
-    } else if (visible && window.__ready) {
+    } else if (designerCanvasVisible && window.__ready) {
       engine.paused = false
       engine.start()
     }
-  }, [visible, booted])
+  }, [designerCanvasVisible, booted, loading])
 
   useEffect(() => {
-    if (nav) nav.enabled = visible && mode !== 'plan'
-  }, [visible, booted, mode])
+    if (nav) nav.enabled = designerCanvasVisible && mode !== 'plan'
+  }, [designerCanvasVisible, booted, mode])
+
+  useEffect(() => {
+    if (!designer || !activeDraft || loading || !engine || !nav || engine.plan === activeDraft || engine.plan?.id !== activeDraft.id) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      loadQueue.current = loadQueue.current.then(async () => {
+        const renderer = engine
+        if (cancelled || !renderer || getState().designerPlan !== activeDraft || getState().planId !== activeDraft.id) return
+        const last = renderer.plan
+        if (!last || last.id !== activeDraft.id || last === activeDraft) return
+        try {
+          const geometry = ['levels', 'blocks', 'walls', 'openings', 'rooms', 'decks', 'porches', 'terraces', 'stairs'] as const
+          if (geometry.some(key => JSON.stringify(last[key]) !== JSON.stringify(activeDraft[key]))) {
+            await renderer.rebuildHouse(activeDraft)
+            if (renderer.house && nav) {
+              nav.setBounds(renderer.house.bounds)
+              renderer.house.roof.visible = nav.mode !== 'dollhouse'
+              renderer.house.ceilings.visible = nav.mode !== 'dollhouse'
+            }
+          } else {
+            renderer.plan = activeDraft
+            if (renderer.house) renderer.house.plan = activeDraft
+          }
+          for (const [zone, option] of Object.entries(activeDraft.finishes)) {
+            if (last.finishes[zone] !== option) renderer.setFinish(zone, option)
+          }
+          if (!cancelled) setDesignError(undefined)
+        } catch (error) {
+          if (!cancelled) setDesignError(error instanceof Error ? error.message : String(error))
+        }
+      })
+    }, 55)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [activeDraft, designer, loading])
 
   useEffect(() => {
     if (!visible) {
@@ -501,7 +609,7 @@ export function App({ target, visible, requested, onLoad }: {
   const touring = !!tour.state
 
   return (
-    <div className={`app mode-${mode} ${sheet ? `has-${sheet}` : ''} ${editing && editorModule ? 'is-editing' : ''}`}
+    <div className={`app mode-${mode} ${sheet ? `has-${sheet}` : ''} ${editing && editorModule ? 'is-editing' : ''} ${designer && !designWalk ? 'is-designing' : ''}`}
       onPointerDownCapture={e => {
         const target = e.target as Element
         if (target !== canvasRef.current && !target.closest('[data-tour-control]')) tour.stop()
@@ -509,8 +617,23 @@ export function App({ target, visible, requested, onLoad }: {
       onWheelCapture={e => { if (e.target !== canvasRef.current) tour.stop() }}>
       <canvas ref={canvasRef} className="stage" />
 
-      {visible && <div className="hud">
-        <header className="topbar">
+      {designer && designerModule && appliedTarget === target && <designerModule.Designer
+        key={target.hash} hash={target.hash} visible={visible} previewing={designWalk} cutaway={mode === 'dollhouse'}
+        onOpen={openDraft} onPlan={updateDraft} onPhoneView={showPhoneScene}
+        onWalk={() => {
+          setDesignWalk(true)
+          setRequestedDraft(plan.id)
+          if (!loading && engine?.plan?.id === plan.id) setMode('walk')
+          else pendingWalk.current = plan.id
+        }}
+        onPreviewMode={m => setMode(m)} onFitView={() => nav?.goToView(plan.views[0])} busy={!!loading && !designError} previewError={designError}
+        onRetry={() => setAttempt(a => a + 1)} />}
+
+      {visible && (!designer || designWalk) && <div className="hud">
+        {designer ? <header className="topbar ds-walkbar">
+          <button className="btn glass" type="button" onClick={() => { pendingWalk.current = undefined; setDesignWalk(false); setMode('orbit'); setState({ sheet: null }) }}>‹ Back to design</button>
+          <span className="btn glass">{plan.name}</span>
+        </header> : <header className="topbar">
           <a className="brand studio-home" href="#home" aria-label="Cuby Studio home">
             <img src="./cuby.svg" alt="" width={28} height={28} />
             <span className="brand-word">Cuby</span>
@@ -533,12 +656,15 @@ export function App({ target, visible, requested, onLoad }: {
           <button className="btn btn-plans" onClick={() => setState({ sheet: sheet === 'plans' ? null : 'plans' })}>
             <Icon.plans /> <span>All plans</span>
           </button>
-        </header>
+        </header>}
 
-        <nav className="actions" aria-label="Tools">
+        {!designer && <nav className="actions" aria-label="Tools">
           {!!plan.tour?.length && <button className="btn btn-tour glass" type="button" onClick={touring ? tour.stop : startTour}
             disabled={!!loading || editing || takingPhoto} aria-pressed={touring} data-tour-control><Icon.play /> Tour</button>}
-          <button className="icon-btn" onClick={() => {
+          <a className="icon-btn studio-design-link" href={designerRoute(planById(planId)?.id)} aria-label="Design your own home" title="Design your own home">
+            <Icon.plan /><span className="studio-design-label">Design your own</span><span className="studio-design-short" aria-hidden="true">Design</span>
+          </a>
+          <button className="icon-btn" title="Quick plan editor" onClick={() => {
             loaded.current = null
             setState({ editing: !editing, sheet: null })
           }} aria-label="Edit plan" aria-pressed={editing}>
@@ -570,9 +696,9 @@ export function App({ target, visible, requested, onLoad }: {
           <button className="icon-btn" onClick={() => setState({ sheet: sheet === 'help' ? null : 'help' })} aria-label="Controls">
             <Icon.help />
           </button>
-        </nav>
+        </nav>}
 
-        {engine && hotspots && !loading && !sheet && !editing && !takingPhoto && mode !== 'plan' && !touring &&
+        {!designer && engine && hotspots && !loading && !sheet && !editing && !takingPhoto && mode !== 'plan' && !touring &&
           <FinishHotspots key={mode} engine={engine} isMoving={cameraMoving} onFinish={onFinish} onCustomize={zone => {
             setCustomizeZone(zone)
             setState({ sheet: 'customize' })
@@ -613,13 +739,13 @@ export function App({ target, visible, requested, onLoad }: {
                 </button>
               ))}
             </div>
-            <button className={`btn btn-style ${sheet === 'customize' ? 'is-on' : ''}`} onClick={() => {
+            {!designer && <button className={`btn btn-style ${sheet === 'customize' ? 'is-on' : ''}`} onClick={() => {
               setCustomizeZone(undefined)
               setState({ sheet: sheet === 'customize' ? null : 'customize' })
             }}>
               <Icon.palette />
               <span>Style</span>
-            </button>
+            </button>}
           </div>
         </div>
 

@@ -240,6 +240,19 @@
 
 .no-ui .hud { display: none; }
 
+/* ------------------------------------------------ designer entry */
+.studio-design-link { text-decoration: none; }
+.studio-design-link span { display: none; }
+@media (min-width: 1120px) {
+  .actions .studio-design-link { display: flex; align-items: center; gap: 7px; padding-inline: 9px; width: auto; white-space: nowrap; }
+  .studio-design-link .studio-design-label { display: inline; font-weight: 600; }
+  .topbar { max-width: calc(100% - 500px); }
+}
+@media (max-width: 899px) {
+  .actions .studio-design-link { display: flex; align-items: center; gap: 5px; width: auto; padding-inline: 8px; }
+  .studio-design-link .studio-design-short { display: inline; font-size: 12px; font-weight: 600; }
+}
+
 /* ------------------------------------------------ editor */
 :root { --grid: rgba(28, 34, 32, 0.08); --accent-strong: #d27a2c; --danger: #e07a6a; }
 .app.is-editing .bottom, .app.is-editing .minimap, .app.is-editing .joy-wrap, .app.is-editing .hint { display: none; }
