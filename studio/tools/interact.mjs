@@ -8,6 +8,8 @@ const base = process.env.BASE ?? 'http://localhost:5173/'
 const out = process.env.OUT ?? 'shots/ix'
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] })
 const ctx = mobile ? await browser.newContext({ ...devices['iPhone 13'] }) : await browser.newContext({ viewport: { width: 1440, height: 860 } })
+// The page loads Chakra Petch from Google Fonts; keep tests hermetic (and fast behind a proxy) with an empty stylesheet.
+await ctx.route(/fonts\.(googleapis|gstatic)\.com/, route => route.fulfill({ status: 200, contentType: 'text/css', body: '' }))
 const page = await ctx.newPage()
 const errors = []
 page.on('pageerror', e => errors.push('pageerror: ' + e.message))
