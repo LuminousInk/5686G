@@ -5,6 +5,7 @@ import { feetInches } from './FloorPlan'
 import { Icon } from './icons'
 import { setState, useStore, getState, toast, encodeDesign } from './store'
 import { useState } from 'react'
+import { Credits } from './Credits'
 
 const sf = (n: number) => n.toLocaleString('en-US')
 
@@ -179,9 +180,6 @@ export function ShareSheet() {
   )
 }
 
-/** Sketchfab authors of the CC BY furniture (tools/objaverse.json) */
-const CREDITS = ["13213213213", "allenbranch", "CioJay", "classe-saga", "crosslag", "dearsindy", "mohitoz", "olamii", "Pablo.Portela", "TabbieCat", "trendforward", "ubaid.kfat", "wadeedchishty", "williamozelimtorres", "zhousongjiang"]
-
 export function HelpSheet() {
   const touch = matchMedia('(pointer: coarse)').matches
   return (
@@ -206,13 +204,10 @@ export function HelpSheet() {
         <dd>Tap a room to stand in it. Sizes are interior dimensions in feet.</dd>
       </dl>
       <p className="note">Hold still for a moment and the picture sharpens: shadows soften and edges clean up.</p>
+      <p><a className="studio-help-home" href="#home">Back to Cuby Studio <Icon.diagonal /></a></p>
       <details className="credits">
         <summary>Credits</summary>
-        <p className="note">
-          Skies, textures, plants and some furniture: Poly Haven (CC0). Sofas and chairs: Wayfair via the Khronos glTF
-          Sample Assets (CC BY 4.0). Furniture and fixtures from Sketchfab creators via Objaverse (CC BY 4.0):{' '}
-          {CREDITS.join(', ')}. Trees: ez-tree (MIT).
-        </p>
+        <div className="note"><Credits /></div>
       </details>
     </aside>
   )

@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { TIME_PRESETS } from '../engine/env/environment'
 import { neighbours } from '../engine/house/massing'
 import { ZONES } from '../engine/materials/catalog'
-import { PLANS } from '../plans'
+import { PLANS, planById } from '../plans'
+import catalog from '../../public/gallery/gallery.json'
+import { GALLERY_SHOTS, galleryView } from './galleryShots'
+import { isStudioRoute } from './routes'
 import { aspenCustom } from '../plans/aspenCustom'
 import { planProblems } from '../plans/validate'
 import { feetInches, planGeometry } from './FloorPlan'
@@ -31,8 +34,44 @@ describe('share codes', () => {
           }
   })
 
+  it('keeps legacy codes valid and rejects a view from another home', () => {
+    const code = encodeDesign({ ...getState(), viewId: null })
+    expect(decodeDesign(`#${code}`)).toMatchObject({ planId: 'cedar-ridge', viewId: null })
+    expect(decodeDesign(`#${code}-v-living`)).toMatchObject({ viewId: 'living' })
+    expect(decodeDesign(`#${code}-v-aspen-lower-suite`)).toMatchObject({ viewId: null })
+  })
+
   it('ignores hashes that are not share codes', () => {
     for (const h of ['', '#', '#hero', '#c-', '#c-99-0', '#c-0-x']) expect(decodeDesign(h)).toBeNull()
+  })
+})
+
+describe('website entry points', () => {
+  it('opens the landing without a hash and uses only plain studio hashes', () => {
+    for (const hash of ['', '#home', '#gallery', '#/studio', '#studio?view=great']) {
+      expect(isStudioRoute(hash, '')).toBe(false)
+    }
+    for (const hash of ['#studio', '#c-0-1', '#c-0-0-1-v-cedar-great-room']) {
+      expect(isStudioRoute(hash, '')).toBe(true)
+    }
+    expect(isStudioRoute('', '?plan=cedar-ridge&ui=0')).toBe(true)
+    expect(isStudioRoute('#home', '?plan=cedar-ridge')).toBe(false)
+  })
+
+  it('matches each published caption and share code to its camera and design', () => {
+    expect(catalog.homes.map(home => home.id)).toEqual(PLANS.map(plan => plan.id))
+    expect(catalog.images.map(image => image.id)).toEqual(GALLERY_SHOTS.map(shot => shot.id))
+    for (const [i, image] of catalog.images.entries()) {
+      const plan = planById(image.plan)!
+      const shot = GALLERY_SHOTS[i]
+      const view = galleryView(plan, image.id)!
+      const decoded = decodeDesign(image.share)!
+      expect(isStudioRoute(image.share, '')).toBe(true)
+      expect(decoded).toMatchObject({ planId: plan.id, viewId: view.id, time: shot.time ?? 'golden' })
+      expect(decoded.finishes![plan.id]).toEqual({ ...plan.finishes, ...shot.finishes })
+      expect(view.pos[1]).toEqual(view.target[1])
+      expect(image.kind).toBe(view.kind === 'walk' ? 'interior' : 'exterior')
+    }
   })
 })
 

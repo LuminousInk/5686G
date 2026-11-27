@@ -3,6 +3,8 @@ import { ZONES } from '../engine/materials/catalog'
 import { TIME_PRESETS } from '../engine/env/environment'
 import { PLANS, planById } from '../plans'
 import type { HomePlan } from '../engine/house/types'
+import { designView } from './galleryShots'
+import { designCode } from './routes'
 
 const STORE_KEY = 'cuby-studio-edits-v1'
 function loadCustom(): Record<string, HomePlan> {
@@ -89,7 +91,7 @@ export function toast(msg: string) {
 
 // ------------------------------------------------------------------ share codes
 // Artifact hosts only pass a plain "#name" hash (letters, digits, hyphens). Encode the design as
-// #c-<plan>-<time>-<option per zone ...>, e.g. #c-0-0-0-1-0-0-0-0-0-0
+// #c-<plan>-<time>-<option per zone ...>[-v-<view id>]
 
 export function encodeDesign(s: AppState = state): string {
   const pi = PLANS.findIndex(p => p.id === s.planId)
@@ -97,11 +99,12 @@ export function encodeDesign(s: AppState = state): string {
   const ti = Math.max(0, TIME_PRESETS.findIndex(t => t.id === s.time))
   const f = s.finishes[plan.id] ?? plan.finishes
   const parts = plan.zones.map(z => Math.max(0, ZONES[z].options.findIndex(o => o.id === f[z])))
-  return `c-${pi}-${ti}-${parts.join('-')}`
+  const base = ['c', pi, ti, ...parts].join('-')
+  return s.viewId ? `${base}-v-${s.viewId}` : base
 }
 
 export function decodeDesign(hash: string): Partial<AppState> | null {
-  const m = hash.replace(/^#/, '').match(/^c-(\d+)-(\d+)((?:-\d+)*)$/)
+  const m = designCode(hash)
   if (!m) return null
   const plan = PLANS[Number(m[1])]
   if (!plan) return null
@@ -112,7 +115,8 @@ export function decodeDesign(hash: string): Partial<AppState> | null {
     const o = ZONES[z].options[idx[i]]
     if (o) f[z] = o.id
   })
-  return { planId: plan.id, time, finishes: { ...state.finishes, [plan.id]: f }, sheet: null }
+  const viewId = m[4] && designView(plan, m[4]) ? m[4] : null
+  return { planId: plan.id, time, finishes: { ...state.finishes, [plan.id]: f }, sheet: null, viewId }
 }
 
 export function currentPlan(): HomePlan {
