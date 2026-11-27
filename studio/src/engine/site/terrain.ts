@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { HomePlan } from '../house/types'
+import { Hillside } from './hillside'
 
 export interface Berm {
   x: number
@@ -32,12 +33,14 @@ function bermHeight(b: Berm, x: number, z: number) {
 
 export class Terrain {
   readonly berms: Berm[]
+  readonly hillside?: Hillside
   /** house pad: no hills here */
   private padR: number
   private cx: number
   private cz: number
 
-  constructor(plan: HomePlan, houseBox: THREE.Box3) {
+  constructor(plan: HomePlan, houseBox: THREE.Box3, origin?: Hillside) {
+    if (plan.landscape.site) this.hillside = new Hillside(plan, plan.landscape.site, origin)
     this.berms = (plan.landscape.berms ?? []).map(b => ({ ...b, rot: b.rot ?? 0, seed: b.seed ?? 1 }))
     const c = houseBox.getCenter(new THREE.Vector3())
     this.cx = c.x
@@ -47,6 +50,7 @@ export class Terrain {
 
   /** Ground height (no house, no terraces). */
   heightAt(x: number, z: number): number {
+    if (this.hillside) return this.hillside.heightAt(x, z)
     let h = 0
     for (const b of this.berms) h = Math.max(h, bermHeight(b, x, z))
     // far rolling ground

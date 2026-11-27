@@ -1,0 +1,209 @@
+import * as THREE from 'three'
+import type { MaterialLibrary } from '../materials/library'
+import type { Hillside } from './hillside'
+
+// Sample the same world-oriented HDRI as the backdrop, without a reflection render target.
+export class CoastalSky {
+  private rotation = new THREE.Matrix3()
+  private matrix = new THREE.Matrix4()
+  readonly uniforms = {
+    coastSky: { value: null as THREE.Texture | null },
+    coastRotation: { value: this.rotation },
+    coastBrightness: { value: 1 },
+    coastSunDirection: { value: new THREE.Vector3(0, 1, 0) },
+    coastSunColor: { value: new THREE.Color(0) },
+  }
+
+  bind(mesh: THREE.Mesh) {
+    mesh.onBeforeRender = (_renderer, scene) => {
+      const background = scene.background
+      if (!(background instanceof THREE.Texture) || background.mapping !== THREE.EquirectangularReflectionMapping) return
+      const u = this.uniforms
+      if (background === u.coastSky.value && u.coastBrightness.value === scene.backgroundIntensity) return
+      u.coastSky.value = background
+      u.coastBrightness.value = scene.backgroundIntensity
+      this.rotation.setFromMatrix4(this.matrix.makeRotationFromEuler(scene.backgroundRotation)).transpose()
+      const sun = scene.children.find(o => o instanceof THREE.DirectionalLight)
+      if (sun instanceof THREE.DirectionalLight) {
+        u.coastSunDirection.value.subVectors(sun.position, sun.target.position).normalize()
+        u.coastSunColor.value.copy(sun.color).multiplyScalar(Math.min(sun.intensity, 6) * 0.55)
+      }
+    }
+  }
+}
+
+const skyGLSL = /* glsl */`
+uniform sampler2D coastSky;
+uniform mat3 coastRotation;
+uniform float coastBrightness;
+vec3 skyAt(vec3 direction) {
+  return texture2D(coastSky, equirectUv(normalize(coastRotation * direction))).rgb * coastBrightness;
+}
+vec3 horizonSky(vec2 heading) {
+  vec2 dir = heading * inversesqrt(max(dot(heading, heading), 0.00001));
+  return min(skyAt(vec3(dir.x, 0.018, dir.y)), vec3(4.0));
+}
+`
+
+const worldVertex = /* glsl */`
+varying vec3 vCoastalWorld;
+`
+const setWorld = /* glsl */`
+vCoastalWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+`
+
+export function canyonMaterial(lib: MaterialLibrary, hill: Hillside, sky: CoastalSky) {
+  const scan = lib.soil
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.96, normalMap: scan.normalMap, normalScale: new THREE.Vector2(0.62, 0.62),
+  })
+  material.onBeforeCompile = shader => {
+    Object.assign(shader.uniforms, sky.uniforms, {
+      coastSoil: { value: scan.map },
+      coastSeaLevel: { value: hill.oceanDistance === undefined ? -1e5 : hill.seaLevel },
+    })
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>' + worldVertex)
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>' + setWorld)
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>' + worldVertex + skyGLSL + /* glsl */`
+        uniform sampler2D coastSoil;
+        uniform float coastSeaLevel;
+      `)
+      .replace('#include <color_fragment>', /* glsl */`
+        #include <color_fragment>
+        if (vCoastalWorld.y < coastSeaLevel - 0.025) discard;
+        vec2 ground = vCoastalWorld.xz;
+        float proximity = 1.0 - smoothstep(32.0, 105.0, distance(ground, cameraPosition.xz));
+        vec3 grains = texture2D(coastSoil, ground * 0.92).rgb;
+        float textureTone = dot(grains, vec3(0.3, 0.55, 0.15));
+        float mottle = sin(ground.x * 1.23 + sin(ground.y * 1.13)) * cos(ground.y * 0.88 - ground.x * 0.64);
+        diffuseColor.rgb *= (0.96 + 0.15 * mottle) * mix(1.0, 0.65 + textureTone * 1.3, proximity);
+      `)
+      .replace('#include <opaque_fragment>', /* glsl */`
+        vec2 hazeRay = vCoastalWorld.xz - cameraPosition.xz;
+        float hazy = 1.0 - exp(-length(hazeRay) * 0.00155);
+        vec3 air = horizonSky(hazeRay);
+        outgoingLight = mix(outgoingLight, air * vec3(0.78, 0.84, 0.91), hazy * 0.89);
+        #include <opaque_fragment>
+      `)
+  }
+  material.customProgramCacheKey = () => 'coastal-canyon'
+  return material
+}
+
+export function retainingMaterial(lib: MaterialLibrary) {
+  const material = lib.concrete.clone()
+  material.color.set('#b1a390')
+  material.onBeforeCompile = shader => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vForm;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvForm = uv;')
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vForm;')
+      .replace('#include <color_fragment>', /* glsl */`
+        #include <color_fragment>
+        float plank = vForm.y / 0.175;
+        float course = floor(plank);
+        float seam = smoothstep(0.015, 0.052 + fwidth(plank) * 0.25, fract(plank));
+        float knots = sin(vForm.x * 3.8 + course * 9.3);
+        float timber = sin(vForm.y * 630.0 + knots * 1.3 + sin(vForm.x * 14.0)) * 0.032;
+        float joints = 1.0 - smoothstep(0.001, 0.004, abs(fract(vForm.x * 0.41 + course * 0.38) - 0.5));
+        float tie = 1.0 - smoothstep(0.008, 0.015, length(vec2(fract(vForm.x * 0.71) - 0.5, fract(vForm.y * 1.83) - 0.5)));
+        diffuseColor.rgb *= (0.91 + 0.1 * sin(course * 7.67) + timber) * (0.70 + 0.30 * seam) * (1.0 - 0.18 * joints - 0.38 * tie);
+      `)
+  }
+  material.customProgramCacheKey = () => 'board-formed-concrete'
+  return material
+}
+
+export function buildOcean(hill: Hillside, sky: CoastalSky, time: { value: number }, low: boolean) {
+  const geom = new THREE.PlaneGeometry(44000, 44000).rotateX(-Math.PI / 2)
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      ...sky.uniforms,
+      oceanTime: time,
+      oceanOrigin: { value: new THREE.Vector2(hill.cx, hill.cz) },
+      oceanBearing: { value: new THREE.Vector2(hill.dx, hill.dz) },
+      oceanDistance: { value: hill.oceanDistance },
+    },
+    defines: { COAST_LOW: low ? 1 : 0 },
+    vertexShader: /* glsl */`
+      varying vec3 vSurface;
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vSurface = world.xyz;
+        vec4 clip = projectionMatrix * viewMatrix * world;
+        // Keep the far water visible at the sky line. The dry terrain always draws in front.
+        clip.z = clip.w * 0.999985;
+        gl_Position = clip;
+      }
+    `,
+    fragmentShader: /* glsl */`
+      #include <common>
+      ${skyGLSL}
+      uniform float oceanTime;
+      uniform float oceanDistance;
+      uniform vec2 oceanOrigin;
+      uniform vec2 oceanBearing;
+      uniform vec3 coastSunDirection;
+      uniform vec3 coastSunColor;
+      varying vec3 vSurface;
+      float bell(float x) { return exp(-x * x); }
+      float wave(float phase) {
+        // A ripple fades once its period is smaller than the pixel footprint.
+        return cos(phase) * (1.0 - smoothstep(0.55, 2.3, fwidth(phase)));
+      }
+      void main() {
+        vec3 toEye = cameraPosition - vSurface;
+        float distanceToEye = length(toEye);
+        vec3 eye = toEye / distanceToEye;
+        vec2 p = vSurface.xz - oceanOrigin;
+        float u = dot(p, vec2(oceanBearing.y, -oceanBearing.x));
+        float v = dot(p, oceanBearing);
+        float beach = oceanDistance + 9.0 * sin(u * 0.025) + 8.0 * sin(u * 0.009)
+          + 133.0 * bell((u + 270.0) / sqrt(12000.0))
+          + 245.0 * bell((u - 450.0) / sqrt(28000.0))
+          + 410.0 * bell((u - 1050.0) / sqrt(180000.0));
+        float offshore = v - beach;
+        float t = oceanTime * 0.64;
+        float gust = sin(u * 0.024 + v * 0.052) * 1.6 + sin(u * 0.068 - v * 0.034)
+          + sin(u * 0.137 + v * 0.092) * 1.2;
+        vec2 swell = vec2(
+          wave(u * 0.22 + v * 0.74 - t * 2.0 + gust) * 0.024 + wave(u * 0.81 - v * 0.46 + t) * 0.016,
+          wave(u * 0.36 + v * 0.63 - t * 1.7 - gust) * 0.034 + wave(u * 1.22 + v * 0.30 + t) * 0.019
+        );
+        #if COAST_LOW == 0
+          swell += vec2(wave(u * 2.3 + v * 1.9 - t * 2.4), wave(u * 1.3 - v * 2.7 + t)) * 0.018;
+        #endif
+        swell *= (1.0 - smoothstep(110.0, 360.0, distanceToEye)) * smoothstep(0.055, 0.23, eye.y);
+        vec3 normal = normalize(vec3(swell.x, 1.0, swell.y));
+        vec3 reflected = reflect(-eye, normal);
+        reflected.y = max(0.018, reflected.y);
+        vec3 reflection = min(skyAt(reflected), vec3(1.55));
+        float fresnel = 0.035 + 0.965 * pow(1.0 - max(dot(normal, eye), 0.0), 5.0);
+        float shallows = 1.0 - smoothstep(0.0, 50.0, offshore);
+        vec3 deep = mix(vec3(0.016, 0.086, 0.192), vec3(0.038, 0.166, 0.218), shallows);
+        deep *= (0.91 + swell.y * 1.6) * pow(coastBrightness, 0.8);
+        vec3 water = mix(deep, reflection * vec3(0.45, 0.63, 0.79), 0.36 * fresnel);
+        float glint = max(dot(normal, normalize(eye + coastSunDirection)), 0.0);
+        water += coastSunColor * (0.26 * pow(glint, 46.0) + 0.6 * pow(glint, 255.0));
+        float foam = pow(0.5 + 0.5 * wave(offshore * 1.63 - t * 2.1 + sin(u * 0.62) * 0.65), 9.0);
+        foam *= smoothstep(-0.2, 0.9, offshore) * (1.0 - smoothstep(4.0, 17.0, offshore));
+        water = mix(water, vec3(0.48, 0.59, 0.61) * coastBrightness, foam * (0.28 + sin(u * 2.8) * 0.12));
+        float haze = 1.0 - exp(-distanceToEye * 0.00062);
+        vec3 air = horizonSky(-toEye.xz);
+        water = mix(water, air * mix(vec3(0.49, 0.68, 0.85), vec3(0.96, 0.98, 1.0), haze), haze);
+        gl_FragColor = vec4(water, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+  })
+  const mesh = new THREE.Mesh(geom, mat)
+  mesh.name = 'Pacific Ocean'
+  mesh.position.set(hill.cx, hill.seaLevel, hill.cz)
+  mesh.frustumCulled = false
+  sky.bind(mesh)
+  return mesh
+}
