@@ -14,8 +14,16 @@ import {
   VignetteEffect,
 } from 'postprocessing'
 import { N8AOPostPass } from 'n8ao'
+import type { TimePreset } from '../env/environment'
 import type { QualitySettings } from '../quality'
 import { Meter } from './meter'
+
+// Three's 2D PCF rotates its five-tap disk per screen pixel. The pattern survives temporal averaging,
+// particularly on high-contrast sun patches. Keep the PCF disk fixed and let the sun jitter do the averaging.
+const screenSpacePcfPhase = /float phi = interleavedGradientNoise\( gl_FragCoord\.xy \) \* PI2;(?=\s+shadow = \()/
+THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment.replace(
+  screenSpacePcfPhase, 'const float phi = 0.0;',
+)
 
 /**
  * Accumulates jittered frames while the camera holds still: anti-aliasing, soft sun shadows (the sun is jittered
@@ -94,32 +102,33 @@ class AccumulatePass extends Pass {
   }
 }
 
-/** Display-referred grade: contrast S-curve, saturation, warmth, lifted blacks. */
+/** Display-referred grade: contrast, saturation, white balance and a gentle shadow lift. */
 class GradeEffect extends Effect {
   constructor() {
     super(
       'GradeEffect',
       `
-      uniform float contrast; uniform float saturation; uniform float warmth; uniform float lift;
+      uniform float contrast; uniform float saturation; uniform float warmth;
       void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
         vec3 c = clamp(inputColor.rgb, 0.0, 1.0);
         float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-        c = mix(vec3(l), c, saturation);
+        c = clamp(mix(vec3(l), c, saturation), 0.0, 1.0);
         // gentle S-curve around mid grey (linear space ~0.18)
         vec3 x = pow(c, vec3(1.0 / 2.2));
         x = x + contrast * (x - x * x) * (2.0 * x - 1.0);
         c = pow(clamp(x, 0.0, 1.0), vec3(2.2));
-        c *= vec3(1.0 + warmth, 1.0 + warmth * 0.25, 1.0 - warmth * 0.6);
-        c = c + lift * (1.0 - c) * 0.02;
-        outputColor = vec4(c, inputColor.a);
+        float w = warmth * (1.0 - smoothstep(0.35, 0.95, l));
+        c *= vec3(1.0 + w, 1.0 + w * 0.25, 1.0 - w * 0.6);
+        vec3 toe = 1.0 - c;
+        c += 0.18 * c * toe * toe * toe;
+        outputColor = vec4(clamp(c, 0.0, 1.0), inputColor.a);
       }`,
       {
         blendFunction: BlendFunction.NORMAL,
         uniforms: new Map<string, THREE.Uniform>([
-          ['contrast', new THREE.Uniform(0.22)],
-          ['saturation', new THREE.Uniform(1.08)],
-          ['warmth', new THREE.Uniform(0.02)],
-          ['lift', new THREE.Uniform(0.6)],
+          ['contrast', new THREE.Uniform(0)],
+          ['saturation', new THREE.Uniform(1)],
+          ['warmth', new THREE.Uniform(0)],
         ]),
       },
     )
@@ -168,28 +177,38 @@ export class RenderPipeline {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2())
     this.ao = new N8AOPostPass(scene, camera, size.x, size.y)
     const c = this.ao.configuration
-    c.aoRadius = 0.85
-    c.distanceFalloff = 0.6
-    c.intensity = 2.4
+    c.aoRadius = 0.46
+    c.distanceFalloff = 1.1
+    c.intensity = 3.3
     c.halfRes = q.aoHalfRes
     c.aoSamples = q.aoSamples
     c.denoiseSamples = 6
-    c.denoiseRadius = 10
+    c.denoiseRadius = 7
     c.gammaCorrection = false
     c.color = new THREE.Color(0, 0, 0)
     this.composer.addPass(this.ao)
     this.accumulate = new AccumulatePass()
     this.composer.addPass(this.accumulate)
-    this.bloom = new BloomEffect({ intensity: 0.35, luminanceThreshold: 1.1, luminanceSmoothing: 0.4, mipmapBlur: true, radius: 0.72 })
-    this.tone = new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC })
+    this.bloom = new BloomEffect({
+      blendFunction: BlendFunction.ADD, intensity: 0, luminanceSmoothing: 0.24,
+      mipmapBlur: true, levels: q.tier === 'low' ? 5 : 7,
+    })
+    this.tone = new ToneMappingEffect({ mode: ToneMappingMode.AGX })
     this.grade = new GradeEffect()
-    const vignette = new VignetteEffect({ darkness: 0.42, offset: 0.32 })
+    const vignette = new VignetteEffect({ darkness: 0.20, offset: 0.36 })
     this.composer.addPass(new EffectPass(camera, this.bloom, this.tone, this.grade, vignette))
     this.composer.addPass(new EffectPass(camera, new SMAAEffect({ preset: SMAAPreset.HIGH })))
   }
 
   setToneMapping(id: string) {
     this.tone.mode = id === 'aces' ? ToneMappingMode.ACES_FILMIC : id === 'neutral' ? ToneMappingMode.NEUTRAL : ToneMappingMode.AGX
+  }
+
+  setLook({ bloom, grade }: Pick<TimePreset, 'bloom' | 'grade'>) {
+    this.bloom.intensity = bloom.intensity
+    this.bloom.luminanceMaterial.threshold = bloom.threshold
+    this.bloom.mipmapBlurPass.radius = bloom.radius
+    this.grade.set(grade.contrast, grade.saturation, grade.warmth)
   }
 
   setSize(w: number, h: number) {

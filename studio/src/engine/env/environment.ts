@@ -9,6 +9,8 @@ export interface TimePreset {
   exposure: number
   /** multiplier on the extracted sun (or moon) */
   sunScale: number
+  /** Angular radius in degrees, used for still-view shadow accumulation. */
+  sunRadius: number
   /** multiplier on image based light */
   envScale: number
   /** interior + exterior lamps 0..1 */
@@ -17,16 +19,37 @@ export interface TimePreset {
   backgroundScale: number
   /** minimum sun elevation (degrees) - the HDRI sun is lifted if lower, to keep shadows readable */
   minElevation?: number
-  bloom: number
+  bloom: { intensity: number; threshold: number; radius: number }
+  grade: { contrast: number; saturation: number; warmth: number }
   /** largest resolution shipped for this sky */
   maxRes: '1k' | '2k'
 }
 
 export const TIME_PRESETS: TimePreset[] = [
-  { id: 'golden', label: 'Golden hour', hdri: 'syferfontein_6d_clear_puresky', exposure: 1.15, sunScale: 1, envScale: 1, lamps: 0, backgroundScale: 1, minElevation: 21, bloom: 0.35, maxRes: '2k' },
-  { id: 'day', label: 'Afternoon', hdri: 'kloofendal_48d_partly_cloudy_puresky', exposure: 0.62, sunScale: 1.1, envScale: 1, lamps: 0, backgroundScale: 1, bloom: 0.2, maxRes: '2k' },
-  { id: 'dusk', label: 'Dusk', hdri: 'qwantani_dusk_2_puresky', exposure: 0.9, sunScale: 0, envScale: 1, lamps: 0.85, backgroundScale: 1, bloom: 0.6, maxRes: '1k' },
-  { id: 'night', label: 'Night', hdri: 'qwantani_moonrise_puresky', exposure: 2.6, sunScale: 0.02, envScale: 0.08, lamps: 1, backgroundScale: 0.07, bloom: 0.9, maxRes: '1k' },
+  {
+    id: 'golden', label: 'Golden hour', hdri: 'syferfontein_6d_clear_puresky',
+    exposure: 1.32, sunScale: 0.84, sunRadius: 0.85, envScale: 1, lamps: 0, backgroundScale: 1, minElevation: 21, maxRes: '2k',
+    bloom: { intensity: 0.045, threshold: 1.55, radius: 0.47 },
+    grade: { contrast: 0.20, saturation: 0.97, warmth: 0.014 },
+  },
+  {
+    id: 'day', label: 'Afternoon', hdri: 'kloofendal_48d_partly_cloudy_puresky',
+    exposure: 0.72, sunScale: 0.92, sunRadius: 0.70, envScale: 1, lamps: 0, backgroundScale: 1, maxRes: '2k',
+    bloom: { intensity: 0.025, threshold: 1.75, radius: 0.38 },
+    grade: { contrast: 0.19, saturation: 1.02, warmth: 0 },
+  },
+  {
+    id: 'dusk', label: 'Dusk', hdri: 'qwantani_dusk_2_puresky',
+    exposure: 0.9, sunScale: 0, sunRadius: 0, envScale: 1, lamps: 0.85, backgroundScale: 1, maxRes: '1k',
+    bloom: { intensity: 0.09, threshold: 1.15, radius: 0.5 },
+    grade: { contrast: 0.16, saturation: 1.02, warmth: 0.018 },
+  },
+  {
+    id: 'night', label: 'Night', hdri: 'qwantani_moonrise_puresky',
+    exposure: 2.6, sunScale: 0.02, sunRadius: 0.55, envScale: 0.08, lamps: 1, backgroundScale: 0.07, maxRes: '1k',
+    bloom: { intensity: 0.14, threshold: 0.95, radius: 0.54 },
+    grade: { contrast: 0.14, saturation: 1.0, warmth: 0.01 },
+  },
 ]
 
 interface Analysed {
@@ -231,10 +254,9 @@ export class SkyEnvironment {
     this.sun.castShadow = true
     const s = this.sun.shadow
     s.mapSize.set(quality.shadowMapSize, quality.shadowMapSize)
-    s.bias = -0.00025
-    s.normalBias = 0.025
-    s.radius = 3
-    s.blurSamples = 12
+    s.bias = -0.00016
+    s.normalBias = 0.018
+    s.radius = quality.shadowFilterRadius
     scene.add(this.sun, this.sunTarget)
     this.sun.target = this.sunTarget
   }

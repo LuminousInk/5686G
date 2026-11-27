@@ -7,6 +7,8 @@ export interface QualitySettings {
   tier: Tier
   maxPixelRatio: number
   shadowMapSize: number
+  /** PCF filter radius in shadow-map texels. */
+  shadowFilterRadius: number
   aoHalfRes: boolean
   aoSamples: number
   grassBlades: number
@@ -25,6 +27,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
     tier: 'low',
     maxPixelRatio: 1.5,
     shadowMapSize: 2048,
+    shadowFilterRadius: 2.1,
     aoHalfRes: true,
     aoSamples: 8,
     grassBlades: 50000,
@@ -40,7 +43,8 @@ export const TIERS: Record<Tier, QualitySettings> = {
   medium: {
     tier: 'medium',
     maxPixelRatio: 1.75,
-    shadowMapSize: 2048,
+    shadowMapSize: 3072,
+    shadowFilterRadius: 3.0,
     aoHalfRes: true,
     aoSamples: 12,
     grassBlades: 140000,
@@ -57,6 +61,7 @@ export const TIERS: Record<Tier, QualitySettings> = {
     tier: 'high',
     maxPixelRatio: 2,
     shadowMapSize: 4096,
+    shadowFilterRadius: 3.8,
     aoHalfRes: false,
     aoSamples: 16,
     grassBlades: 320000,
