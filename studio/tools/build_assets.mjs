@@ -12,16 +12,17 @@ import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { NodeIO } from '@gltf-transform/core'
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
-import { dedup, prune, weld, simplify, textureCompress, reorder, flatten, join, metalRough, unpartition, getBounds } from '@gltf-transform/functions'
+import { dedup, prune, weld, simplify, textureCompress, reorder, metalRough, unpartition, getBounds } from '@gltf-transform/functions'
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const RAW = path.join(ROOT, '.cache', 'raw')
+const RAW = process.env.CUBY_ASSET_CACHE ?? path.join(ROOT, '.cache', 'raw')
 const OUT = path.join(ROOT, 'public', 'assets')
 const args = process.argv.slice(2)
 const steps = args.filter(a => a.startsWith('--')).map(a => a.slice(2))
 const only = args.find(a => !a.startsWith('--')) ?? ''
 const run = (name) => !steps.length || steps.includes(name)
+const COASTAL_DIFFUSE = new Set(['withered_grass', 'wood_chip_path'])
 
 // target triangle counts (approximate) and texture size per model
 const MODELS = {
@@ -33,6 +34,8 @@ const MODELS = {
   rock_09: { tris: 1200, tex: 512, error: 0.03 },
   fern_02: { tris: 6500, tex: 1024 },
   shrub_04: { tris: 16000, tex: 1024, error: 0.01 },
+  shrub_03: { tris: 1600, tex: 512, error: 0.02, diffuseOnly: true },
+  grass_medium_01: { tris: 2400, tex: 512, error: 0.025, diffuseOnly: true },
   mid_century_lounge_chair: { tris: 7000, tex: 1024 },
   coffee_table_round_01: { tris: 5000, tex: 1024 },
   potted_plant_01: { tris: 30000, tex: 1024, error: 0.01 },
@@ -82,6 +85,11 @@ async function textures() {
     if (only && !only.split(',').some(o => id === o || id.includes(o))) continue
     for (const res of fs.readdirSync(path.join(base, id))) {
       const dir = path.join(base, id, res)
+      if (COASTAL_DIFFUSE.has(id)) {
+        await sharp(path.join(dir, 'Diffuse.jpg')).resize(512, 512).webp({ quality: 83, effort: 5 })
+          .toFile(path.join(OUT, 'tex', `${id}_512_d.webp`))
+        continue
+      }
       const jobs = [
         ['Diffuse.jpg', 'd', 84],
         ['nor_gl.jpg', 'n', 90],
@@ -165,6 +173,13 @@ async function models() {
     const src = [path.join(base, `${id}.gltf`), path.join(base, `${id}.glb`)].find(f => fs.existsSync(f))
     if (!src) { log('skip ', id); continue }
     const doc = await io.read(src)
+    if (cfg.diffuseOnly) {
+      for (const material of doc.getRoot().listMaterials()) {
+        material.setNormalTexture(null).setOcclusionTexture(null).setMetallicRoughnessTexture(null)
+        material.setMetallicFactor(0).setRoughnessFactor(0.92)
+        if (material.getAlphaMode() === 'BLEND') material.setAlphaMode('MASK').setAlphaCutoff(0.33)
+      }
+    }
     // some samples carry a presentation light; furniture must not light the room it stands in
     for (const node of doc.getRoot().listNodes()) node.setExtension('KHR_lights_punctual', null)
     sanitizeNames(doc)

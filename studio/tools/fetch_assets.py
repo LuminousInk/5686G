@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, '.cache', 'raw')
+RAW = os.environ.get('CUBY_ASSET_CACHE', RAW)
 API = 'https://api.polyhaven.com/files/'
 UA = {'User-Agent': 'cuby-studio-asset-fetch/2.0'}
 
@@ -46,12 +47,16 @@ TEXTURES = {
     'long_white_tiles': '1k',          # bath walls
     'large_grey_tiles': '1k',          # bath floor
     'rough_linen': '1k',               # upholstery, bedding
+    'withered_grass': '1k',            # dry summer grasses on coastal slopes
+    'wood_chip_path': '1k',            # bark-mulched garden beds
 }
 TEX_MAPS = ('Diffuse', 'nor_gl', 'arm')
+COASTAL_DIFFUSE = {'withered_grass', 'wood_chip_path'}
 MODELS = [
     # rock garden
     'boulder_01', 'rock_moss_set_01', 'rock_moss_set_02', 'namaqualand_boulder_02', 'namaqualand_boulders_01',
     'stone_01', 'rock_07', 'rock_09', 'fern_02', 'shrub_04',
+    'shrub_03', 'grass_medium_01',
     # interior
     'sofa_03', 'Sofa_01', 'modern_arm_chair_01', 'mid_century_lounge_chair', 'coffee_table_round_01',
     'modern_coffee_table_01', 'dining_table', 'dining_chair_02', 'bar_chair_round_01', 'modern_ceiling_lamp_01',
@@ -94,7 +99,7 @@ def jobs_for(asset: str) -> list[tuple[str, str, int | None]]:
             jobs.append((e['url'], os.path.join(RAW, 'hdri', f'{asset}_{r}.hdr'), e['size']))
     elif asset in TEXTURES:
         for r in TEXTURES[asset].split(','):
-            for m in TEX_MAPS:
+            for m in ('Diffuse',) if asset in COASTAL_DIFFUSE else TEX_MAPS:
                 e = files[m][r]['jpg']
                 jobs.append((e['url'], os.path.join(RAW, 'tex', asset, r, f'{m}.jpg'), e['size']))
     else:

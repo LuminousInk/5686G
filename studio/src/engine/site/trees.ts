@@ -6,14 +6,20 @@ import { rng } from '../materials/textures'
 import { wind } from './grass'
 
 const loader = new THREE.TextureLoader()
+const textureReady = new WeakMap<THREE.Texture, Promise<void>>()
 const tex = (name: string, srgb: boolean) => {
-  const t = loader.load(`./assets/trees/${name}`)
+  let finish!: () => void
+  const ready = new Promise<void>(resolve => { finish = resolve })
+  const t = loader.load(`./assets/trees/${name}`, finish, undefined, finish)
+  textureReady.set(t, ready)
   t.wrapS = t.wrapT = THREE.RepeatWrapping
   if (srgb) t.colorSpace = THREE.SRGBColorSpace
   return t
 }
 
-let barkMat: THREE.MeshStandardMaterial | null = null
+const barkMats = new Map<BarkKind, THREE.MeshStandardMaterial>()
+type BarkKind = 'pine' | 'oak' | 'sycamore'
+type LeafKind = 'pine' | 'aspen' | 'oak' | 'sycamore' | 'olive'
 const leafMats = new Map<string, THREE.MeshStandardMaterial>()
 
 function windPatch(m: THREE.MeshStandardMaterial, key: string, strength: number, canopy = false) {
@@ -51,25 +57,29 @@ function windPatch(m: THREE.MeshStandardMaterial, key: string, strength: number,
   m.customProgramCacheKey = () => key
 }
 
-export function barkMaterial() {
-  if (!barkMat) {
-    barkMat = new THREE.MeshStandardMaterial({
-      map: tex('pine_bark_d.webp', true),
-      normalMap: tex('pine_bark_n.webp', false),
-      color: '#8c7f78',
+export function barkMaterial(kind: BarkKind = 'pine') {
+  let material = barkMats.get(kind)
+  if (!material) {
+    const texture = kind === 'pine' ? 'pine' : 'oak'
+    material = new THREE.MeshStandardMaterial({
+      map: tex(`${texture}_bark_d.webp`, true),
+      normalMap: tex(`${texture}_bark_n.webp`, false),
+      color: { pine: '#8c7f78', oak: '#817467', sycamore: '#e4d9bc' }[kind],
       roughness: 0.95,
     })
-    windPatch(barkMat, 'bark-wind', 0.25)
+    windPatch(material, `bark-wind-${kind}`, 0.25)
+    barkMats.set(kind, material)
   }
-  return barkMat
+  return material
 }
 
-export function leafMaterial(kind: 'pine' | 'aspen' | 'oak') {
+export function leafMaterial(kind: LeafKind) {
   let m = leafMats.get(kind)
   if (!m) {
+    const texture = kind === 'sycamore' ? 'aspen' : kind === 'olive' ? 'oak' : kind
     m = new THREE.MeshStandardMaterial({
-      map: tex(`${kind}_leaves.webp`, true),
-      color: kind === 'pine' ? '#7f9a66' : kind === 'aspen' ? '#c9b46a' : '#93a36a',
+      map: tex(`${texture}_leaves.webp`, true),
+      color: { pine: '#7f9a66', aspen: '#c9b46a', oak: '#788f5f', sycamore: '#a5ac72', olive: '#a3b4a0' }[kind],
       roughness: 0.82,
       side: THREE.DoubleSide,
       alphaTest: 0.42,
@@ -80,15 +90,46 @@ export function leafMaterial(kind: 'pine' | 'aspen' | 'oak') {
   return m
 }
 
+export function leavesReady(kind: LeafKind) {
+  return textureReady.get(leafMaterial(kind).map!)
+}
+
 export interface TreeVariant {
   branches: THREE.BufferGeometry
   leaves: THREE.BufferGeometry
-  leafKind: 'pine' | 'aspen' | 'oak'
+  leafKind: LeafKind
+  barkKind?: BarkKind
   height: number
 }
 
+export type CoastalTree = 'live-oak' | 'sycamore' | 'stone-pine' | 'canary-pine' | 'olive'
+
+export function coastalTreeVariant(kind: CoastalTree, seed: number, detail: number) {
+  const preset = {
+    'live-oak': 'Oak Medium', sycamore: 'Aspen Medium', 'stone-pine': 'Oak Medium',
+    'canary-pine': 'Pine Medium', olive: 'Oak Medium',
+  }[kind]
+  const variant = makeVariant(preset, seed, detail, {
+    'live-oak': 'oak', sycamore: 'sycamore', 'stone-pine': 'pine', 'canary-pine': 'pine', olive: 'olive',
+  }[kind] as LeafKind)
+  variant.barkKind = kind === 'sycamore' ? 'sycamore' : kind.endsWith('pine') ? 'pine' : 'oak'
+  const width = { 'live-oak': 1.48, sycamore: 1.48, 'stone-pine': 1.7, 'canary-pine': 0.87, olive: 1.1 }[kind]
+  for (const geometry of [variant.branches, variant.leaves]) {
+    geometry.scale(width, 1, width)
+    if (kind === 'stone-pine') {
+      // Lift the lower branches toward a broad umbrella crown while leaving the trunk base in place.
+      const p = geometry.getAttribute('position')
+      for (let i = 0; i < p.count; i++) p.setY(i, Math.pow(Math.max(0, p.getY(i)), 0.56))
+      geometry.computeVertexNormals()
+      geometry.computeBoundingBox()
+      geometry.computeBoundingSphere()
+    }
+  }
+  return variant
+}
+
 /** Generates one tree with ez-tree and normalises it to 1 unit of height (scaled per instance). */
-export function makeVariant(preset: string, seed: number, detail: number, leafKind: 'pine' | 'aspen' | 'oak'): TreeVariant {
+export function makeVariant(preset: string, seed: number, detail: number, leafKind: LeafKind): TreeVariant {
   const t = new Tree()
   const opts = loadPreset(preset)
   t.loadFromJson(opts)
@@ -131,7 +172,7 @@ export interface TreePlacement {
 export function treeInstances(v: TreeVariant, places: TreePlacement[], castShadow: boolean): THREE.Group {
   const g = new THREE.Group()
   if (!places.length) return g
-  const b = new THREE.InstancedMesh(v.branches, barkMaterial(), places.length)
+  const b = new THREE.InstancedMesh(v.branches, barkMaterial(v.barkKind), places.length)
   const l = new THREE.InstancedMesh(v.leaves, leafMaterial(v.leafKind), places.length)
   const m = new THREE.Matrix4()
   const q = new THREE.Quaternion()
@@ -159,12 +200,11 @@ export function treeInstances(v: TreeVariant, places: TreePlacement[], castShado
  * trees for the cost of a few hundred triangles.
  */
 export function impostorForest(renderer: THREE.WebGLRenderer, v: TreeVariant, places: TreePlacement[], seed: number): THREE.Mesh {
-  const W = 256
-  const H = 512
-  const rt = new THREE.WebGLRenderTarget(W, H, { samples: 4, colorSpace: THREE.SRGBColorSpace })
+  const rt = new THREE.WebGLRenderTarget(256, 256, { colorSpace: THREE.SRGBColorSpace })
   const scene = new THREE.Scene()
   const tree = new THREE.Group()
-  tree.add(new THREE.Mesh(v.branches, new THREE.MeshStandardMaterial({ color: '#5b4a3f', roughness: 1 })))
+  const bark = new THREE.MeshStandardMaterial({ color: '#5b4a3f', roughness: 1 })
+  tree.add(new THREE.Mesh(v.branches, bark))
   const lm = leafMaterial(v.leafKind).clone()
   lm.onBeforeCompile = () => {}
   tree.add(new THREE.Mesh(v.leaves, lm))
@@ -194,6 +234,7 @@ export function impostorForest(renderer: THREE.WebGLRenderer, v: TreeVariant, pl
   renderer.setClearColor(clear, alpha)
   renderer.toneMapping = prevTone
   lm.dispose()
+  bark.dispose()
 
   const rand = rng(seed)
   const n = places.length
@@ -233,5 +274,6 @@ export function impostorForest(renderer: THREE.WebGLRenderer, v: TreeVariant, pl
   mesh.frustumCulled = false
   mesh.name = 'forest'
   mesh.userData.aspect = aspect
+  mesh.userData.target = rt
   return mesh
 }

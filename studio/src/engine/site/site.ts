@@ -8,13 +8,15 @@ import type { QualitySettings } from '../quality'
 import type { TimePreset } from '../env/environment'
 import { wind } from './grass'
 import { plantHillside } from './coastalPlanting'
+import { coastalLawn, coastalNeighbors } from './coastalLayout'
+import { buildCoastalLawn, buildCoastalLots, buildCoastalStreets } from './coastalLots'
 import { buildGravelPaths } from './gravelPaths'
 import type { Hillside } from './hillside'
-import { buildOcean, canyonMaterial, CoastalSky, retainingMaterial } from './ocean'
+import { buildOcean, canyonMaterial, CoastalSky, loadCoastalMaps, retainingMaterial, type CoastalMaps } from './ocean'
 import { GrassField } from './grassField'
 import { buildOrnamental } from './ornamental'
 import { Terrain, type Berm } from './terrain'
-import { impostorForest, makeVariant, treeInstances, type TreePlacement } from './trees'
+import { coastalTreeVariant, impostorForest, makeVariant, treeInstances, type TreePlacement } from './trees'
 import { diningSet, fence, loungeSet, planter } from './furniture'
 import { expandImpostors, expandInstanced, expandShaderInstances } from '../photo/bake'
 
@@ -32,9 +34,13 @@ export class Site {
   private instanced: THREE.InstancedMesh[] = []
   private shaderInstanced: THREE.Mesh[] = []
   private coast: THREE.Group | null = null
+  private coastalMaps: CoastalMaps = { grass: null, bark: null }
+  private coastalSky = new CoastalSky()
+  private coastalLots: THREE.InstancedMesh[] = []
+  private coastalLotMaterial: THREE.Material | null = null
   private ocean: THREE.Mesh | null = null
   private photoWater: THREE.MeshPhysicalMaterial | null = null
-  private forest: THREE.Mesh | null = null
+  private forests: THREE.Mesh[] = []
   private clear: [number, number, number, number][] = []
   private isClear(x: number, z: number) {
     return this.clear.some(([x0, z0, x1, z1]) => x > x0 && x < x1 && z > z0 && z < z1)
@@ -57,11 +63,14 @@ export class Site {
     this.terrain = new Terrain(plan, house.bounds)
     const t = this.terrain
     if (t.hillside) {
-      this.buildCoastalGround(plan, t.hillside)
-      const planting = await plantHillside(plan, t.hillside, this.quality)
-      this.disposables.push(planting.material)
-      this.group.add(...planting.meshes)
+      this.coastalMaps = await loadCoastalMaps()
+      const neighbors = coastalNeighbors(t.hillside)
+      this.buildCoastalGround(plan, t.hillside, neighbors)
+      const planting = await plantHillside(plan, t.hillside, this.quality, neighbors, this.coastalSky, this.renderer)
+      this.disposables.push(...planting.materials)
+      this.group.add(...planting.meshes, ...planting.impostors)
       this.instanced.push(...planting.meshes)
+      this.forests.push(...planting.impostors)
       this.buildOutdoorLiving(plan, house, planting.grasses)
       return
     }
@@ -150,17 +159,26 @@ export class Site {
       if (z > center.z + 20 && Math.abs(x - center.x) < 30 && rand() < 0.7) continue
       forest.push({ x, y: t.heightAt(x, z), z, height: 14 + rand() * 12, yaw: 0 })
     }
-    this.forest = impostorForest(this.renderer, pineA, forest, 5)
-    this.group.add(this.forest)
+    const distant = impostorForest(this.renderer, pineA, forest, 5)
+    this.forests.push(distant)
+    this.group.add(distant)
   }
 
-  private buildCoastalGround(plan: HomePlan, hill: Hillside) {
-    const sky = new CoastalSky()
+  private buildCoastalGround(plan: HomePlan, hill: Hillside, neighbors = coastalNeighbors(hill)) {
+    const sky = this.coastalSky
     const low = this.quality.tier === 'low'
-    const ground = hill.buildSurface(canyonMaterial(this.lib, hill, sky), retainingMaterial(this.lib), low)
+    const ground = hill.buildSurface(canyonMaterial(this.lib, hill, sky, this.coastalMaps), retainingMaterial(this.lib), low)
     this.coast = ground
     sky.bind(ground.children[0] as THREE.Mesh)
     if (plan.landscape.paths?.length) ground.add(buildGravelPaths(plan.landscape.paths, hill, this.lib))
+    const lawn = coastalLawn(plan, hill)
+    if (lawn) ground.add(buildCoastalLawn(lawn, hill, this.coastalMaps))
+    if (neighbors.length) {
+      const { meshes, material } = buildCoastalLots(hill, neighbors, sky)
+      this.coastalLots = meshes
+      this.coastalLotMaterial = material
+      ground.add(...meshes, buildCoastalStreets(hill, neighbors, sky))
+    }
     if (hill.oceanDistance !== undefined) {
       const ocean = buildOcean(hill, sky, wind.uTime, low)
       ground.add(ocean)
@@ -175,10 +193,14 @@ export class Site {
     this.coast.removeFromParent()
     for (const mesh of this.coast.children) {
       if (!(mesh instanceof THREE.Mesh)) continue
+      if (mesh instanceof THREE.InstancedMesh) mesh.dispose()
       mesh.geometry.dispose()
       const material = mesh.material as THREE.Material
-      material.dispose()
+      if (material !== this.coastalLotMaterial) material.dispose()
     }
+    this.coastalLotMaterial?.dispose()
+    this.coastalLotMaterial = null
+    this.coastalLots = []
     this.photoWater?.dispose()
     this.photoWater = null
     this.coast = this.ocean = null
@@ -188,12 +210,21 @@ export class Site {
     const L = plan.landscape
     const t = this.terrain
     const clumps: [number, number, number, number][] = t.hillside ? [] : [...planting]
+    const pottedOlives: TreePlacement[] = []
     for (const p of L.planters ?? []) {
       const pl = planter(this.lib, p.kind)
       const y = house.floorAt(p.x, p.z) ?? t.heightAt(p.x, p.z)
       pl.group.position.set(p.x, y, p.z)
       this.group.add(pl.group)
-      if (p.grass) clumps.push([p.x, y + pl.soil - 0.02, p.z, p.kind === 'tall' ? 0.85 : 0.6])
+      if (t.hillside && p.kind === 'tall') {
+        pottedOlives.push({ x: p.x, z: p.z, y: y + pl.soil, height: 1.65, yaw: p.x + p.z })
+      } else if (p.grass) clumps.push([p.x, y + pl.soil - 0.02, p.z, p.kind === 'tall' ? 0.85 : 0.6])
+    }
+    if (pottedOlives.length) {
+      const trees = treeInstances(coastalTreeVariant('olive', 182, this.quality.treeDetail), pottedOlives, true)
+      trees.name = 'Potted terrace olives'
+      this.group.add(trees)
+      this.instanced.push(...trees.children as THREE.InstancedMesh[])
     }
     for (const l of L.lounge ?? []) {
       const g = loungeSet(this.lib)
@@ -481,7 +512,7 @@ export class Site {
       const g = this.lawn.bake(camera)
       if (g) add.push(g)
     }
-    for (const im of this.instanced) {
+    for (const im of [...this.instanced, ...this.coastalLots]) {
       hide.push(im)
       const m = expandInstanced(im)
       if (m) add.push(m)
@@ -495,9 +526,9 @@ export class Site {
       const e = expandShaderInstances(m.geometry as THREE.InstancedBufferGeometry, m.material as THREE.Material, plume ? undefined : (t, hue) => g0.clone().lerp(g1.clone().lerp(g2, hue), Math.min(1, Math.max(0, (t - 0.1) / 0.8))))
       if (e) add.push(e)
     }
-    if (this.forest) {
-      hide.push(this.forest)
-      const f = expandImpostors(this.forest, camera, this.forest.userData.aspect ?? 0.5)
+    for (const forest of this.forests) {
+      hide.push(forest)
+      const f = expandImpostors(forest, camera, forest.userData.aspect ?? 0.5)
       if (f) add.push(f)
     }
     return { add, hide }
@@ -517,8 +548,15 @@ export class Site {
     this.disposeCoastalGround()
     this.group.traverse(o => {
       const m = o as THREE.Mesh
+      if (m instanceof THREE.InstancedMesh) m.dispose()
       if (m.isMesh && m.geometry) m.geometry.dispose()
     })
+    for (const forest of this.forests) {
+      (forest.material as THREE.Material).dispose()
+      forest.userData.target.dispose()
+    }
+    this.coastalMaps.grass?.dispose()
+    this.coastalMaps.bark?.dispose()
     for (const d of this.disposables) d.dispose()
     this.lawn?.dispose()
   }
