@@ -1,0 +1,499 @@
+{
+  "homes": [
+    {
+      "id": "cedar-ridge",
+      "name": "Cedar Ridge",
+      "stops": [
+        {
+          "id": "great-room",
+          "room": "great",
+          "name": "Great room",
+          "caption": "A vaulted wood ceiling leads the eye out to the paver terrace.",
+          "position": [
+            -1.4,
+            2.25,
+            -5.35
+          ],
+          "heading": 0.604472,
+          "fov": 67,
+          "time": "golden",
+          "image": "cedar-great-room.webp",
+          "links": [
+            {
+              "to": "kitchen",
+              "via": [
+                -3,
+                -5.1
+              ],
+              "yaw": 2.020272,
+              "pitch": -0.27104
+            },
+            {
+              "to": "primary-suite",
+              "via": [
+                3.6,
+                -5.3
+              ],
+              "yaw": -0.956325,
+              "pitch": -0.089754
+            }
+          ],
+          "studio": "#c-0-0-0-0-0-0-0-0-0-0-6-p-w-25r-3h0-897-1a7-3h0-6zh-ac8",
+          "rendered": true
+        },
+        {
+          "id": "kitchen",
+          "room": "kitchen",
+          "name": "Kitchen",
+          "caption": "The roughly 17 × 15 ft kitchen sits beside the dining area.",
+          "position": [
+            -3.75,
+            2.25,
+            -5.65
+          ],
+          "heading": -2.421522,
+          "fov": 66,
+          "time": "golden",
+          "image": "cedar-ridge-kitchen.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                -3,
+                -5.1
+              ],
+              "yaw": 2.923616,
+              "pitch": -0.450639
+            }
+          ],
+          "studio": "#c-0-0-0-0-0-0-0-0-0-0-6-p-w-5sb-3h0-8pv-6sx-3h0-9vn-a6o",
+          "rendered": true
+        },
+        {
+          "id": "primary-suite",
+          "room": "primary",
+          "name": "Primary suite",
+          "caption": "The roughly 22 × 13 ft bedroom sits in the low east wing.",
+          "position": [
+            10.5,
+            2.25,
+            -3.35
+          ],
+          "heading": 2.04971,
+          "fov": 66,
+          "time": "golden",
+          "image": "cedar-ridge-primary-suite.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                8.4,
+                -5.4
+              ],
+              "yaw": -1.889328,
+              "pitch": -0.152152
+            }
+          ],
+          "studio": "#c-0-0-0-0-0-0-0-0-0-0-6-p-w-g7c-3h0-563-hkm-3h0-5vp-a6o",
+          "rendered": false
+        }
+      ]
+    },
+    {
+      "id": "coastal-modern",
+      "name": "Coastal Modern",
+      "stops": [
+        {
+          "id": "kitchen",
+          "room": "kitchen",
+          "name": "Kitchen",
+          "caption": "The roughly 20 × 12 ft kitchen anchors the far end of the open plan.",
+          "position": [
+            1.55,
+            1.93,
+            -6.85
+          ],
+          "heading": -2.523165,
+          "fov": 66,
+          "time": "day",
+          "image": "coastal-kitchen.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                1.85,
+                -5.1
+              ],
+              "yaw": -2.692943,
+              "pitch": -0.248219
+            }
+          ],
+          "studio": "#c-1-1-0-0-1-0-0-0-4-p-w-2e4-2z8-akj-1hw-2z8-btt-a6o",
+          "rendered": true
+        },
+        {
+          "id": "great-room",
+          "room": "living",
+          "name": "Great room",
+          "caption": "A vaulted wood ceiling rises toward the clerestory above the terrace.",
+          "position": [
+            -1.92,
+            1.93,
+            -3.05
+          ],
+          "heading": 0.613479,
+          "fov": 66,
+          "time": "day",
+          "image": "coastal-modern-great-room.webp",
+          "links": [
+            {
+              "to": "kitchen",
+              "via": [
+                1.83,
+                -3.6
+              ],
+              "yaw": -1.102946,
+              "pitch": -0.118177
+            },
+            {
+              "to": "primary-suite",
+              "via": [
+                -2.6,
+                -5.3
+              ],
+              "yaw": -2.821608,
+              "pitch": -0.189159
+            }
+          ],
+          "studio": "#c-1-1-0-0-1-0-0-0-4-p-w-2yn-2z8-4pf-22n-2z8-3fz-a6o",
+          "rendered": false
+        },
+        {
+          "id": "primary-suite",
+          "room": "primary",
+          "name": "Primary suite",
+          "caption": "The roughly 14 × 13 ft bedroom has a window on the rear elevation.",
+          "position": [
+            -6.35,
+            1.93,
+            -6.63
+          ],
+          "heading": -2.337239,
+          "fov": 66,
+          "time": "day",
+          "image": "coastal-modern-primary-suite.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                -7.5,
+                -5.9
+              ],
+              "yaw": -1.332046,
+              "pitch": -0.319076
+            }
+          ],
+          "studio": "#c-1-1-0-0-1-0-0-0-4-p-w-9sr-2z8-a8b-awr-2z8-bav-a6o",
+          "rendered": false
+        }
+      ]
+    },
+    {
+      "id": "woodland-modern",
+      "name": "Woodland Modern",
+      "stops": [
+        {
+          "id": "great-room",
+          "room": "great",
+          "name": "Great room",
+          "caption": "The vaulted wood ceiling spans the central gabled volume.",
+          "position": [
+            2.59,
+            2,
+            0.65
+          ],
+          "heading": -2.62896,
+          "fov": 67,
+          "time": "golden",
+          "image": "woodland-modern-great-room.webp",
+          "links": [
+            {
+              "to": "kitchen",
+              "via": [
+                1.45,
+                -4.5
+              ],
+              "yaw": 0.294786,
+              "pitch": -0.085107
+            },
+            {
+              "to": "primary-suite",
+              "via": [
+                -3.2,
+                -0.72
+              ],
+              "yaw": -0.825822,
+              "pitch": -0.075488
+            }
+          ],
+          "studio": "#c-2-0-0-0-0-0-1-1-2-p-w-3zw-334-104-38o-334-c9-ac8",
+          "rendered": false
+        },
+        {
+          "id": "kitchen",
+          "room": "kitchen",
+          "name": "Kitchen",
+          "caption": "The roughly 21 × 21 ft kitchen sits directly behind the great room.",
+          "position": [
+            2.55,
+            2,
+            -4.95
+          ],
+          "heading": -2.484734,
+          "fov": 64,
+          "time": "golden",
+          "image": "woodland-modern-kitchen.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                1.45,
+                -4.5
+              ],
+              "yaw": -1.302256,
+              "pitch": -0.361952
+            }
+          ],
+          "studio": "#c-2-0-0-0-0-0-1-1-2-p-w-3xo-334-7mz-2zq-334-8uz-9vk",
+          "rendered": false
+        },
+        {
+          "id": "primary-suite",
+          "room": "primary",
+          "name": "Primary suite",
+          "caption": "The roughly 18 × 18 ft bedroom has windows on two sides.",
+          "position": [
+            -11.82,
+            2,
+            -0.78
+          ],
+          "heading": 2.379446,
+          "fov": 66,
+          "time": "golden",
+          "image": "woodland-modern-primary-suite.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                -8,
+                -1.4
+              ],
+              "yaw": 0.647749,
+              "pitch": -0.11576
+            }
+          ],
+          "studio": "#c-2-0-0-0-0-0-1-1-2-p-w-i8n-334-17b-h6b-334-2bh-a6o",
+          "rendered": false
+        }
+      ]
+    },
+    {
+      "id": "aspen-custom",
+      "name": "Aspen Custom",
+      "stops": [
+        {
+          "id": "great-room",
+          "room": "great",
+          "name": "Great room",
+          "caption": "The vaulted great room looks out onto the rear deck.",
+          "position": [
+            -1.445482,
+            1.8548,
+            6.642332
+          ],
+          "heading": 2.893303,
+          "fov": 67,
+          "time": "golden",
+          "image": "aspen-custom-great-room.webp",
+          "links": [
+            {
+              "to": "rear-deck",
+              "via": [
+                0.034416,
+                -0.27533
+              ],
+              "yaw": -0.037536,
+              "pitch": -0.063526
+            },
+            {
+              "to": "lower-suite",
+              "via": [
+                5.99,
+                3.9
+              ],
+              "yaw": 0.969168,
+              "pitch": -0.056721
+            }
+          ],
+          "studio": "#c-3-0-0-0-0-0-1-1-0-1-p-w-289-2v2-a90-1un-2v2-8r6-ac8",
+          "rendered": false
+        },
+        {
+          "id": "rear-deck",
+          "deck": "rear-deck",
+          "name": "Rear deck",
+          "caption": "The 1,181 sq ft deck spans the rear of the great room.",
+          "position": [
+            -0.206497,
+            1.8548,
+            -7.674819
+          ],
+          "heading": 3.027202,
+          "fov": 62,
+          "time": "golden",
+          "image": "aspen-custom-rear-deck.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                0.034416,
+                -0.27533
+              ],
+              "yaw": 2.994655,
+              "pitch": -0.060708
+            }
+          ],
+          "studio": "#c-3-0-0-0-0-0-1-1-0-1-p-w-bf-2v2-bud-53-2v2-ddj-9kg",
+          "rendered": false
+        },
+        {
+          "id": "lower-suite",
+          "room": "bed5",
+          "name": "Lower walkout suite",
+          "caption": "A glazed slider opens this lower-level suite directly to the hillside.",
+          "position": [
+            6.771637,
+            -0.9392,
+            -4.947551
+          ],
+          "heading": 1.906879,
+          "fov": 66,
+          "time": "golden",
+          "image": "aspen-custom-lower-suite.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                10.650637,
+                -6.297551
+              ],
+              "yaw": 0.001166,
+              "pitch": -0.109128
+            }
+          ],
+          "studio": "#c-3-0-0-0-0-0-1-1-0-1-p-w-ag8-1g5-7mv-bwo-1g5-855-a6o",
+          "rendered": false
+        }
+      ]
+    },
+    {
+      "id": "modern-farmhouse",
+      "name": "Modern Farmhouse",
+      "stops": [
+        {
+          "id": "great-room",
+          "room": "great",
+          "name": "Great room",
+          "caption": "The roughly 22 × 18 ft great room opens to the dining bay.",
+          "position": [
+            2.15,
+            2,
+            -0.55
+          ],
+          "heading": -2.620317,
+          "fov": 65,
+          "time": "golden",
+          "image": "modern-farmhouse-great-room.webp",
+          "links": [
+            {
+              "to": "kitchen",
+              "via": [
+                2.65,
+                -5.55
+              ],
+              "yaw": 0.620944,
+              "pitch": -0.089315
+            },
+            {
+              "to": "primary-suite",
+              "via": [
+                -3.4,
+                -5.1
+              ],
+              "yaw": -0.362811,
+              "pitch": -0.062621
+            }
+          ],
+          "studio": "#c-4-0-3-0-0-0-0-0-3-p-w-3bg-334-uj-2js-334-26p-a14",
+          "rendered": false
+        },
+        {
+          "id": "kitchen",
+          "room": "kitchen",
+          "name": "Kitchen",
+          "caption": "The roughly 12 × 20 ft kitchen sits along the east side of dining.",
+          "position": [
+            3.95,
+            2,
+            -4.7
+          ],
+          "heading": 2.834547,
+          "fov": 66,
+          "time": "golden",
+          "image": "modern-farmhouse-kitchen.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                3.4,
+                -4.8
+              ],
+              "yaw": -1.697988,
+              "pitch": -0.677773
+            }
+          ],
+          "studio": "#c-4-0-3-0-0-0-0-0-3-p-w-63g-334-793-6k8-334-8q1-a6o",
+          "rendered": false
+        },
+        {
+          "id": "primary-suite",
+          "room": "primary",
+          "name": "Primary suite",
+          "caption": "The roughly 15 × 14 ft bedroom occupies the rear corner of the plan.",
+          "position": [
+            -8.04,
+            2,
+            -6.45
+          ],
+          "heading": -2.773688,
+          "fov": 65,
+          "time": "golden",
+          "image": "modern-farmhouse-primary-suite.webp",
+          "links": [
+            {
+              "to": "great-room",
+              "via": [
+                -9,
+                -5.7
+              ],
+              "yaw": -1.866095,
+              "pitch": -0.35384
+            }
+          ],
+          "studio": "#c-4-0-3-0-0-0-0-0-3-p-w-cen-334-9yb-cyn-334-be5-a14",
+          "rendered": false
+        }
+      ]
+    }
+  ]
+}

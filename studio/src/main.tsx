@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Landing } from './ui/Landing'
-import { designCode, isStudioRoute, type StudioLoad } from './ui/routes'
+import { designCode, homeFromRoute, homeRoute, isStudioRoute, photoFromRoute, type StudioLoad } from './ui/routes'
 import './ui/base.css'
 import './ui/landing.css'
+
+const PhotoTour = lazy(() => import('./ui/phototour/PhotoTour'))
 
 function Site() {
   const [route, setRoute] = useState(() => ({
@@ -11,6 +13,8 @@ function Site() {
     target: { hash: designCode(location.hash) ? location.hash : '' },
   }))
   const selection = useRef(route.target)
+  const photoOrigin = useRef<string>(undefined)
+  const browsed = useRef(!photoFromRoute(route.hash))
   const studioRoot = useRef<HTMLDivElement>(null)
   const [starting, setStarting] = useState(false)
   const [studio, setStudio] = useState<typeof import('./ui/App')>()
@@ -18,6 +22,8 @@ function Site() {
   const [load, setLoad] = useState<StudioLoad>({ target: route.target, progress: 0 })
   const [attempt, setAttempt] = useState(0)
   const requested = isStudioRoute(route.hash, location.search)
+  const photoPlan = photoFromRoute(route.hash)
+  const photoOpen = !!photoPlan
   const tools = requested && isStudioRoute('', location.search)
   const sceneProgress = load.target === route.target ? load.progress : 0
   const progress = Math.max(sceneProgress, starting ? 1 : 0)
@@ -26,8 +32,16 @@ function Site() {
   const entered = tools || (requested && ready)
 
   useEffect(() => {
-    const sync = () => {
+    const sync = (event: HashChangeEvent) => {
       const hash = location.hash
+      const previous = new URL(event.oldURL).hash
+      const onPhoto = photoFromRoute(hash)
+      if (!onPhoto) browsed.current = true
+      if (onPhoto && (['', '#home', '#homes', '#compare', '#gallery'].includes(previous) || homeFromRoute(previous))) {
+        photoOrigin.current = previous || '#home'
+      } else if (onPhoto ? !!photoFromRoute(previous) : !isStudioRoute(hash, location.search)) {
+        photoOrigin.current = undefined
+      }
       if (designCode(hash) && hash !== selection.current.hash) selection.current = { hash }
       setRoute({ hash, target: selection.current })
     }
@@ -36,6 +50,7 @@ function Site() {
   }, [])
 
   useEffect(() => {
+    if (photoOpen || studio || chunkError) return
     const loadStudio = () => {
       setStarting(true)
       import('./ui/App').then(setStudio).catch(error => {
@@ -54,7 +69,7 @@ function Site() {
       cancelAnimationFrame(frame)
       cancelAnimationFrame(nextFrame)
     }
-  }, [])
+  }, [photoOpen, studio, chunkError])
 
   useLayoutEffect(() => {
     if (entered && !tools) studioRoot.current?.focus({ preventScroll: true })
@@ -74,8 +89,8 @@ function Site() {
 
   return (
     <>
-      {!tools && (
-        <div className="site-viewport" inert={entered}>
+      {!tools && browsed.current && (
+        <div className="site-viewport" inert={entered || photoOpen}>
           <Landing hash={route.hash} progress={progress} ready={ready} pending={requested && !ready} error={error} onRetry={retry} onDesign={selectDesign} />
         </div>
       )}
@@ -84,6 +99,20 @@ function Site() {
           <studio.App key={attempt} target={route.target} visible={entered} requested={requested} onLoad={setLoad} />
         )}
       </div>
+      {photoPlan && (
+        <Suspense fallback={<div className="site-opening" role="status">Opening the photo tour…</div>}>
+          <PhotoTour
+            key={photoPlan.id}
+            plan={photoPlan}
+            back={photoOrigin.current ?? homeRoute(photoPlan.id)}
+            onBack={event => {
+              if (!photoOrigin.current || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+              event.preventDefault()
+              history.back()
+            }}
+          />
+        </Suspense>
+      )}
     </>
   )
 }
