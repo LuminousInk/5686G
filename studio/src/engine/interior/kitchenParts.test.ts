@@ -15,6 +15,7 @@ const makeLib = () => {
     counter: new THREE.MeshStandardMaterial({ name: 'counter' }),
     blackMetal: new THREE.MeshStandardMaterial({ name: 'blackMetal' }),
     fixtureMetal: new THREE.MeshStandardMaterial({ name: 'fixtureMetal' }),
+    diffuser: new THREE.MeshStandardMaterial({ name: 'diffuser' }),
     lamp: (key: string, color: string, intensity: number) => {
       let m = lamps.get(key)
       if (!m) lamps.set(key, (m = new THREE.MeshStandardMaterial({ name: `lamp:${key}`, emissive: new THREE.Color(color), emissiveIntensity: intensity })))
@@ -264,10 +265,10 @@ describe('tall column', () => {
     const lib = makeLib()
     const g = ovenTower(lib)
     const glassMesh = meshOf(g, 'kitchen-dark-glass')
-    const glass = glassMesh.material as THREE.MeshStandardMaterial
-    expect(glass.color.getHexString()).toBe('111316')
-    expect(glass.roughness).toBe(0.08)
-    expect(glass.metalness).toBe(0.2)
+    const glass = glassMesh.material as THREE.MeshPhysicalMaterial
+    expect(Math.max(glass.color.r, glass.color.g, glass.color.b)).toBeLessThan(0.01)
+    expect(glass.roughness).toBeLessThan(0.25)
+    expect(glass.specularIntensity).toBeLessThan(0.25)
 
     const window = extent(glassMesh, v => v.y < OVEN_Y0 + 0.45)
     expect(window.min.y).toBeGreaterThan(OVEN_Y0)

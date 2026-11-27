@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
-import { Piece } from './modern'
+import { decor, Piece } from './modern'
 export const WARDROBE_DEPTH = 0.54
 
 export function openWardrobe(lib: MaterialLibrary, width: number, height: number) {
@@ -54,6 +54,6 @@ export function openWardrobe(lib: MaterialLibrary, width: number, height: number
     }
   }
   const g = p.build('open-oak-wardrobe')
-  g.add(clothes.build('hung-and-folded-linen'))
+  g.add(decor(clothes.build('hung-and-folded-linen')))
   return g
 }

@@ -48,6 +48,32 @@ afterEach(() => {
 })
 
 describe('baked scene fingerprint', () => {
+  it('excludes decorated meshes and whole nested subtrees while keeping their furniture', () => {
+    const { interior, dresser, meshes, signature } = fixture()
+    const original = signature()
+    const styling = new THREE.Group()
+    styling.userData.bakeIgnore = true
+    const nested = new THREE.Group()
+    const vase = dresser.clone()
+    const book = dresser.clone()
+    book.userData.bakeIgnore = true
+    nested.add(vase)
+    styling.add(nested)
+    dresser.add(styling, book)
+    styling.position.y += 0.2
+    expect(meshes().map(entry => entry.mesh)).toContain(dresser)
+    expect(meshes().map(entry => entry.mesh)).not.toContain(vase)
+    expect(meshes().map(entry => entry.mesh)).not.toContain(book)
+    expect(signature()).toBe(original)
+    styling.userData.bakeIgnore = false
+    expect(signature()).not.toBe(original)
+
+    const wrapped = new THREE.Group()
+    wrapped.userData.bakeIgnore = true
+    wrapped.add(interior)
+    expect(meshes().map(entry => entry.mesh)).not.toContain(dresser)
+  })
+
   it('tracks furniture and nearby site occluders, including inherited world transforms', () => {
     const { signature, dresser, interior, planter } = fixture()
     const original = signature()

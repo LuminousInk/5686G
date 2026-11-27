@@ -9,7 +9,10 @@ import type { MaterialLibrary } from '../materials/library'
  */
 
 /** Black glass shared by the oven window and the induction hob. */
-const darkGlass = new THREE.MeshStandardMaterial({ color: '#111316', roughness: 0.08, metalness: 0.2, name: 'kitchen-dark-glass' })
+const darkGlass = new THREE.MeshPhysicalMaterial({
+  name: 'kitchen-dark-glass', color: '#121011', roughness: 0.21, ior: 1.43,
+  specularIntensity: 0.18, specularColor: '#6a6262', clearcoat: 0.10, clearcoatRoughness: 0.18,
+})
 /** Grey print for the hob zones: fixtureMetal can be brass or black depending on the palette. */
 const hobPrint = new THREE.MeshStandardMaterial({ color: '#5d6168', roughness: 0.4, name: 'kitchen-hob-print' })
 
@@ -267,9 +270,16 @@ export function inductionHob(): THREE.Group {
 export function rangeHood(lib: MaterialLibrary, w = 0.9, h = 0.78, d = 0.54): THREE.Group {
   const b = new MeshBatch()
   const back = -d / 2
-  box(b, lib.blackMetal, 0, w - 0.1, 0, 0.004, back + 0.04, d / 2 - 0.04)
-  box(b, lib.fixtureMetal, 0, w, 0.004, 0.05, back, d / 2, 0.006)
-  box(b, lib.fixtureMetal, 0, 0.32, 0.054, Math.max(0.05, h - 0.054), back, back + 0.26, 0.004)
+  box(b, lib.fixtureMetal, 0, w, 0.004, 0.062, back, d / 2, 0.008)
+  box(b, lib.fixtureMetal, 0, 0.32, 0.066, Math.max(0.05, h - 0.066), back, back + 0.25, 0.005)
+  for (const x of [-0.16, 0.16]) {
+    box(b, lib.blackMetal, x, 0.25, 0.001, 0.005, back + 0.07, d / 2 - 0.105, 0.002)
+    for (let i = 0; i < 5; i++) {
+      const z = back + 0.092 + i * 0.04
+      box(b, lib.fixtureMetal, x, 0.232, 0, 0.004, z, z + 0.009)
+    }
+    box(b, lib.diffuser, x, 0.112, 0, 0.005, d / 2 - 0.076, d / 2 - 0.042, 0.002)
+  }
   return b.toGroup('kitchen-hood')
 }
 

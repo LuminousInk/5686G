@@ -105,6 +105,9 @@ describe.each(sections)('$name interior', ({ plan }) => {
       expect(left * right, room.id).toBeLessThan(0)
       expect(Math.abs(left + right), room.id).toBeLessThan(0.001)
       expect(stands.some(o => o.getObjectByName('tableLamp')), room.id).toBe(true)
+      expect(bed?.getObjectByName('bed-throws-and-pillows')?.userData.bakeIgnore, room.id).toBe(true)
+      expect(bed?.userData.bakeIgnore, room.id).toBeUndefined()
+      expect(stands.find(o => o.getObjectByName('tableLamp'))?.getObjectByName('tableLamp')?.userData.bakeIgnore, room.id).toBe(true)
       expect(objects.some(o => o.name === 'areaRug'), room.id).toBe(true)
       const measured = new THREE.Box3().setFromObject(bed!, true)
       expect(measured.min.y, room.id).toBeCloseTo(plan.floorY, 3)
@@ -133,6 +136,8 @@ describe.each(sections)('$name interior', ({ plan }) => {
       if (room.type === 'living') {
         expect(objects.some(o => ['sectional_grey', 'sofa_beige'].includes(o.name)), room.id).toBe(true)
         expect(byName('areaRug'), room.id).toHaveLength(1)
+        expect(byName('areaRug')[0].userData.bakeIgnore, room.id).toBeUndefined()
+        expect(byName('sofa-throw-and-pillows')[0]?.userData.bakeIgnore, room.id).toBe(true)
         expect(byName('coffee_table_round_01'), room.id).toHaveLength(1)
       }
       if (room.type === 'dining') {
@@ -222,5 +227,17 @@ describe.each(sections)('$name interior', ({ plan }) => {
         expect(objects.some(o => o.name === 'entryBench' || o.name === 'sideboard_midcentury'), room.id).toBe(true)
       }
     }
+  })
+
+  it('uses image textures in its framed prints and keeps window dressing out of the bake', () => {
+    interior.group.traverse(object => {
+      if (object.name === 'framed-art') {
+        const print = object.children.find(o => o instanceof THREE.Mesh && (o.material as THREE.MeshStandardMaterial).map)
+        expect(print).toBeDefined()
+      }
+      if (['framed-art', 'curtain-rail', 'linen-curtain'].includes(object.name)) {
+        expect(object.userData.bakeIgnore, object.name).toBe(true)
+      }
+    })
   })
 })

@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { V3 } from '../geo'
 import type { MaterialLibrary } from '../materials/library'
 import type { InteriorStyle } from './catalogStyle'
-import { Piece } from './modern'
+import { decor, Piece } from './modern'
 
 function tube(points: THREE.Vector3[], radius: number, segments = 20) {
   return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), segments, radius, 8, false)
@@ -20,7 +20,7 @@ export function kitchenPendant(lib: MaterialLibrary, style: InteriorStyle, drop:
   p.cylinder(lib.diffuser, r * 0.91, r * 0.91, 0.01, 0, y + 0.013, 0, false, 24)
   p.cylinder(lib.blackMetal, 0.003, 0.003, drop - 0.21, 0, -(drop - 0.21) / 2, 0, false, 8)
   p.cylinder(metal, 0.075, 0.075, 0.025, 0, -0.0125, 0)
-  return p.build('dome-pendant')
+  return decor(p.build('dome-pendant'))
 }
 
 export function diningLight(lib: MaterialLibrary, style: InteriorStyle, width: number, drop: number, low = false) {
@@ -63,7 +63,7 @@ export function diningLight(lib: MaterialLibrary, style: InteriorStyle, width: n
   const g = p.build('pendant')
   // Thin cords and wicker do not need their own shadow silhouettes on phone shadow maps.
   for (const mesh of g.children as THREE.Mesh[]) mesh.castShadow = false
-  return g
+  return decor(g)
 }
 
 export function ceilingFan(lib: MaterialLibrary, oak: boolean) {
@@ -82,16 +82,29 @@ export function ceilingFan(lib: MaterialLibrary, oak: boolean) {
 
 export function tallCurtain(lib: MaterialLibrary, width: number, height: number) {
   const p = new Piece()
-  const fabric = new THREE.PlaneGeometry(width, height, 36, 5)
+  const fabric = new THREE.PlaneGeometry(width, height, 36, 8)
   const positions = fabric.getAttribute('position')
   for (let i = 0; i < positions.count; i++) {
     const x = positions.getX(i)
     const y = positions.getY(i)
-    positions.setXYZ(i, x * (1.02 - 0.11 * y / height), y + height / 2, 0.023 * Math.cos(x / width * Math.PI * 14))
+    const pleat = Math.cos(x / width * Math.PI * 12 + y * 0.24)
+    positions.setXYZ(i, x * (1.01 - 0.12 * y / height), y + height / 2, 0.025 * pleat)
   }
   fabric.computeVertexNormals()
   p.add(lib.drapery, fabric)
-  return p.build('linen-curtain')
+  return decor(p.build('linen-curtain'))
+}
+
+export function curtainRail(lib: MaterialLibrary, width: number) {
+  const p = new Piece()
+  const rod = new THREE.CylinderGeometry(0.009, 0.009, width, 10)
+  rod.rotateZ(Math.PI / 2)
+  p.add(lib.blackMetal, rod)
+  for (const x of [-width / 2 + 0.014, width / 2 - 0.014]) {
+    p.slab(lib.blackMetal, 0.022, 0.031, 0.009, x, 0, -0.051)
+    p.slab(lib.blackMetal, 0.009, 0.009, 0.051, x, 0, -0.025)
+  }
+  return decor(p.build('curtain-rail'))
 }
 
 export function plumbingArc(lib: MaterialLibrary, height: number, reach: number, metal: THREE.Material = lib.fixtureMetal) {

@@ -1,0 +1,98 @@
+{
+  "tuscany": {
+    "title": "Souvenir of Tuscany",
+    "artist": "Jean Baptiste Camille Corot",
+    "source": "https://www.artic.edu/artworks/28",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 359
+  },
+  "trysts": {
+    "title": "Arleux-Palluel, The Bridge of Trysts",
+    "artist": "Jean Baptiste Camille Corot",
+    "source": "https://www.artic.edu/artworks/81509",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 426
+  },
+  "marsh": {
+    "title": "The Marsh",
+    "artist": "Charles François Daubigny",
+    "source": "https://www.artic.edu/artworks/880",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 300
+  },
+  "wheat": {
+    "title": "Stacks of Wheat (End of Day, Autumn)",
+    "artist": "Claude Monet",
+    "source": "https://www.artic.edu/artworks/14624",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 333
+  },
+  "deauville": {
+    "title": "La Touques near Deauville",
+    "artist": "Eugène Louis Boudin",
+    "source": "https://www.artic.edu/artworks/59823",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 377
+  },
+  "sainte-adresse": {
+    "title": "The Beach at Sainte-Adresse",
+    "artist": "Claude Monet",
+    "source": "https://www.artic.edu/artworks/14598",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 378
+  },
+  "southampton": {
+    "title": "Nocturne: Blue and Gold—Southampton Water",
+    "artist": "James McNeill Whistler",
+    "source": "https://www.artic.edu/artworks/56905",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 338
+  },
+  "marseille": {
+    "title": "The Bay of Marseille, Seen from L'Estaque",
+    "artist": "Paul Cezanne",
+    "source": "https://www.artic.edu/artworks/16487",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 411
+  },
+  "imagiri": {
+    "title": "Maisaka: The Ferry at Imagiri (Maisaka, Imagiri funawatashi), from the series \"Fifty-three Stations of the Tokaido (Tokaido gojusan tsugi),\" also known as the Tokaido with Poem (Kyoka iri Tokaido)",
+    "artist": "Utagawa Hiroshige",
+    "source": "https://www.artic.edu/artworks/4374",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 375
+  },
+  "mist": {
+    "title": "Mishima: Morning Mist (Mishima, asagiri), from the series \"Fifty-three Stations of the Tokaido Road (Tokaido gojusan tsugi no uchi),\" also known as the Hoeido Tokaido",
+    "artist": "Utagawa Hiroshige",
+    "source": "https://www.artic.edu/artworks/10926",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 328
+  },
+  "poppies": {
+    "title": "Flowers: Poppies and Daisies",
+    "artist": "Odilon Redon",
+    "source": "https://www.artic.edu/artworks/94240",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 407
+  },
+  "flower-clouds": {
+    "title": "Flower Clouds",
+    "artist": "Odilon Redon",
+    "source": "https://www.artic.edu/artworks/76395",
+    "license": "CC0 1.0",
+    "width": 512,
+    "height": 425
+  }
+}

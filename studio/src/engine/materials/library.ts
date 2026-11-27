@@ -321,6 +321,50 @@ export class MaterialLibrary {
   get agedBrass(): Std { return this.interiorFinish('aged-brass', '#A3794E', 0.38, 0.62) }
   get ivoryShade(): Std { return this.interiorFinish('ivory-shade', '#EDE0C8', 0.38) }
   get rattan(): Std { return this.interiorFinish('rattan', '#B68D59', 0.87) }
+  get artMat(): Std { return this.interiorFinish('art-mat', '#E3D9C8', 0.96) }
+  get decorCeramic(): Std { return this.interiorFinish('decor-ceramic', '#BDAA94', 0.54) }
+  get decorAmber(): Std { return this.interiorFinish('decor-amber', '#684733', 0.24, 0.10) }
+  get decorTray(): Std { return this.interiorFinish('decor-tray', '#85796A', 0.74) }
+
+  get wovenMat(): Std {
+    const m = this.put('interior:woven-mat', () =>
+      this.pbr('rough_linen', { color: '#BEAA93', roughness: 0.96 }, 0.42))
+    this.interiorExtra.add(m)
+    return m
+  }
+
+  get throwLinen(): Std {
+    const m = this.put('interior:throw-linen', () =>
+      this.pbr('rough_linen', { color: '#A18972', roughness: 0.98, side: THREE.DoubleSide }, 0.6))
+    this.interiorExtra.add(m)
+    return m
+  }
+
+  get tvGlass(): Phys {
+    const m = this.put('interior:tv-glass', () => new THREE.MeshPhysicalMaterial({
+      color: '#111013', metalness: 0, roughness: 0.18, ior: 1.42, specularIntensity: 0.09,
+      specularColor: '#514747', clearcoat: 0.08, clearcoatRoughness: 0.20,
+    }))
+    this.interiorExtra.add(m)
+    return m
+  }
+
+  get tvCase(): Phys {
+    const m = this.put('interior:tv-case', () => new THREE.MeshPhysicalMaterial({
+      color: '#101010', roughness: 0.92, specularIntensity: 0.04,
+    }))
+    this.interiorExtra.add(m)
+    return m
+  }
+
+  get vanityGlass(): Std { return this.interiorFinish('vanity-glass', '#817873', 0.13, 1) }
+
+  get linenShade(): Std {
+    return this.put('interior:linen-shade', () => new THREE.MeshStandardMaterial({
+      color: '#E9D8B8', roughness: 0.91, emissive: '#E9B67C', emissiveIntensity: 0.31, side: THREE.DoubleSide,
+    }))
+  }
+
   get rustLinen(): Std { return this.interiorFinish('rust-linen', '#9A6B51', 0.93) }
   get foliageStem(): Std { return this.interiorFinish('foliage-stem', '#786844', 0.91) }
 
