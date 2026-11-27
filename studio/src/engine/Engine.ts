@@ -60,11 +60,11 @@ export class Engine {
   keepAlive?: () => boolean
   /** eye adaptation: exposure multiplier eases toward 1 outside, toward the light meter's reading inside */
   private adapt = 1
-  private meterAt = -1e9
-  private meterSerial = -1
+  private meterAt = -Infinity
+  private meterSerial = 0
   private meteredStill = false
-  private snapExposure = true
-  private snapPending = false
+  private meterView = 0
+  private meterRequestView = 0
   private lastCamPos = new THREE.Vector3()
   /** absolute exposure the light meter asks for (0 until the first reading) */
   private metered = 0
@@ -92,6 +92,8 @@ export class Engine {
     this.lib = new MaterialLibrary(renderer, this.quality)
     this.sky = new SkyEnvironment(renderer, this.scene, this.quality)
     this.pipeline = new RenderPipeline(renderer, this.scene, this.camera, this.quality)
+    const toneMapping = new URLSearchParams(location.search).get('tm')
+    if (toneMapping) this.pipeline.setToneMapping(toneMapping)
     this.lights = new NightLights(this.scene, this.quality)
     this.dpr = this.dprTarget = Math.min(window.devicePixelRatio || 1, this.quality.maxPixelRatio)
   }
@@ -277,17 +279,13 @@ export class Engine {
     const preset = TIME_PRESETS.find(t => t.id === id) ?? TIME_PRESETS[0]
     await this.sky.setPreset(preset, this.plan?.sunAzimuth ?? -35)
     this.pipeline.exposure = this.sky.exposure
-    this.pipeline.bloom.intensity = preset.bloom
+    this.pipeline.setLook(preset)
     this.lights.setLevel(preset.lamps)
     this.lib.setLamps(preset.lamps)
     this.site?.setTime(preset)
-    const g = this.pipeline.grade
-    if (id === 'golden') g.set(0.24, 1.1, 0.03)
-    else if (id === 'day') g.set(0.18, 1.06, 0.0)
-    else if (id === 'dusk') g.set(0.2, 1.08, 0.02)
-    else g.set(0.22, 1.0, -0.01)
     if (this.house && !this.loading) await this.refreshLightmap()
     if (this.house) this.captureProbe()
+    this.resetMeter()
     this.invalidate()
   }
 
@@ -346,71 +344,64 @@ export class Engine {
     this.raf = 0
   }
 
+  private resetMeter() {
+    this.metered = 0
+    this.meterAt = -Infinity
+    this.meterView++
+  }
+
   private frame(t: number) {
     const dt = Math.min(0.1, (t - this.last) / 1000)
     this.last = t
     for (const h of this.hooks) h(dt)
     this.camera.clearViewOffset()
     this.camera.updateMatrixWorld()
-    const moved = !this.camera.matrixWorld.equals(this.lastView) || !this.camera.projectionMatrix.equals(this.lastProj)
+    // Ignore subpixel drift from camera easing so a stationary view can finish accumulating.
+    const moved = this.camera.matrixWorld.elements.some((v, i) => Math.abs(v - this.lastView.elements[i]) > 0.0001)
+      || this.camera.projectionMatrix.elements.some((v, i) => Math.abs(v - this.lastProj.elements[i]) > 0.0001)
     if (moved) {
       this.lastView.copy(this.camera.matrixWorld)
       this.lastProj.copy(this.camera.projectionMatrix)
     }
-    // a finish or time change re-meters the view like a camera move does
-    if (this.dirty) this.meteredStill = false
-    if (moved || this.dirty || this.liveMotion) {
+    const active = moved || this.dirty || this.liveMotion
+    const inside = this.isInside(this.camera.position)
+    const jumped = this.camera.position.distanceToSquared(this.lastCamPos) > 1
+    if (!inside || jumped || (this.dirty && !moved)) this.resetMeter()
+    this.lastCamPos.copy(this.camera.position)
+    if (active) {
+      this.meteredStill = false
       this.pipeline.reset()
       this.dirty = false
       this.time += dt
-    } else if (this.pipeline.converged && !this.keepAlive?.()) {
-      // idle: nothing to draw until something changes
-      this.stop()
-      return
-    }
-    // eye adaptation: inside, a camera-style light meter on the rendered frame sets the exposure (see render/meter.ts);
-    // outside keeps each time of day's tuned exposure. Readings are taken while the camera moves and once when it
-    // stops, and only a change of more than 10% is acted on, so a still view settles and stops rendering.
-    // a jump (view button, room tap) snaps to the next reading instead of easing in from the last room
-    if (this.camera.position.distanceToSquared(this.lastCamPos) > 1) this.snapExposure = true
-    this.lastCamPos.copy(this.camera.position)
-    if (moved) {
-      this.meteredStill = false
-      if (t - this.meterAt > 120) {
-        this.pipeline.requestMeter()
-        this.meterAt = t
-      }
-    } else if (!this.meteredStill) {
-      this.meteredStill = true
-      this.pipeline.requestMeter()
-      this.meterAt = t
     }
     const meter = this.pipeline.meter
     if (meter.last && meter.serial !== this.meterSerial) {
       this.meterSerial = meter.serial
-      const e = exposureFor(meter.last, 0.3 - 0.14 * this.sky.preset.lamps)
-      if (!(this.metered > 0) || Math.abs(Math.log(e / this.metered)) > 0.1) this.metered = e
-      if (this.snapExposure) {
-        this.snapExposure = false
-        this.snapPending = true
+      if (inside && this.meterRequestView === this.meterView) {
+        const key = 0.25 - 0.105 * this.sky.preset.lamps
+        const exposure = exposureFor(meter.last, key, this.sky.exposure)
+        if (!active || !this.metered || Math.abs(Math.log(exposure / this.metered)) > 0.08) this.metered = exposure
       }
     }
-    const inside = this.isInside(this.camera.position)
     let want = 1
-    if (inside) want = this.metered > 0 && meter.supported ? THREE.MathUtils.clamp(this.metered / this.sky.exposure, 0.35, 120) : this.insideExposure()
-    if (this.snapPending) {
-      this.snapPending = false
-      this.adapt = want
+    if (inside) want = this.metered && meter.supported ? this.metered / this.sky.exposure : this.insideExposure()
+    const d = Math.log(want / this.adapt)
+    const next = active && !jumped && Math.abs(d) > 0.02 ? this.adapt * Math.exp(d * Math.min(1, dt * 3)) : want
+    if (this.adapt !== next) {
+      this.adapt = next
       this.pipeline.reset()
     }
-    const d = Math.log(want / this.adapt)
-    if (Math.abs(d) > 0.02) {
-      this.adapt *= Math.exp(d * Math.min(1, dt * 3))
-      this.pipeline.reset()
-    } else if (d !== 0) {
-      // close enough: snap once, then hold still
-      this.adapt = want
-      this.pipeline.reset()
+    // Read a final frame at rest. If an earlier read is in flight, leave it time to finish before requesting again.
+    const requestMeter = inside && meter.supported && !meter.pending && (active ? t - this.meterAt > 120 : !this.meteredStill)
+    if (requestMeter) {
+      this.meterAt = t
+      this.meterRequestView = this.meterView
+      this.meteredStill = !active
+      this.pipeline.requestMeter()
+    } else if (!active && this.pipeline.converged && !this.keepAlive?.()) {
+      // Wait for a pending exposure read without drawing extra frames.
+      if (!inside || !meter.pending) this.stop()
+      return
     }
     this.pipeline.exposure = this.sky.exposure * this.adapt
     const accumulating = this.pipeline.frames > 0
@@ -419,7 +410,7 @@ export class Engine {
     this.site?.update(this.time, this.camera)
     this.pipeline.jitter(this.width * this.dpr, this.height * this.dpr)
     if (this.sky.sun.visible) {
-      this.pipeline.sunSample(this.sky.sunDir, THREE.MathUtils.degToRad(0.55), this.sunTmp)
+      this.pipeline.sunSample(this.sky.sunDir, THREE.MathUtils.degToRad(this.sky.preset.sunRadius), this.sunTmp)
       this.sky.placeSun(this.sunTmp)
     }
     this.pipeline.render(dt)

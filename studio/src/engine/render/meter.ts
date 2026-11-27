@@ -16,8 +16,7 @@ const SPAN = 32
 export interface Metering {
   /** trimmed, center-weighted geometric mean luminance */
   mean: number
-  /** luminance of the bright end of the frame: the 75th percentile, so a window or sun patch in view (they may clip,
-   *  as in interior photography) does not darken the room, while walls that fill the frame stay under white */
+  /** 84th percentile luminance, which catches broad lit surfaces while ignoring small specular highlights. */
   high: number
 }
 
@@ -73,6 +72,10 @@ export class Meter {
     return !this.failed
   }
 
+  get pending() {
+    return this.busy
+  }
+
   /** Meter `tex` (linear HDR). Returns immediately; the reading lands in `last` a frame or two later. */
   measure(renderer: THREE.WebGLRenderer, tex: THREE.Texture) {
     if (this.busy || this.failed || !renderer.capabilities.isWebGL2) return
@@ -112,8 +115,8 @@ export class Meter {
       }
       return logs[order[n - 1]]
     }
-    const lo = at(0.04)
-    const top = at(0.96)
+    const lo = at(0.06)
+    const top = at(0.92)
     let sum = 0
     let w = 0
     for (let i = 0; i < n; i++) {
@@ -122,7 +125,7 @@ export class Meter {
       w += this.weights[i]
     }
     const mean = Math.pow(2, w > 0 ? sum / w : at(0.5))
-    return { mean, high: Math.pow(2, at(0.75)) }
+    return { mean, high: Math.pow(2, at(0.84)) }
   }
 
   dispose() {
@@ -132,9 +135,12 @@ export class Meter {
 }
 
 /**
- * Exposure for a reading: the average goes to `key` (a bit above middle grey: interiors are photographed bright), but
- * never so far that the bright end passes `white`.
+ * Expose for the room's midtones, then allow up to about 0.8 stops of compensation for broad highlights.
+ * The cap also limits gain in very dark rooms where a few light leaks could otherwise dominate the image.
  */
-export function exposureFor(m: Metering, key: number, white = 1.6) {
-  return Math.min(key / m.mean, white / m.high)
+export function exposureFor(m: Metering, key: number, outdoorExposure: number) {
+  const midtones = key / m.mean
+  const highlights = 0.86 / m.high
+  const exposure = Math.min(midtones, Math.max(highlights, midtones * 0.57))
+  return THREE.MathUtils.clamp(exposure, outdoorExposure * 0.28, 120)
 }
