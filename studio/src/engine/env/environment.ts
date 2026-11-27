@@ -30,13 +30,13 @@ export const TIME_PRESETS: TimePreset[] = [
     id: 'golden', label: 'Golden hour', hdri: 'syferfontein_6d_clear_puresky',
     exposure: 1.32, sunScale: 0.84, sunRadius: 0.85, envScale: 1, lamps: 0, backgroundScale: 1, minElevation: 21, maxRes: '2k',
     bloom: { intensity: 0.045, threshold: 1.55, radius: 0.47 },
-    grade: { contrast: 0.20, saturation: 0.97, warmth: 0.014 },
+    grade: { contrast: 0.23, saturation: 1.06, warmth: 0.03 },
   },
   {
     id: 'day', label: 'Afternoon', hdri: 'kloofendal_48d_partly_cloudy_puresky',
     exposure: 0.72, sunScale: 0.92, sunRadius: 0.70, envScale: 1, lamps: 0, backgroundScale: 1, maxRes: '2k',
     bloom: { intensity: 0.025, threshold: 1.75, radius: 0.38 },
-    grade: { contrast: 0.19, saturation: 1.02, warmth: 0 },
+    grade: { contrast: 0.21, saturation: 1.05, warmth: 0.005 },
   },
   {
     id: 'dusk', label: 'Dusk', hdri: 'qwantani_dusk_2_puresky',
